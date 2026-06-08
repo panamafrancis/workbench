@@ -1,0 +1,11 @@
+layout {
+    tab name="workbench" focus=true {
+        pane split_direction="horizontal" {
+            pane size="36" name="sidebar" {
+                command "workbench"
+                args "ls"
+            }
+            pane name="shell" focus=true
+        }
+    }
+}
