@@ -1,17 +1,13 @@
 BINARY     := workbench
-INSTALL    := /usr/local/bin/$(BINARY)
 ZELLIJ_DIR := $(HOME)/.config/zellij/layouts
 
-.PHONY: build install uninstall setup test fmt vet lint ci clean
+.PHONY: build install setup test fmt vet lint ci clean
 
 build:
 	go build -o $(BINARY) .
 
 install: build
-	cp $(BINARY) $(INSTALL)
-
-uninstall:
-	rm -f $(INSTALL)
+	go install .
 
 setup:
 	mkdir -p $(ZELLIJ_DIR)
