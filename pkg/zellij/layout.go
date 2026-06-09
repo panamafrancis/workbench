@@ -44,7 +44,7 @@ func WriteTabLayout(name, cwd, sidebarWidth string, nonoArgs []string) (string, 
 
 func CleanupLayout(name string) {
 	path := filepath.Join(config.LayoutsDir(), name+".kdl")
-	os.Remove(path)
+	_ = os.Remove(path)
 }
 
 func CleanupStaleLayouts(validNames map[string]bool) {
@@ -58,7 +58,7 @@ func CleanupStaleLayouts(validNames map[string]bool) {
 		}
 		name := strings.TrimSuffix(e.Name(), ".kdl")
 		if !validNames[name] {
-			os.Remove(filepath.Join(config.LayoutsDir(), e.Name()))
+			_ = os.Remove(filepath.Join(config.LayoutsDir(), e.Name()))
 		}
 	}
 }

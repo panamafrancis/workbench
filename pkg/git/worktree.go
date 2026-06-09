@@ -2,13 +2,14 @@ package git
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os/exec"
 	"strings"
 )
 
 func FetchOriginMain(repoPath string) error {
-	cmd := exec.Command("git", "-C", repoPath, "fetch", "origin", "main")
+	cmd := exec.CommandContext(context.Background(), "git", "-C", repoPath, "fetch", "origin", "main")
 	var errBuf bytes.Buffer
 	cmd.Stderr = &errBuf
 	if err := cmd.Run(); err != nil {
@@ -21,7 +22,7 @@ func CreateWorktree(repoPath, worktreePath, branch string) error {
 	if err := FetchOriginMain(repoPath); err != nil {
 		return err
 	}
-	cmd := exec.Command("git", "-C", repoPath, "worktree", "add", "-b", branch, worktreePath, "origin/main")
+	cmd := exec.CommandContext(context.Background(), "git", "-C", repoPath, "worktree", "add", "-b", branch, worktreePath, "origin/main")
 	var errBuf bytes.Buffer
 	cmd.Stderr = &errBuf
 	if err := cmd.Run(); err != nil {
@@ -31,7 +32,7 @@ func CreateWorktree(repoPath, worktreePath, branch string) error {
 }
 
 func RemoveWorktree(repoPath, worktreePath string) error {
-	cmd := exec.Command("git", "-C", repoPath, "worktree", "remove", "--force", worktreePath)
+	cmd := exec.CommandContext(context.Background(), "git", "-C", repoPath, "worktree", "remove", "--force", worktreePath)
 	var errBuf bytes.Buffer
 	cmd.Stderr = &errBuf
 	if err := cmd.Run(); err != nil {
@@ -41,7 +42,7 @@ func RemoveWorktree(repoPath, worktreePath string) error {
 }
 
 func DeleteBranch(repoPath, branch string) error {
-	cmd := exec.Command("git", "-C", repoPath, "branch", "-D", branch)
+	cmd := exec.CommandContext(context.Background(), "git", "-C", repoPath, "branch", "-D", branch)
 	var errBuf bytes.Buffer
 	cmd.Stderr = &errBuf
 	if err := cmd.Run(); err != nil {

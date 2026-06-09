@@ -227,9 +227,10 @@ func prIcon(status github.PRStatus) (string, bool) {
 		return "✓", true
 	case github.PRClosed:
 		return "✗", true
-	default:
+	case github.PRNone:
 		return "", false
 	}
+	return "", false
 }
 
 func prLineStyles(status github.PRStatus) (normal lipgloss.Style, sel lipgloss.Style) {
@@ -242,7 +243,8 @@ func prLineStyles(status github.PRStatus) (normal lipgloss.Style, sel lipgloss.S
 		return stylePRMerged, stylePRMergedSelected
 	case github.PRClosed:
 		return stylePRClosed, stylePRClosedSelected
-	default:
+	case github.PRNone:
 		return styleWorktree, styleSelected
 	}
+	return styleWorktree, styleSelected
 }

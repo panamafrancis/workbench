@@ -132,16 +132,16 @@ func logFailure(args []string, stdout, stderr string, err error) {
 	if fErr != nil {
 		return
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	ts := time.Now().Format(time.RFC3339)
-	fmt.Fprintf(f, "[%s] zellij %s\n", ts, strings.Join(args, " "))
-	fmt.Fprintf(f, "  error:  %v\n", err)
+	_, _ = fmt.Fprintf(f, "[%s] zellij %s\n", ts, strings.Join(args, " "))
+	_, _ = fmt.Fprintf(f, "  error:  %v\n", err)
 	if stderr != "" {
-		fmt.Fprintf(f, "  stderr: %s\n", strings.TrimSpace(stderr))
+		_, _ = fmt.Fprintf(f, "  stderr: %s\n", strings.TrimSpace(stderr))
 	}
 	if stdout != "" {
-		fmt.Fprintf(f, "  stdout: %s\n", strings.TrimSpace(stdout))
+		_, _ = fmt.Fprintf(f, "  stdout: %s\n", strings.TrimSpace(stdout))
 	}
-	fmt.Fprintln(f)
+	_, _ = fmt.Fprintln(f)
 }

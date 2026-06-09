@@ -520,6 +520,23 @@ func (m *Model) View() string {
 	sb.WriteString("\n")
 
 	switch m.mode {
+	case modeNormal:
+		sb.WriteString(styleSelected.Render(m.tree.breadcrumb()))
+		sb.WriteString("\n")
+		switch {
+		case m.err != nil:
+			sb.WriteString(styleDirty.Render("error: " + m.err.Error()))
+		case m.msg != "":
+			sb.WriteString(styleMuted.Render(m.msg))
+		default:
+			status := "[n]ew  [o]pen  [d]el  [A]dd repo  [r]efresh  [q]uit"
+			if m.fetching {
+				status += "  ⟳ syncing..."
+			} else if m.ghHint != "" {
+				status += "  (" + m.ghHint + ")"
+			}
+			sb.WriteString(styleStatusBar.Render(status))
+		}
 	case modeNewWorktree:
 		repo := m.cfg.Repos[m.pendingRepoIdx]
 		sb.WriteString(styleMuted.Render(fmt.Sprintf("new worktree [%s] name: ", repo.Alias)) + m.input.View())
@@ -554,22 +571,6 @@ func (m *Model) View() string {
 			styleMuted.Render("press any key to close"),
 		}, "\n")
 		sb.WriteString(help)
-	default:
-		sb.WriteString(styleSelected.Render(m.tree.breadcrumb()))
-		sb.WriteString("\n")
-		if m.err != nil {
-			sb.WriteString(styleDirty.Render("error: " + m.err.Error()))
-		} else if m.msg != "" {
-			sb.WriteString(styleMuted.Render(m.msg))
-		} else {
-			status := "[n]ew  [o]pen  [d]el  [A]dd repo  [r]efresh  [q]uit"
-			if m.fetching {
-				status += "  ⟳ syncing..."
-			} else if m.ghHint != "" {
-				status += "  (" + m.ghHint + ")"
-			}
-			sb.WriteString(styleStatusBar.Render(status))
-		}
 	}
 
 	return sb.String()

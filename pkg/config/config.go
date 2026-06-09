@@ -2,6 +2,7 @@ package config
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -193,7 +194,7 @@ func runScript(script, worktreePath, worktreeName string) error {
 	if _, err := os.Stat(script); err != nil {
 		return fmt.Errorf("script not found: %s", script)
 	}
-	cmd := exec.Command("bash", "--", script)
+	cmd := exec.CommandContext(context.Background(), "bash", "--", script)
 	cmd.Env = append(os.Environ(),
 		"WORKBENCH_WORKTREE_PATH="+worktreePath,
 		"WORKBENCH_WORKTREE_NAME="+worktreeName,
