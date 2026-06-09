@@ -23,6 +23,10 @@ type Model struct {
 	NonoProfile string   `yaml:"nono_profile"`
 	Binary      string   `yaml:"binary"`
 	Args        []string `yaml:"args"`
+	// ResumeArgs are appended to Args only when a prior session exists for the
+	// worktree being opened (e.g. claude's "--continue"). Empty for models that
+	// have no resume concept.
+	ResumeArgs []string `yaml:"resume_args"`
 }
 
 type Repo struct {
@@ -50,7 +54,8 @@ func DefaultConfig() *Config {
 			"claude": {
 				NonoProfile: "claude-code",
 				Binary:      "claude",
-				Args:        []string{},
+				Args:        []string{"--dangerously-skip-permissions"},
+				ResumeArgs:  []string{"--continue"},
 			},
 			"codex": {
 				NonoProfile: "default",

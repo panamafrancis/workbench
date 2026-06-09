@@ -22,9 +22,15 @@ func WriteTabLayout(name, cwd string, nonoArgs []string) (string, error) {
 	}
 
 	kdl := fmt.Sprintf(`layout {
-    pane name="%s" cwd="%s" {
-        command "nono"
-        args %s
+    pane split_direction="vertical" {
+        pane size="15%%" name="sidebar" {
+            command "workbench"
+            args "ls"
+        }
+        pane name="%s" cwd="%s" focus=true {
+            command "nono"
+            args %s
+        }
     }
 }
 `, name, cwd, strings.Join(quotedArgs, " "))

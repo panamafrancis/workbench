@@ -11,6 +11,7 @@ type KeyMap struct {
 	Delete   key.Binding
 	Toggle   key.Binding
 	Refresh  key.Binding
+	AddRepo  key.Binding
 	Help     key.Binding
 	Quit     key.Binding
 }
@@ -24,6 +25,7 @@ var DefaultKeyMap = KeyMap{
 	Delete:   key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "delete")),
 	Toggle:   key.NewBinding(key.WithKeys(" ", "tab"), key.WithHelp("space", "expand/collapse")),
 	Refresh:  key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh")),
+	AddRepo:  key.NewBinding(key.WithKeys("A"), key.WithHelp("A", "add repo")),
 	Help:     key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
 	Quit:     key.NewBinding(key.WithKeys("q", "esc"), key.WithHelp("q", "quit")),
 }

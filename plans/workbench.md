@@ -57,7 +57,7 @@ workbench/
 │   ├── rm_worktree.go              # workbench rm worktree
 │   ├── ls.go                       # workbench ls → launches Bubble Tea TUI
 │   └── open.go                     # workbench open → writes KDL + zellij action new-tab
-├── internal/
+├── pkg/
 │   ├── config/
 │   │   ├── config.go               # Config types; Load/Save; CRUD helpers
 │   │   └── paths.go                # ConfigPath(); DefaultWorktreeBase(); WorktreePath()
@@ -68,12 +68,11 @@ workbench/
 │   ├── sandbox/
 │   │   └── nono.go                 # BuildNonoArgs(worktreePath, modelKey, cfg) []string
 │   ├── zellij/
-│   │   ├── client.go               # IsInZellij(); OpenTab(); CloseTab(); GoToTab()
-│   │   └── layout.go               # WriteTabLayout(name, cwd, cmd) (path, error)
+│   │   ├── client.go               # IsInZellij(); OpenTab(); GoToTab()
+│   │   └── layout.go               # WriteTabLayout(name, cwd, nonoArgs) (path, error)
 │   └── tui/
 │       ├── model.go                # Root Bubble Tea model
 │       ├── tree.go                 # Collapsible repo→worktree tree component
-│       ├── statusbar.go            # Bottom key-hint bar
 │       ├── keys.go                 # KeyMap
 │       └── styles.go               # Lipgloss color palette
 ├── scripts/
@@ -137,7 +136,7 @@ repos:
         model: claude
 ```
 
-### Go types (`internal/config/config.go`)
+### Go types (`pkg/config/config.go`)
 
 ```go
 type Config struct {
@@ -173,7 +172,7 @@ type Worktree struct {
 }
 ```
 
-### `internal/config/paths.go`
+### `pkg/config/paths.go`
 
 ```go
 func ConfigDir() string          // ~/.workbench/
@@ -258,7 +257,7 @@ workbench open --repo=ss --worktree=atlanta --model=claude
   4. zellij action new-tab --name "atlanta" --cwd "/path" --layout ~/.workbench/layouts/atlanta.kdl
 ```
 
-### `internal/zellij/layout.go`
+### `pkg/zellij/layout.go`
 
 ```kdl
 layout {
@@ -269,7 +268,7 @@ layout {
 }
 ```
 
-### `internal/zellij/client.go`
+### `pkg/zellij/client.go`
 
 ```go
 func IsInZellij() bool

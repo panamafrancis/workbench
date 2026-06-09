@@ -2,6 +2,7 @@ package git
 
 import (
 	"fmt"
+	"math/rand"
 	"regexp"
 )
 
@@ -33,8 +34,16 @@ func GenerateName(existing []string) (string, error) {
 	for _, n := range existing {
 		taken[n] = true
 	}
-	for _, adj := range adjectives {
-		for _, city := range cities {
+	// Shuffle to avoid always starting with "bold-atlanta".
+	adjs := make([]string, len(adjectives))
+	copy(adjs, adjectives)
+	rand.Shuffle(len(adjs), func(i, j int) { adjs[i], adjs[j] = adjs[j], adjs[i] })
+	ctys := make([]string, len(cities))
+	copy(ctys, cities)
+	rand.Shuffle(len(ctys), func(i, j int) { ctys[i], ctys[j] = ctys[j], ctys[i] })
+
+	for _, adj := range adjs {
+		for _, city := range ctys {
 			candidate := adj + "-" + city
 			if !taken[candidate] {
 				return candidate, nil
