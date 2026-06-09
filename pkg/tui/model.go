@@ -12,19 +12,25 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/panamafrancis/workbench/pkg/config"
+	"github.com/panamafrancis/workbench/pkg/git"
 	"github.com/panamafrancis/workbench/pkg/sandbox"
 	"github.com/panamafrancis/workbench/pkg/zellij"
 )
 
 type refreshMsg struct{}
 type openErrMsg struct{ err error }
+type createWorktreeMsg struct {
+	name string
+	err  error
+}
 
 type inputMode int
 
 const (
-	modeNormal      inputMode = iota
-	modeAddRepoPath           // waiting for repo path
-	modeAddRepoAlias          // waiting for alias
+	modeNormal       inputMode = iota
+	modeAddRepoPath            // waiting for repo path
+	modeAddRepoAlias           // waiting for alias
+	modeNewWorktree            // waiting for worktree name (empty = auto)
 )
 
 type Model struct {
@@ -35,9 +41,10 @@ type Model struct {
 	keys        KeyMap
 	err         error
 	msg         string
-	mode        inputMode
-	input       textinput.Model
-	pendingPath string
+	mode           inputMode
+	input          textinput.Model
+	pendingPath    string
+	pendingRepoIdx int
 }
 
 func New(cfg *config.Config) *Model {
@@ -75,6 +82,21 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case openErrMsg:
 		m.err = msg.err
 
+	case createWorktreeMsg:
+		if msg.err != nil {
+			m.err = msg.err
+		} else {
+			newCfg, err := config.Load()
+			if err != nil {
+				m.err = err
+			} else {
+				m.cfg = newCfg
+				m.tree.cfg = newCfg
+			}
+			m.tree.refreshDirty()
+			m.msg = fmt.Sprintf("created worktree %q", msg.name)
+		}
+
 	case tea.KeyMsg:
 		if m.mode != modeNormal {
 			return m.updateInput(msg)
@@ -94,6 +116,18 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, func() tea.Msg { return refreshMsg{} }
 		case key.Matches(msg, m.keys.Open):
 			return m, m.openSelected("")
+		case key.Matches(msg, m.keys.New):
+			sel := m.tree.selected()
+			if sel == nil {
+				m.err = fmt.Errorf("no repo selected")
+				return m, nil
+			}
+			m.pendingRepoIdx = sel.repoIdx
+			ti := textinput.New()
+			ti.Placeholder = "auto-generate"
+			ti.Focus()
+			m.input = ti
+			m.mode = modeNewWorktree
 		case key.Matches(msg, m.keys.AddRepo):
 			ti := textinput.New()
 			ti.Placeholder = "/path/to/repo"
@@ -114,6 +148,10 @@ func (m *Model) updateInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "enter":
 		val := strings.TrimSpace(m.input.Value())
+
+		if m.mode == modeNewWorktree {
+			return m, m.createWorktree(val)
+		}
 
 		if m.mode == modeAddRepoPath {
 			if val == "" {
@@ -174,6 +212,61 @@ func (m *Model) updateInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+func (m *Model) createWorktree(nameInput string) tea.Cmd {
+	repoIdx := m.pendingRepoIdx
+	m.mode = modeNormal
+	cfg := m.cfg
+
+	return func() tea.Msg {
+		repo := cfg.Repos[repoIdx]
+		existing := cfg.AllWorktreeNames()
+
+		name := nameInput
+		if name == "" {
+			var err error
+			name, err = git.GenerateName(existing)
+			if err != nil {
+				return createWorktreeMsg{err: err}
+			}
+		} else {
+			if err := git.ValidateName(name, existing); err != nil {
+				return createWorktreeMsg{err: err}
+			}
+		}
+
+		branch := fmt.Sprintf("wt/%s/%s", repo.Alias, name)
+		base := cfg.ResolveWorktreeBase()
+		wtPath := config.WorktreePath(base, repo.Alias, name)
+
+		if err := os.MkdirAll(wtPath, 0755); err != nil {
+			return createWorktreeMsg{err: fmt.Errorf("create dir: %w", err)}
+		}
+		_ = os.Remove(wtPath)
+
+		if err := git.CreateWorktree(repo.LocalPath, wtPath, branch); err != nil {
+			return createWorktreeMsg{err: err}
+		}
+
+		modelKey := cfg.ResolveModel("")
+		repo.Worktrees = append(repo.Worktrees, config.Worktree{
+			Name:   name,
+			Branch: branch,
+			Path:   wtPath,
+			Model:  modelKey,
+		})
+		for i := range cfg.Repos {
+			if cfg.Repos[i].Alias == repo.Alias {
+				cfg.Repos[i] = repo
+				break
+			}
+		}
+		if err := cfg.Save(); err != nil {
+			return createWorktreeMsg{err: err}
+		}
+		return createWorktreeMsg{name: name}
+	}
+}
+
 func (m *Model) openSelected(modelOverride string) tea.Cmd {
 	sel := m.tree.selected()
 	if sel == nil || sel.isRepo {
@@ -224,6 +317,9 @@ func (m *Model) View() string {
 	sb.WriteString("\n")
 
 	switch m.mode {
+	case modeNewWorktree:
+		repo := m.cfg.Repos[m.pendingRepoIdx]
+		sb.WriteString(styleMuted.Render(fmt.Sprintf("new worktree [%s] name: ", repo.Alias)) + m.input.View())
 	case modeAddRepoPath:
 		sb.WriteString(styleMuted.Render("repo path: ") + m.input.View())
 	case modeAddRepoAlias:
