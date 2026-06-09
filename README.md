@@ -221,7 +221,7 @@ Create `~/.config/nono/profiles/claude-code-local.json`:
     ],
     "read_file": [
       "$HOME/.ssh/config",
-      "$HOME/.ssh/id_ed25519.pub"
+      "$HOME/.ssh/id_mykey.pub"
     ],
     "allow_file": [
       "$HOME/.ssh/known_hosts"
@@ -232,7 +232,7 @@ Create `~/.config/nono/profiles/claude-code-local.json`:
     "bypass_protection": [
       "$HOME/.ssh/config",
       "$HOME/.ssh/known_hosts",
-      "$HOME/.ssh/id_ed25519.pub"
+      "$HOME/.ssh/id_mykey.pub"
     ]
   }
 }
@@ -266,12 +266,21 @@ Git operations inside the sandbox (push, fetch) need access to your SSH agent. T
 "unix_socket_subtree": ["/private/tmp"]
 ```
 
-You also need read access to your SSH config and public keys, plus write access to `known_hosts`:
+You also need read access to your SSH config and public keys, plus write access to `known_hosts`. Each public key must be listed individually — `read_file` takes exact paths, not globs (e.g. `~/.ssh/*.pub` won't work):
 
 ```json
-"read_file": ["$HOME/.ssh/config", "$HOME/.ssh/id_ed25519.pub"],
+"read_file": [
+  "$HOME/.ssh/config",
+  "$HOME/.ssh/id_ed25519.pub",
+  "$HOME/.ssh/id_other_key.pub"
+],
 "allow_file": ["$HOME/.ssh/known_hosts"],
-"bypass_protection": ["$HOME/.ssh/config", "$HOME/.ssh/known_hosts", "$HOME/.ssh/id_ed25519.pub"]
+"bypass_protection": [
+  "$HOME/.ssh/config",
+  "$HOME/.ssh/known_hosts",
+  "$HOME/.ssh/id_ed25519.pub",
+  "$HOME/.ssh/id_other_key.pub"
+]
 ```
 
-The `bypass_protection` entries are needed because nono's `deny_credentials` security group blocks `~/.ssh` by default. These overrides let the sandbox read your public key and SSH config without exposing private keys.
+The `bypass_protection` entries are needed because nono's `deny_credentials` security group blocks `~/.ssh` by default. These overrides let the sandbox read your public keys and SSH config without exposing private keys.
