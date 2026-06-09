@@ -41,3 +41,24 @@ func WriteTabLayout(name, cwd string, nonoArgs []string) (string, error) {
 	}
 	return path, nil
 }
+
+func CleanupLayout(name string) {
+	path := filepath.Join(config.LayoutsDir(), name+".kdl")
+	os.Remove(path)
+}
+
+func CleanupStaleLayouts(validNames map[string]bool) {
+	entries, err := os.ReadDir(config.LayoutsDir())
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".kdl") {
+			continue
+		}
+		name := strings.TrimSuffix(e.Name(), ".kdl")
+		if !validNames[name] {
+			os.Remove(filepath.Join(config.LayoutsDir(), e.Name()))
+		}
+	}
+}
