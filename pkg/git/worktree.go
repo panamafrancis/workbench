@@ -7,8 +7,21 @@ import (
 	"strings"
 )
 
+func FetchOriginMain(repoPath string) error {
+	cmd := exec.Command("git", "-C", repoPath, "fetch", "origin", "main")
+	var errBuf bytes.Buffer
+	cmd.Stderr = &errBuf
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("git fetch: %s", strings.TrimSpace(errBuf.String()))
+	}
+	return nil
+}
+
 func CreateWorktree(repoPath, worktreePath, branch string) error {
-	cmd := exec.Command("git", "-C", repoPath, "worktree", "add", "-b", branch, worktreePath)
+	if err := FetchOriginMain(repoPath); err != nil {
+		return err
+	}
+	cmd := exec.Command("git", "-C", repoPath, "worktree", "add", "-b", branch, worktreePath, "origin/main")
 	var errBuf bytes.Buffer
 	cmd.Stderr = &errBuf
 	if err := cmd.Run(); err != nil {
