@@ -5,8 +5,10 @@ import (
 	"os"
 	"strings"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/panamafrancis/workbench/pkg/config"
 	"github.com/panamafrancis/workbench/pkg/git"
+	"github.com/panamafrancis/workbench/pkg/github"
 )
 
 type item struct {
@@ -19,14 +21,16 @@ type item struct {
 
 type TreeModel struct {
 	cfg       *config.Config
+	prCache   *github.Cache
 	collapsed map[string]bool // keyed by repo alias
 	cursor    int
 	dirty     map[string]bool // keyed by worktree name
 }
 
-func newTree(cfg *config.Config) TreeModel {
+func newTree(cfg *config.Config, prCache *github.Cache) TreeModel {
 	return TreeModel{
 		cfg:       cfg,
+		prCache:   prCache,
 		collapsed: map[string]bool{},
 		dirty:     map[string]bool{},
 	}
@@ -76,6 +80,7 @@ func (t *TreeModel) toggleCollapse() {
 	cur := items[t.cursor]
 	alias := cur.alias
 	t.collapsed[alias] = !t.collapsed[alias]
+	t.clamp()
 }
 
 func (t *TreeModel) selected() *item {
@@ -128,20 +133,47 @@ func (t *TreeModel) view(width int) string {
 			}
 		} else {
 			w := t.cfg.Repos[it.repoIdx].Worktrees[it.worktreeIdx]
+
+			var prSuffix string
+			var prStatus github.PRStatus
+			if t.prCache != nil {
+				if info := t.prCache.Get(w.Branch); info != nil {
+					prStatus = info.Status
+					if icon, ok := prIcon(info.Status); ok {
+						prSuffix = fmt.Sprintf("  %s #%d", icon, info.Number)
+					}
+				}
+			}
+
+			lineStyle, selStyle := prLineStyles(prStatus)
+
 			dirty := ""
 			if t.dirty[w.Name] {
 				dirty = styleDirty.Render("*")
 			}
+
 			model := styleMuted.Render("[" + w.Model + "]")
-			line := fmt.Sprintf("  ● %-18s %s%s %s", w.Name, w.Branch, dirty, model)
-			// truncate to width if needed
-			if width > 0 && len(line) > width {
-				line = line[:width]
+			line := fmt.Sprintf("  ● %-18s %s", w.Name, w.Branch)
+			suffix := dirty + " " + model + prSuffix
+			if width > 0 && len(line)+len(suffix) > width {
+				avail := width - len(suffix)
+				if avail > 0 {
+					line = line[:min(len(line), avail)]
+				}
 			}
+
 			if selected {
-				sb.WriteString(styleSelected.Render(line))
+				sb.WriteString(selStyle.Render(line))
+				sb.WriteString(dirty)
+				sb.WriteString(" ")
+				sb.WriteString(model)
+				sb.WriteString(selStyle.Render(prSuffix))
 			} else {
-				sb.WriteString(styleWorktree.Render(line))
+				sb.WriteString(lineStyle.Render(line))
+				sb.WriteString(dirty)
+				sb.WriteString(" ")
+				sb.WriteString(model)
+				sb.WriteString(lineStyle.Render(prSuffix))
 			}
 		}
 		sb.WriteString("\n")
@@ -151,4 +183,34 @@ func (t *TreeModel) view(width int) string {
 		sb.WriteString("\n")
 	}
 	return sb.String()
+}
+
+func prIcon(status github.PRStatus) (string, bool) {
+	switch status {
+	case github.PRDraft:
+		return "✎", true
+	case github.PROpen:
+		return "⬆", true
+	case github.PRMerged:
+		return "✓", true
+	case github.PRClosed:
+		return "✗", true
+	default:
+		return "", false
+	}
+}
+
+func prLineStyles(status github.PRStatus) (normal lipgloss.Style, sel lipgloss.Style) {
+	switch status {
+	case github.PRDraft:
+		return stylePRDraft, stylePRDraftSelected
+	case github.PROpen:
+		return stylePROpen, stylePROpenSelected
+	case github.PRMerged:
+		return stylePRMerged, stylePRMergedSelected
+	case github.PRClosed:
+		return stylePRClosed, stylePRClosedSelected
+	default:
+		return styleWorktree, styleSelected
+	}
 }

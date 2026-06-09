@@ -1,11 +1,13 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -14,8 +16,15 @@ import (
 
 	"github.com/panamafrancis/workbench/pkg/config"
 	"github.com/panamafrancis/workbench/pkg/git"
+	"github.com/panamafrancis/workbench/pkg/github"
 	"github.com/panamafrancis/workbench/pkg/sandbox"
 	"github.com/panamafrancis/workbench/pkg/zellij"
+)
+
+const (
+	tickInterval  = 60 * time.Second
+	activeMaxAge  = 5 * time.Minute
+	visibleMaxAge = 15 * time.Minute
 )
 
 type refreshMsg struct{}
@@ -27,6 +36,16 @@ type createWorktreeMsg struct {
 type deleteWorktreeMsg struct {
 	name string
 	err  error
+}
+type tickMsg time.Time
+
+type prBatchDoneMsg struct {
+	ghErr error
+}
+
+type fetchTarget struct {
+	repoPath string
+	branch   string
 }
 
 type inputMode int
@@ -44,6 +63,10 @@ const (
 type Model struct {
 	cfg                *config.Config
 	tree               TreeModel
+	prCache            *github.Cache
+	ghAvailable        bool
+	ghHint             string
+	fetching           bool
 	width              int
 	height             int
 	keys               KeyMap
@@ -57,18 +80,23 @@ type Model struct {
 }
 
 func New(cfg *config.Config) *Model {
-	t := newTree(cfg)
+	cache := github.NewCache(config.PRCachePath())
+	_ = cache.Load()
+
+	t := newTree(cfg, cache)
 	t.refreshDirty()
 	return &Model{
-		cfg:   cfg,
-		tree:  t,
-		keys:  DefaultKeyMap,
-		input: textinput.New(),
+		cfg:         cfg,
+		tree:        t,
+		prCache:     cache,
+		ghAvailable: true,
+		keys:        DefaultKeyMap,
+		input:       textinput.New(),
 	}
 }
 
 func (m *Model) Init() tea.Cmd {
-	return nil
+	return tea.Batch(m.tickCmd(), m.fetchVisibleCmd(true))
 }
 
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -76,6 +104,32 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+
+	case tickMsg:
+		var cmds []tea.Cmd
+		cmds = append(cmds, m.tickCmd())
+		if m.ghAvailable && !m.fetching {
+			cmds = append(cmds, m.fetchStaleCmd())
+		}
+		return m, tea.Batch(cmds...)
+
+	case prBatchDoneMsg:
+		m.fetching = false
+		if msg.ghErr != nil {
+			if github.IsPermanentError(msg.ghErr) {
+				m.ghAvailable = false
+				if errors.Is(msg.ghErr, github.ErrGHNotFound) {
+					m.ghHint = "gh CLI not found"
+				} else {
+					m.ghHint = "gh auth required"
+				}
+			} else {
+				m.ghHint = "sync error"
+			}
+		} else {
+			m.ghAvailable = true
+			m.ghHint = ""
+		}
 
 	case refreshMsg:
 		newCfg, err := config.Load()
@@ -86,7 +140,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.tree.cfg = newCfg
 		}
 		m.tree.refreshDirty()
-		m.msg = "refreshed"
+		cmd := m.fetchVisibleCmd(true)
+		if cmd != nil {
+			m.msg = "refreshing..."
+		} else {
+			m.msg = "refreshed (sync in progress)"
+		}
+		return m, cmd
 
 	case openErrMsg:
 		m.err = msg.err
@@ -139,9 +199,17 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, m.keys.Quit):
 			return m, tea.Quit
 		case key.Matches(msg, m.keys.Up):
+			prev := m.tree.cursor
 			m.tree.moveUp()
+			if m.tree.cursor != prev {
+				return m, m.fetchIfUncached()
+			}
 		case key.Matches(msg, m.keys.Down):
+			prev := m.tree.cursor
 			m.tree.moveDown()
+			if m.tree.cursor != prev {
+				return m, m.fetchIfUncached()
+			}
 		case key.Matches(msg, m.keys.Toggle):
 			m.tree.toggleCollapse()
 		case key.Matches(msg, m.keys.Refresh):
@@ -461,9 +529,111 @@ func (m *Model) View() string {
 		} else if m.msg != "" {
 			sb.WriteString(styleMuted.Render(m.msg))
 		} else {
-			sb.WriteString(styleStatusBar.Render("[n]ew  [o]pen  [d]el  [A]dd repo  [r]efresh  [q]uit"))
+			status := "[n]ew  [o]pen  [d]el  [A]dd repo  [r]efresh  [q]uit"
+			if m.fetching {
+				status += "  ⟳ syncing..."
+			} else if m.ghHint != "" {
+				status += "  (" + m.ghHint + ")"
+			}
+			sb.WriteString(styleStatusBar.Render(status))
 		}
 	}
 
 	return sb.String()
+}
+
+func (m *Model) tickCmd() tea.Cmd {
+	return tea.Tick(tickInterval, func(t time.Time) tea.Msg {
+		return tickMsg(t)
+	})
+}
+
+func (m *Model) fetchVisibleCmd(force bool) tea.Cmd {
+	if m.fetching {
+		return nil
+	}
+
+	maxAge := visibleMaxAge
+	if force {
+		maxAge = 0
+	}
+
+	var targets []fetchTarget
+	sel := m.tree.selected()
+	for _, r := range m.cfg.Repos {
+		if m.tree.collapsed[r.Alias] {
+			continue
+		}
+		for wi, w := range r.Worktrees {
+			age := maxAge
+			if sel != nil && !sel.isRepo && sel.repoIdx < len(m.cfg.Repos) && sel.worktreeIdx == wi {
+				repo := m.cfg.Repos[sel.repoIdx]
+				if repo.Alias == r.Alias {
+					age = activeMaxAge
+				}
+			}
+			if force || m.prCache.IsStale(w.Branch, age) {
+				targets = append(targets, fetchTarget{
+					repoPath: r.LocalPath,
+					branch:   w.Branch,
+				})
+			}
+		}
+	}
+
+	if len(targets) == 0 {
+		return nil
+	}
+
+	m.fetching = true
+	cache := m.prCache
+	return func() tea.Msg {
+		var lastErr error
+		for _, t := range targets {
+			info, err := github.LookupPR(t.repoPath, t.branch)
+			if err != nil {
+				lastErr = err
+				if github.IsPermanentError(err) {
+					_ = cache.Save()
+					return prBatchDoneMsg{ghErr: err}
+				}
+				continue
+			}
+			cache.Set(t.branch, info)
+		}
+		_ = cache.Save()
+		return prBatchDoneMsg{ghErr: lastErr}
+	}
+}
+
+func (m *Model) fetchStaleCmd() tea.Cmd {
+	return m.fetchVisibleCmd(false)
+}
+
+func (m *Model) fetchIfUncached() tea.Cmd {
+	if m.fetching || !m.ghAvailable {
+		return nil
+	}
+	sel := m.tree.selected()
+	if sel == nil || sel.isRepo {
+		return nil
+	}
+	w := m.cfg.Repos[sel.repoIdx].Worktrees[sel.worktreeIdx]
+	if m.prCache.Get(w.Branch) != nil {
+		return nil
+	}
+	r := m.cfg.Repos[sel.repoIdx]
+	m.fetching = true
+	cache := m.prCache
+	branch := w.Branch
+	repoPath := r.LocalPath
+	return func() tea.Msg {
+		info, err := github.LookupPR(repoPath, branch)
+		if err != nil {
+			return prBatchDoneMsg{ghErr: err}
+		}
+		cache.Set(branch, info)
+		_ = cache.Save()
+		return prBatchDoneMsg{}
+	}
 }

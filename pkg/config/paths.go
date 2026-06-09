@@ -22,6 +22,14 @@ func LayoutsDir() string {
 	return filepath.Join(ConfigDir(), "layouts")
 }
 
+func CacheDir() string {
+	return filepath.Join(ConfigDir(), "cache")
+}
+
+func PRCachePath() string {
+	return filepath.Join(CacheDir(), "pr-status.json")
+}
+
 func WorktreePath(base, alias, name string) string {
 	return filepath.Join(base, alias, name)
 }
