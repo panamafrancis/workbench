@@ -55,7 +55,7 @@ var openCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		created, err := zellij.OpenOrFocusTab(wt.Name, wt.Path, nonoArgs)
+		created, err := zellij.OpenOrFocusTab(wt.Name, wt.Path, cfg.ResolveSidebarWidth(), nonoArgs)
 		if err != nil {
 			return err
 		}

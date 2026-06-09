@@ -20,7 +20,7 @@ var lsCmd = &cobra.Command{
 		if lsRepo != "" || !isInteractive() {
 			return lsPlain()
 		}
-		p := tea.NewProgram(tui.New(cfg), tea.WithAltScreen(), tea.WithMouseCellMotion())
+		p := tea.NewProgram(tui.New(cfg), tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithReportFocus())
 		_, err := p.Run()
 		return err
 	},

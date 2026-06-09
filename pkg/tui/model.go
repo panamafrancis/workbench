@@ -122,6 +122,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 
+	case tea.FocusMsg:
+		return m, tea.Batch(refreshRunningCmd(), refreshDirtyCmd(m.cfg))
+
 	case tickMsg:
 		var cmds []tea.Cmd
 		cmds = append(cmds, m.tickCmd(), refreshRunningCmd())
@@ -487,7 +490,7 @@ func (m *Model) openSelected(modelOverride string) tea.Cmd {
 		if err != nil {
 			return openErrMsg{err}
 		}
-		created, err := zellij.OpenOrFocusTab(wt.Name, wt.Path, nonoArgs)
+		created, err := zellij.OpenOrFocusTab(wt.Name, wt.Path, m.cfg.ResolveSidebarWidth(), nonoArgs)
 		if err != nil {
 			return openErrMsg{err}
 		}
