@@ -88,3 +88,5 @@ Adding or changing what appears in the worktree tab means editing the KDL templa
 - **New CLI command**: add file under `cmd/`, wire into `rootCmd` in `cmd/root.go` via `rootCmd.AddCommand(...)` in `init()`.
 - **New config field**: add to structs in `pkg/config/config.go`, update `DefaultConfig()` if it needs a default.
 - **Change what opens in a new tab**: edit the KDL template in `pkg/zellij/layout.go`.
+
+**Always update `README.md`** when adding or changing user-facing behavior: new config fields, new CLI flags, new keybindings, changed lifecycle behavior, or nono sandbox requirements.

@@ -193,6 +193,85 @@ workbench open --worktree=atlanta --no-zellij
 
 When a worktree's command exits (e.g. typing `exit` in a claude session), the pane auto-closes (`close_on_exit`). If you later press `o` on that worktree in the sidebar, workbench detects the stale tab (sidebar-only, no running command) and recreates it with a fresh session. If the session is still running, `o` focuses the existing tab.
 
-## nono profile
+## nono sandbox
 
 workbench passes `--allow <worktree-path>` to nono so the sandboxed process can read and write only its own worktree. The profile name comes from the model config entry (`nono_profile`). The built-in `claude` model uses the `claude-code` profile; everything else defaults to `default`.
+
+### Profile setup
+
+The base `claude-code` profile (installed via `nono profile`) covers claude's own state (`~/.claude`, caches, locks). For development you'll likely need a custom profile that extends it with access to your toolchains and repos.
+
+Create `~/.config/nono/profiles/claude-code-local.json`:
+
+```json
+{
+  "extends": ["claude-code"],
+  "meta": {
+    "name": "claude-code-local",
+    "description": "claude-code with project repos, Go toolchain, and SSH agent access"
+  },
+  "filesystem": {
+    "allow": [
+      "$HOME/code/go/pkg",
+      "$HOME/code/go/bin",
+      "$HOME/code/go/src",
+      "$HOME/.workbench",
+      "$HOME/code/myorg",
+      "$HOME/.config/gh"
+    ],
+    "read_file": [
+      "$HOME/.ssh/config",
+      "$HOME/.ssh/id_ed25519.pub"
+    ],
+    "allow_file": [
+      "$HOME/.ssh/known_hosts"
+    ],
+    "unix_socket_subtree": [
+      "/private/tmp"
+    ],
+    "bypass_protection": [
+      "$HOME/.ssh/config",
+      "$HOME/.ssh/known_hosts",
+      "$HOME/.ssh/id_ed25519.pub"
+    ]
+  }
+}
+```
+
+Then reference it in your workbench config:
+
+```yaml
+models:
+  claude:
+    nono_profile: claude-code-local
+    binary: claude
+    args: ["--dangerously-skip-permissions"]
+    resume_args: ["--continue"]
+```
+
+### Key directories to allow
+
+| Path | Why |
+|------|-----|
+| `$HOME/.workbench` | workbench config, worktree base, generated layouts |
+| `$HOME/code/<org>` | Your repo parent directories (worktrees live under `~/.workbench/worktrees/` but the bare repo is here) |
+| `$HOME/code/go/pkg`, `bin`, `src` | Go module cache and toolchain (adjust for your `GOPATH`) |
+| `$HOME/.config/gh` | GitHub CLI auth tokens (needed for `gh` commands and PR lookups) |
+
+### SSH agent access
+
+Git operations inside the sandbox (push, fetch) need access to your SSH agent. The macOS SSH agent uses a Unix socket under `/private/tmp` (the path changes per-boot, e.g. `/private/tmp/com.apple.launchd.xyz/Listeners`). To allow this:
+
+```json
+"unix_socket_subtree": ["/private/tmp"]
+```
+
+You also need read access to your SSH config and public keys, plus write access to `known_hosts`:
+
+```json
+"read_file": ["$HOME/.ssh/config", "$HOME/.ssh/id_ed25519.pub"],
+"allow_file": ["$HOME/.ssh/known_hosts"],
+"bypass_protection": ["$HOME/.ssh/config", "$HOME/.ssh/known_hosts", "$HOME/.ssh/id_ed25519.pub"]
+```
+
+The `bypass_protection` entries are needed because nono's `deny_credentials` security group blocks `~/.ssh` by default. These overrides let the sandbox read your public key and SSH config without exposing private keys.
