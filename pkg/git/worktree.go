@@ -26,3 +26,13 @@ func RemoveWorktree(repoPath, worktreePath string) error {
 	}
 	return nil
 }
+
+func DeleteBranch(repoPath, branch string) error {
+	cmd := exec.Command("git", "-C", repoPath, "branch", "-D", branch)
+	var errBuf bytes.Buffer
+	cmd.Stderr = &errBuf
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("git branch -D: %s", strings.TrimSpace(errBuf.String()))
+	}
+	return nil
+}

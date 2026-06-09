@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -23,28 +24,36 @@ type createWorktreeMsg struct {
 	name string
 	err  error
 }
+type deleteWorktreeMsg struct {
+	name string
+	err  error
+}
 
 type inputMode int
 
 const (
-	modeNormal       inputMode = iota
-	modeAddRepoPath            // waiting for repo path
-	modeAddRepoAlias           // waiting for alias
-	modeNewWorktree            // waiting for worktree name (empty = auto)
+	modeNormal        inputMode = iota
+	modeAddRepoPath             // waiting for repo path
+	modeAddRepoAlias            // waiting for alias
+	modeNewWorktree             // waiting for worktree name (empty = auto)
+	modeConfirmDelete           // waiting for y/n
+	modeOpenWith                // waiting for model name
+	modeHelp                    // showing keybinding help
 )
 
 type Model struct {
-	cfg         *config.Config
-	tree        TreeModel
-	width       int
-	height      int
-	keys        KeyMap
-	err         error
-	msg         string
-	mode           inputMode
-	input          textinput.Model
-	pendingPath    string
-	pendingRepoIdx int
+	cfg                *config.Config
+	tree               TreeModel
+	width              int
+	height             int
+	keys               KeyMap
+	err                error
+	msg                string
+	mode               inputMode
+	input              textinput.Model
+	pendingPath        string
+	pendingRepoIdx     int
+	pendingWorktreeIdx int
 }
 
 func New(cfg *config.Config) *Model {
@@ -97,7 +106,30 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.msg = fmt.Sprintf("created worktree %q", msg.name)
 		}
 
+	case deleteWorktreeMsg:
+		if msg.err != nil {
+			m.err = msg.err
+		} else {
+			newCfg, err := config.Load()
+			if err != nil {
+				m.err = err
+			} else {
+				m.cfg = newCfg
+				m.tree.cfg = newCfg
+			}
+			m.tree.clamp()
+			m.tree.refreshDirty()
+			m.msg = fmt.Sprintf("deleted worktree %q", msg.name)
+		}
+
 	case tea.KeyMsg:
+		if m.mode == modeHelp {
+			m.mode = modeNormal
+			return m, nil
+		}
+		if m.mode == modeConfirmDelete {
+			return m.updateConfirmDelete(msg)
+		}
 		if m.mode != modeNormal {
 			return m.updateInput(msg)
 		}
@@ -128,6 +160,30 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			ti.Focus()
 			m.input = ti
 			m.mode = modeNewWorktree
+		case key.Matches(msg, m.keys.Delete):
+			sel := m.tree.selected()
+			if sel == nil || sel.isRepo {
+				m.err = fmt.Errorf("select a worktree to delete")
+				return m, nil
+			}
+			m.pendingRepoIdx = sel.repoIdx
+			m.pendingWorktreeIdx = sel.worktreeIdx
+			m.mode = modeConfirmDelete
+		case key.Matches(msg, m.keys.OpenWith):
+			sel := m.tree.selected()
+			if sel == nil || sel.isRepo {
+				m.err = fmt.Errorf("select a worktree to open")
+				return m, nil
+			}
+			m.pendingRepoIdx = sel.repoIdx
+			m.pendingWorktreeIdx = sel.worktreeIdx
+			ti := textinput.New()
+			ti.Placeholder = m.cfg.ResolveModel("")
+			ti.Focus()
+			m.input = ti
+			m.mode = modeOpenWith
+		case key.Matches(msg, m.keys.Help):
+			m.mode = modeHelp
 		case key.Matches(msg, m.keys.AddRepo):
 			ti := textinput.New()
 			ti.Placeholder = "/path/to/repo"
@@ -148,6 +204,14 @@ func (m *Model) updateInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "enter":
 		val := strings.TrimSpace(m.input.Value())
+
+		if m.mode == modeOpenWith {
+			m.mode = modeNormal
+			if val == "" {
+				return m, nil
+			}
+			return m, m.openSelected(val)
+		}
 
 		if m.mode == modeNewWorktree {
 			return m, m.createWorktree(val)
@@ -267,6 +331,44 @@ func (m *Model) createWorktree(nameInput string) tea.Cmd {
 	}
 }
 
+func (m *Model) updateConfirmDelete(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "y", "Y":
+		m.mode = modeNormal
+		return m, m.deleteWorktree()
+	default:
+		m.mode = modeNormal
+		m.msg = "delete cancelled"
+		return m, nil
+	}
+}
+
+func (m *Model) deleteWorktree() tea.Cmd {
+	repoIdx := m.pendingRepoIdx
+	wtIdx := m.pendingWorktreeIdx
+	cfg := m.cfg
+
+	return func() tea.Msg {
+		repo := cfg.Repos[repoIdx]
+		wt := repo.Worktrees[wtIdx]
+
+		_ = repo.RunCleanup(wt.Path, wt.Name)
+
+		if err := git.RemoveWorktree(repo.LocalPath, wt.Path); err != nil {
+			return deleteWorktreeMsg{err: err}
+		}
+
+		_ = git.DeleteBranch(repo.LocalPath, wt.Branch)
+
+		repo.Worktrees = slices.Delete(repo.Worktrees, wtIdx, wtIdx+1)
+		cfg.Repos[repoIdx] = repo
+		if err := cfg.Save(); err != nil {
+			return deleteWorktreeMsg{err: err}
+		}
+		return deleteWorktreeMsg{name: wt.Name}
+	}
+}
+
 func (m *Model) openSelected(modelOverride string) tea.Cmd {
 	sel := m.tree.selected()
 	if sel == nil || sel.isRepo {
@@ -324,6 +426,33 @@ func (m *Model) View() string {
 		sb.WriteString(styleMuted.Render("repo path: ") + m.input.View())
 	case modeAddRepoAlias:
 		sb.WriteString(styleMuted.Render("alias: ") + m.input.View())
+	case modeConfirmDelete:
+		wt := m.cfg.Repos[m.pendingRepoIdx].Worktrees[m.pendingWorktreeIdx]
+		sb.WriteString(styleDirty.Render(fmt.Sprintf("delete worktree %q? [y/n]", wt.Name)))
+	case modeOpenWith:
+		models := make([]string, 0, len(m.cfg.Models))
+		for k := range m.cfg.Models {
+			models = append(models, k)
+		}
+		slices.Sort(models)
+		sb.WriteString(styleMuted.Render(fmt.Sprintf("model (%s): ", strings.Join(models, "/"))) + m.input.View())
+	case modeHelp:
+		help := strings.Join([]string{
+			"j/↑      up",
+			"k/↓      down",
+			"enter/o  open worktree",
+			"O        open with model",
+			"n        new worktree",
+			"d        delete worktree",
+			"space    expand/collapse",
+			"A        add repo",
+			"r        refresh",
+			"?        this help",
+			"q/esc    quit",
+			"",
+			styleMuted.Render("press any key to close"),
+		}, "\n")
+		sb.WriteString(help)
 	default:
 		sb.WriteString(styleSelected.Render(m.tree.breadcrumb()))
 		sb.WriteString("\n")
