@@ -2,18 +2,7 @@
 
 A sandboxed git worktree manager. Each piece of work gets its own git worktree running inside a [nono](https://github.com/panamafrancis/nono) security sandbox. A persistent Zellij sidebar shows your worktrees; selecting one opens a new Zellij tab with your chosen LLM sandboxed via nono.
 
-```
-┌─────────────────────────────────────────────────┐
-│ workbench                            [?] help    │
-├─────────────────────────────────────────────────┤
-│ ▼ scoring-service (ss)                          │
-│   ● atlanta    wt/ss/atlanta  [claude]          │
-│   ● oslo       wt/ss/oslo     [codex]           │
-│ ▶ payments-api (pay)   [2 worktrees]            │
-├─────────────────────────────────────────────────┤
-│ [n]ew  [o]pen  [d]el  [r]efresh  [q]uit        │
-└─────────────────────────────────────────────────┘
-```
+![workbench](docs/screenshot.png)
 
 ## Requirements
 
@@ -46,7 +35,7 @@ Copy `scripts/wb.kdl` to your Zellij layouts directory:
 cp scripts/wb.kdl ~/.config/zellij/layouts/wb.kdl
 ```
 
-This layout opens a 36-column sidebar running `workbench ls` alongside a shell pane.
+This layout opens a resizable sidebar running `workbench ls` alongside a shell pane.
 
 ### 2. Start a session
 
