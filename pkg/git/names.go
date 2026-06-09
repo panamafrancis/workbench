@@ -2,7 +2,7 @@ package git
 
 import (
 	"fmt"
-	"math/rand"
+	"math/rand/v2"
 	"regexp"
 )
 
@@ -34,13 +34,15 @@ func GenerateName(existing []string) (string, error) {
 	for _, n := range existing {
 		taken[n] = true
 	}
-	// Shuffle to avoid always starting with "bold-atlanta".
+	// Shuffle deterministically based on the number of existing names so the
+	// result is stable for the same input but varies as worktrees are added.
+	rng := rand.New(rand.NewPCG(uint64(len(existing)), 0))
 	adjs := make([]string, len(adjectives))
 	copy(adjs, adjectives)
-	rand.Shuffle(len(adjs), func(i, j int) { adjs[i], adjs[j] = adjs[j], adjs[i] })
+	rng.Shuffle(len(adjs), func(i, j int) { adjs[i], adjs[j] = adjs[j], adjs[i] })
 	ctys := make([]string, len(cities))
 	copy(ctys, cities)
-	rand.Shuffle(len(ctys), func(i, j int) { ctys[i], ctys[j] = ctys[j], ctys[i] })
+	rng.Shuffle(len(ctys), func(i, j int) { ctys[i], ctys[j] = ctys[j], ctys[i] })
 
 	for _, adj := range adjs {
 		for _, city := range ctys {
