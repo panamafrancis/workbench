@@ -10,7 +10,7 @@ import (
 func TestWriteTabLayoutPath(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
-	path, err := WriteTabLayout("myworktree", "/wt/path", []string{"run", "--profile", "claude-code", "--allow", "/wt/path", "--", "claude"})
+	path, err := WriteTabLayout("myworktree", "/wt/path", "15%", []string{"run", "--profile", "claude-code", "--allow", "/wt/path", "--", "claude"})
 	if err != nil {
 		t.Fatalf("WriteTabLayout() error = %v", err)
 	}
@@ -26,7 +26,7 @@ func TestWriteTabLayoutContent(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
 	nonoArgs := []string{"run", "--profile", "claude-code", "--allow", "/wt/path", "--", "claude"}
-	path, err := WriteTabLayout("atlanta", "/wt/path", nonoArgs)
+	path, err := WriteTabLayout("atlanta", "/wt/path", "15%", nonoArgs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,6 +41,7 @@ func TestWriteTabLayoutContent(t *testing.T) {
 		desc    string
 		contain string
 	}{
+		{"sidebar width", `size="15%"`},
 		{"pane name", `pane name="atlanta"`},
 		{"cwd", `cwd="/wt/path"`},
 		{"command nono", `command "nono"`},
@@ -59,7 +60,7 @@ func TestWriteTabLayoutQuotesArgs(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
 	// Arg containing a double-quote must be escaped.
-	path, err := WriteTabLayout("tab", "/wt", []string{`has"quote`})
+	path, err := WriteTabLayout("tab", "/wt", "15%", []string{`has"quote`})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +73,7 @@ func TestWriteTabLayoutQuotesArgs(t *testing.T) {
 func TestWriteTabLayoutCreatesDir(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
-	path, err := WriteTabLayout("x", "/wt", []string{"nono"})
+	path, err := WriteTabLayout("x", "/wt", "15%", []string{"nono"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,11 +85,11 @@ func TestWriteTabLayoutCreatesDir(t *testing.T) {
 func TestWriteTabLayoutOverwrites(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
-	_, err := WriteTabLayout("tab", "/old", []string{"old"})
+	_, err := WriteTabLayout("tab", "/old", "15%", []string{"old"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	path, err := WriteTabLayout("tab", "/new", []string{"new"})
+	path, err := WriteTabLayout("tab", "/new", "15%", []string{"new"})
 	if err != nil {
 		t.Fatal(err)
 	}

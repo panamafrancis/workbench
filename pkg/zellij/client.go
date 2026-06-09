@@ -19,8 +19,8 @@ func IsInZellij() bool {
 	return os.Getenv("ZELLIJ") != ""
 }
 
-func OpenTab(name, cwd string, nonoArgs []string) error {
-	layoutPath, err := WriteTabLayout(name, cwd, nonoArgs)
+func OpenTab(name, cwd, sidebarWidth string, nonoArgs []string) error {
+	layoutPath, err := WriteTabLayout(name, cwd, sidebarWidth, nonoArgs)
 	if err != nil {
 		return err
 	}
@@ -57,16 +57,48 @@ func TabNames() (map[string]bool, error) {
 	return names, nil
 }
 
-func OpenOrFocusTab(name, cwd string, nonoArgs []string) (created bool, err error) {
+func tabHasCommandPane(tabName string) bool {
+	stdout, _, err := runZellij("dump-layout")
+	if err != nil {
+		return true
+	}
+	inTab := false
+	for _, line := range strings.Split(stdout, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.Contains(trimmed, "tab name=\""+tabName+"\"") {
+			inTab = true
+			continue
+		}
+		if inTab && strings.HasPrefix(trimmed, "tab ") {
+			break
+		}
+		if inTab && strings.Contains(trimmed, "command=") && !strings.Contains(trimmed, "name=\"sidebar\"") {
+			return true
+		}
+	}
+	return false
+}
+
+func closeTab(name string) {
+	if err := GoToTab(name); err != nil {
+		return
+	}
+	_, _, _ = runZellij("close-tab")
+}
+
+func OpenOrFocusTab(name, cwd, sidebarWidth string, nonoArgs []string) (created bool, err error) {
 	tabs, queryErr := TabNames()
 	if queryErr != nil {
-		err = OpenTab(name, cwd, nonoArgs)
+		err = OpenTab(name, cwd, sidebarWidth, nonoArgs)
 		return err == nil, err
 	}
 	if tabs[name] {
-		return false, GoToTab(name)
+		if tabHasCommandPane(name) {
+			return false, GoToTab(name)
+		}
+		closeTab(name)
 	}
-	err = OpenTab(name, cwd, nonoArgs)
+	err = OpenTab(name, cwd, sidebarWidth, nonoArgs)
 	return err == nil, err
 }
 

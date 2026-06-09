@@ -17,6 +17,7 @@ type Config struct {
 	DefaultModel        string           `yaml:"default_model"`
 	WorktreeBase        string           `yaml:"worktree_base"`
 	DefaultZellijLayout string           `yaml:"default_zellij_layout"`
+	SidebarWidth        string           `yaml:"sidebar_width"`
 	Models              map[string]Model `yaml:"models"`
 	Repos               []Repo           `yaml:"repos"`
 }
@@ -154,6 +155,13 @@ func (c *Config) AllWorktreeNames() []string {
 		}
 	}
 	return names
+}
+
+func (c *Config) ResolveSidebarWidth() string {
+	if c.SidebarWidth != "" {
+		return c.SidebarWidth
+	}
+	return "15%"
 }
 
 func (c *Config) ResolveModel(model string) string {
