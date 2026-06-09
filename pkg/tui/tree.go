@@ -87,6 +87,17 @@ func (t *TreeModel) selected() *item {
 	return &it
 }
 
+func (t *TreeModel) breadcrumb() string {
+	sel := t.selected()
+	if sel == nil {
+		return "workbench"
+	}
+	if sel.isRepo {
+		return "workbench  ›  " + sel.alias
+	}
+	return "workbench  ›  " + sel.alias + "  ›  " + sel.worktreeName
+}
+
 func (t *TreeModel) refreshDirty() {
 	for _, r := range t.cfg.Repos {
 		for _, w := range r.Worktrees {

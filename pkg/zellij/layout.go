@@ -22,8 +22,8 @@ func WriteTabLayout(name, cwd string, nonoArgs []string) (string, error) {
 	}
 
 	kdl := fmt.Sprintf(`layout {
-    pane split_direction="horizontal" {
-        pane size="36" name="sidebar" {
+    pane split_direction="vertical" {
+        pane size="15%%" name="sidebar" {
             command "workbench"
             args "ls"
         }

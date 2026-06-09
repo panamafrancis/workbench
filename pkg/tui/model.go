@@ -229,6 +229,8 @@ func (m *Model) View() string {
 	case modeAddRepoAlias:
 		sb.WriteString(styleMuted.Render("alias: ") + m.input.View())
 	default:
+		sb.WriteString(styleSelected.Render(m.tree.breadcrumb()))
+		sb.WriteString("\n")
 		if m.err != nil {
 			sb.WriteString(styleDirty.Render("error: " + m.err.Error()))
 		} else if m.msg != "" {
