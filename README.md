@@ -78,11 +78,14 @@ Auto-generated names are `<adjective>-<city>` (e.g. `bold-atlanta`). Names are g
 | `Space` / `Tab` | Collapse/expand repo |
 | `n` | New worktree |
 | `d` | Delete worktree |
+| `A` | Add repo |
 | `r` | Refresh dirty status |
 | `?` | Toggle help |
 | `q` / `Esc` | Quit |
 
 Mouse: click a repo header to collapse/expand; click a row to select.
+
+The sidebar refreshes automatically when its pane gains focus (e.g. switching back from a worktree tab), so the `▶` running indicators stay up to date without pressing `r`.
 
 ## Configuration
 
@@ -101,12 +104,14 @@ version: 1
 default_model: claude
 worktree_base: ""          # empty = ~/.workbench/worktrees/
 default_zellij_layout: ""
+sidebar_width: "15%"       # sidebar pane width in new worktree tabs
 
 models:
   claude:
     nono_profile: claude-code
     binary: claude
     args: []
+    resume_args: ["--continue"]  # appended when reopening an existing session
   codex:
     nono_profile: default
     binary: codex
@@ -158,14 +163,23 @@ repos:
     cleanup_script: /path/to/teardown.sh # runs on workbench rm worktree
 ```
 
+### Sidebar width
+
+Set `sidebar_width` to control the sidebar pane width in new worktree tabs (default `"15%"`). Already-open tabs are not affected — this is a Zellij limitation.
+
+```yaml
+sidebar_width: "20%"
+```
+
 ## How `open` works
 
 ```
 workbench open --repo=ss --worktree=atlanta --model=claude
   1. Resolve model → look up nono profile and binary from config
-  2. Run startup_script (if configured)
-  3. Write ~/.workbench/layouts/atlanta.kdl
-  4. zellij action new-tab --name atlanta --layout ~/.workbench/layouts/atlanta.kdl
+  2. If a tab with the same name exists but its command has exited, close it
+  3. Run startup_script (if configured)
+  4. Write ~/.workbench/layouts/atlanta.kdl
+  5. zellij action new-tab --name atlanta --layout ~/.workbench/layouts/atlanta.kdl
 ```
 
 Outside Zellij, use `--no-zellij` to print the raw command instead:
@@ -174,6 +188,10 @@ Outside Zellij, use `--no-zellij` to print the raw command instead:
 workbench open --worktree=atlanta --no-zellij
 # cd /path/to/worktree && nono "run" "--profile" "claude-code" ...
 ```
+
+## Session lifecycle
+
+When a worktree's command exits (e.g. typing `exit` in a claude session), the pane auto-closes (`close_on_exit`). If you later press `o` on that worktree in the sidebar, workbench detects the stale tab (sidebar-only, no running command) and recreates it with a fresh session. If the session is still running, `o` focuses the existing tab.
 
 ## nono profile
 
