@@ -38,10 +38,6 @@ var (
 	styleStatusBar = lipgloss.NewStyle().
 			Foreground(colorMuted)
 
-	styleBorder = lipgloss.NewStyle().
-			BorderStyle(lipgloss.NormalBorder()).
-			BorderForeground(colorMuted)
-
 	stylePRDraft  = lipgloss.NewStyle().Foreground(colorMuted)
 	stylePROpen   = lipgloss.NewStyle().Foreground(colorGreen)
 	stylePRMerged = lipgloss.NewStyle().Foreground(colorMagenta)

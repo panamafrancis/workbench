@@ -1,6 +1,7 @@
 package github
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -41,7 +42,7 @@ type ghPR struct {
 }
 
 func LookupPR(repoPath, branch string) (*PRInfo, error) {
-	cmd := exec.Command("gh", "pr", "list",
+	cmd := exec.CommandContext(context.Background(), "gh", "pr", "list",
 		"--head", branch,
 		"--state", "all",
 		"--json", "number,state,title,url,isDraft,updatedAt",

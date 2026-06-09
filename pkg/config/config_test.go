@@ -7,11 +7,9 @@ import (
 	"time"
 )
 
-func isolatedHome(t *testing.T) string {
+func isolatedHome(t *testing.T) {
 	t.Helper()
-	dir := t.TempDir()
-	t.Setenv("HOME", dir)
-	return dir
+	t.Setenv("HOME", t.TempDir())
 }
 
 func TestDefaultConfig(t *testing.T) {

@@ -2,12 +2,13 @@ package git
 
 import (
 	"bytes"
+	"context"
 	"os/exec"
 	"strings"
 )
 
 func IsDirty(worktreePath string) bool {
-	cmd := exec.Command("git", "-C", worktreePath, "status", "--porcelain")
+	cmd := exec.CommandContext(context.Background(), "git", "-C", worktreePath, "status", "--porcelain")
 	out, err := cmd.Output()
 	if err != nil {
 		return false
@@ -16,7 +17,7 @@ func IsDirty(worktreePath string) bool {
 }
 
 func BranchName(worktreePath string) string {
-	cmd := exec.Command("git", "-C", worktreePath, "rev-parse", "--abbrev-ref", "HEAD")
+	cmd := exec.CommandContext(context.Background(), "git", "-C", worktreePath, "rev-parse", "--abbrev-ref", "HEAD")
 	out, err := cmd.Output()
 	if err != nil {
 		return "unknown"
