@@ -39,6 +39,12 @@ type deleteWorktreeMsg struct {
 }
 type openDoneMsg struct{}
 type tickMsg time.Time
+type dirtyMsg struct {
+	dirty map[string]bool
+}
+type runningMsg struct {
+	tabs map[string]bool
+}
 
 type prBatchDoneMsg struct {
 	ghErr error
@@ -91,8 +97,6 @@ func New(cfg *config.Config) *Model {
 	zellij.CleanupStaleLayouts(validNames)
 
 	t := newTree(cfg, cache)
-	t.refreshDirty()
-	t.refreshRunning()
 	return &Model{
 		cfg:         cfg,
 		tree:        t,
@@ -104,7 +108,12 @@ func New(cfg *config.Config) *Model {
 }
 
 func (m *Model) Init() tea.Cmd {
-	return tea.Batch(m.tickCmd(), m.fetchVisibleCmd(true))
+	return tea.Batch(
+		m.tickCmd(),
+		m.fetchVisibleCmd(true),
+		refreshDirtyCmd(m.cfg),
+		refreshRunningCmd(),
+	)
 }
 
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -114,13 +123,18 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 
 	case tickMsg:
-		m.tree.refreshRunning()
 		var cmds []tea.Cmd
-		cmds = append(cmds, m.tickCmd())
+		cmds = append(cmds, m.tickCmd(), refreshRunningCmd())
 		if m.ghAvailable && !m.fetching {
 			cmds = append(cmds, m.fetchStaleCmd())
 		}
 		return m, tea.Batch(cmds...)
+
+	case dirtyMsg:
+		m.tree.dirty = msg.dirty
+
+	case runningMsg:
+		m.tree.openTabs = msg.tabs
 
 	case prBatchDoneMsg:
 		m.fetching = false
@@ -148,18 +162,18 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cfg = newCfg
 			m.tree.cfg = newCfg
 		}
-		m.tree.refreshDirty()
-		m.tree.refreshRunning()
-		cmd := m.fetchVisibleCmd(true)
-		if cmd != nil {
+		cmds := []tea.Cmd{refreshDirtyCmd(m.cfg), refreshRunningCmd()}
+		fetchCmd := m.fetchVisibleCmd(true)
+		if fetchCmd != nil {
 			m.msg = "refreshing..."
+			cmds = append(cmds, fetchCmd)
 		} else {
 			m.msg = "refreshed (sync in progress)"
 		}
-		return m, cmd
+		return m, tea.Batch(cmds...)
 
 	case openDoneMsg:
-		m.tree.refreshRunning()
+		return m, refreshRunningCmd()
 
 	case openErrMsg:
 		m.err = msg.err
@@ -175,8 +189,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.cfg = newCfg
 				m.tree.cfg = newCfg
 			}
-			m.tree.refreshDirty()
 			m.msg = fmt.Sprintf("created worktree %q", msg.name)
+			return m, refreshDirtyCmd(m.cfg)
 		}
 
 	case deleteWorktreeMsg:
@@ -191,8 +205,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.tree.cfg = newCfg
 			}
 			m.tree.clamp()
-			m.tree.refreshDirty()
 			m.msg = fmt.Sprintf("deleted worktree %q", msg.name)
+			return m, refreshDirtyCmd(m.cfg)
 		}
 
 	case tea.KeyMsg:

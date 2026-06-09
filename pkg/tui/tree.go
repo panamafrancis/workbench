@@ -5,7 +5,9 @@ import (
 	"os"
 	"strings"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+
 	"github.com/panamafrancis/workbench/pkg/config"
 	"github.com/panamafrancis/workbench/pkg/git"
 	"github.com/panamafrancis/workbench/pkg/github"
@@ -105,24 +107,30 @@ func (t *TreeModel) breadcrumb() string {
 	return "workbench  ›  " + sel.alias + "  ›  " + sel.worktreeName
 }
 
-func (t *TreeModel) refreshRunning() {
-	if !zellij.IsInZellij() {
-		return
+func refreshRunningCmd() tea.Cmd {
+	return func() tea.Msg {
+		if !zellij.IsInZellij() {
+			return runningMsg{}
+		}
+		tabs, err := zellij.TabNames()
+		if err != nil {
+			return runningMsg{}
+		}
+		return runningMsg{tabs: tabs}
 	}
-	tabs, err := zellij.TabNames()
-	if err != nil {
-		return
-	}
-	t.openTabs = tabs
 }
 
-func (t *TreeModel) refreshDirty() {
-	for _, r := range t.cfg.Repos {
-		for _, w := range r.Worktrees {
-			if _, err := os.Stat(w.Path); err == nil {
-				t.dirty[w.Name] = git.IsDirty(w.Path)
+func refreshDirtyCmd(cfg *config.Config) tea.Cmd {
+	return func() tea.Msg {
+		dirty := make(map[string]bool)
+		for _, r := range cfg.Repos {
+			for _, w := range r.Worktrees {
+				if _, err := os.Stat(w.Path); err == nil {
+					dirty[w.Name] = git.IsDirty(w.Path)
+				}
 			}
 		}
+		return dirtyMsg{dirty: dirty}
 	}
 }
 

@@ -1,10 +1,12 @@
 package config
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -183,14 +185,20 @@ func runScript(script, worktreePath, worktreeName string) error {
 	if _, err := os.Stat(script); err != nil {
 		return fmt.Errorf("script not found: %s", script)
 	}
-	// Pass "--" so a script path beginning with "-" is never treated as a flag.
 	cmd := exec.Command("bash", "--", script)
 	cmd.Env = append(os.Environ(),
 		"WORKBENCH_WORKTREE_PATH="+worktreePath,
 		"WORKBENCH_WORKTREE_NAME="+worktreeName,
 	)
 	cmd.Dir = worktreePath
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	var errBuf bytes.Buffer
+	cmd.Stderr = &errBuf
+	if err := cmd.Run(); err != nil {
+		msg := strings.TrimSpace(errBuf.String())
+		if msg != "" {
+			return fmt.Errorf("%s: %s", script, msg)
+		}
+		return fmt.Errorf("%s: %w", script, err)
+	}
+	return nil
 }
