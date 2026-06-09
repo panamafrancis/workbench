@@ -25,8 +25,8 @@ type TreeModel struct {
 	prCache   *github.Cache
 	collapsed map[string]bool // keyed by repo alias
 	cursor    int
-	dirty     map[string]bool   // keyed by worktree name
-	openTabs  map[string]bool   // raw result from zellij.TabNames()
+	dirty     map[string]bool // keyed by worktree name
+	openTabs  map[string]bool // raw result from zellij.TabNames()
 }
 
 func newTree(cfg *config.Config, prCache *github.Cache) TreeModel {
@@ -172,10 +172,15 @@ func (t *TreeModel) view(width int) string {
 			model := styleMuted.Render("[" + w.Model + "]")
 			line := fmt.Sprintf("  ● %-18s %s", w.Name, w.Branch)
 			suffix := dirty + running + " " + model + prSuffix
-			if width > 0 && len(line)+len(suffix) > width {
-				avail := width - len(suffix)
+			// Measure in display columns: rendered segments carry ANSI
+			// escapes and icons are multi-byte, so byte length overcounts.
+			if width > 0 && lipgloss.Width(line)+lipgloss.Width(suffix) > width {
+				avail := width - lipgloss.Width(suffix)
 				if avail > 0 {
-					line = line[:min(len(line), avail)]
+					runes := []rune(line)
+					if len(runes) > avail {
+						line = string(runes[:avail])
+					}
 				}
 			}
 
