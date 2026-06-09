@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/panamafrancis/workbench/pkg/git"
+	"github.com/panamafrancis/workbench/pkg/zellij"
 )
 
 var rmWorktreeCmd = &cobra.Command{
@@ -22,7 +23,13 @@ var rmWorktreeCmd = &cobra.Command{
 			return fmt.Errorf("worktree %q not found", name)
 		}
 
-		fmt.Printf("Remove worktree %q at %s? [y/N] ", name, wt.Path)
+		prompt := fmt.Sprintf("Remove worktree %q at %s?", name, wt.Path)
+		if zellij.IsInZellij() {
+			if tabs, err := zellij.TabNames(); err == nil && tabs[name] {
+				prompt = fmt.Sprintf("Worktree %q has a running Zellij tab. Remove anyway?", name)
+			}
+		}
+		fmt.Printf("%s [y/N] ", prompt)
 		r := bufio.NewReader(os.Stdin)
 		line, _ := r.ReadString('\n')
 		if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(line)), "y") {
@@ -55,6 +62,7 @@ var rmWorktreeCmd = &cobra.Command{
 		if err := cfg.Save(); err != nil {
 			return err
 		}
+		zellij.CleanupLayout(name)
 		fmt.Printf("removed worktree %q\n", name)
 		return nil
 	},

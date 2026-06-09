@@ -55,11 +55,16 @@ var openCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		if err := repo.RunStartup(wt.Path, wt.Name); err != nil {
-			return fmt.Errorf("startup script: %w", err)
+		created, err := zellij.OpenOrFocusTab(wt.Name, wt.Path, nonoArgs)
+		if err != nil {
+			return err
 		}
-
-		return zellij.OpenTab(wt.Name, wt.Path, nonoArgs)
+		if created {
+			if err := repo.RunStartup(wt.Path, wt.Name); err != nil {
+				return fmt.Errorf("startup script: %w", err)
+			}
+		}
+		return nil
 	},
 }
 

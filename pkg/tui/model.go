@@ -37,6 +37,7 @@ type deleteWorktreeMsg struct {
 	name string
 	err  error
 }
+type openDoneMsg struct{}
 type tickMsg time.Time
 
 type prBatchDoneMsg struct {
@@ -83,8 +84,15 @@ func New(cfg *config.Config) *Model {
 	cache := github.NewCache(config.PRCachePath())
 	_ = cache.Load()
 
+	validNames := make(map[string]bool)
+	for _, name := range cfg.AllWorktreeNames() {
+		validNames[name] = true
+	}
+	zellij.CleanupStaleLayouts(validNames)
+
 	t := newTree(cfg, cache)
 	t.refreshDirty()
+	t.refreshRunning()
 	return &Model{
 		cfg:         cfg,
 		tree:        t,
@@ -106,6 +114,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 
 	case tickMsg:
+		m.tree.refreshRunning()
 		var cmds []tea.Cmd
 		cmds = append(cmds, m.tickCmd())
 		if m.ghAvailable && !m.fetching {
@@ -140,6 +149,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.tree.cfg = newCfg
 		}
 		m.tree.refreshDirty()
+		m.tree.refreshRunning()
 		cmd := m.fetchVisibleCmd(true)
 		if cmd != nil {
 			m.msg = "refreshing..."
@@ -147,6 +157,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.msg = "refreshed (sync in progress)"
 		}
 		return m, cmd
+
+	case openDoneMsg:
+		m.tree.refreshRunning()
 
 	case openErrMsg:
 		m.err = msg.err
@@ -456,17 +469,20 @@ func (m *Model) openSelected(modelOverride string) tea.Cmd {
 		if !zellij.IsInZellij() {
 			return openErrMsg{fmt.Errorf("not inside a Zellij session")}
 		}
-		if err := repo.RunStartup(wt.Path, wt.Name); err != nil {
-			return openErrMsg{fmt.Errorf("startup script: %w", err)}
-		}
 		nonoArgs, err := sandbox.BuildNonoArgs(wt.Path, modelKey, m.cfg)
 		if err != nil {
 			return openErrMsg{err}
 		}
-		if err := zellij.OpenTab(wt.Name, wt.Path, nonoArgs); err != nil {
+		created, err := zellij.OpenOrFocusTab(wt.Name, wt.Path, nonoArgs)
+		if err != nil {
 			return openErrMsg{err}
 		}
-		return nil
+		if created {
+			if err := repo.RunStartup(wt.Path, wt.Name); err != nil {
+				return openErrMsg{fmt.Errorf("startup script: %w", err)}
+			}
+		}
+		return openDoneMsg{}
 	}
 }
 

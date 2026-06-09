@@ -9,6 +9,7 @@ import (
 	"github.com/panamafrancis/workbench/pkg/config"
 	"github.com/panamafrancis/workbench/pkg/git"
 	"github.com/panamafrancis/workbench/pkg/github"
+	"github.com/panamafrancis/workbench/pkg/zellij"
 )
 
 type item struct {
@@ -24,7 +25,8 @@ type TreeModel struct {
 	prCache   *github.Cache
 	collapsed map[string]bool // keyed by repo alias
 	cursor    int
-	dirty     map[string]bool // keyed by worktree name
+	dirty     map[string]bool   // keyed by worktree name
+	openTabs  map[string]bool   // raw result from zellij.TabNames()
 }
 
 func newTree(cfg *config.Config, prCache *github.Cache) TreeModel {
@@ -103,6 +105,17 @@ func (t *TreeModel) breadcrumb() string {
 	return "workbench  ›  " + sel.alias + "  ›  " + sel.worktreeName
 }
 
+func (t *TreeModel) refreshRunning() {
+	if !zellij.IsInZellij() {
+		return
+	}
+	tabs, err := zellij.TabNames()
+	if err != nil {
+		return
+	}
+	t.openTabs = tabs
+}
+
 func (t *TreeModel) refreshDirty() {
 	for _, r := range t.cfg.Repos {
 		for _, w := range r.Worktrees {
@@ -152,9 +165,13 @@ func (t *TreeModel) view(width int) string {
 				dirty = styleDirty.Render("*")
 			}
 
+			running := ""
+			if t.openTabs[w.Name] {
+				running = " ▶"
+			}
 			model := styleMuted.Render("[" + w.Model + "]")
 			line := fmt.Sprintf("  ● %-18s %s", w.Name, w.Branch)
-			suffix := dirty + " " + model + prSuffix
+			suffix := dirty + running + " " + model + prSuffix
 			if width > 0 && len(line)+len(suffix) > width {
 				avail := width - len(suffix)
 				if avail > 0 {
@@ -165,12 +182,14 @@ func (t *TreeModel) view(width int) string {
 			if selected {
 				sb.WriteString(selStyle.Render(line))
 				sb.WriteString(dirty)
+				sb.WriteString(selStyle.Render(running))
 				sb.WriteString(" ")
 				sb.WriteString(model)
 				sb.WriteString(selStyle.Render(prSuffix))
 			} else {
 				sb.WriteString(lineStyle.Render(line))
 				sb.WriteString(dirty)
+				sb.WriteString(lineStyle.Render(running))
 				sb.WriteString(" ")
 				sb.WriteString(model)
 				sb.WriteString(lineStyle.Render(prSuffix))
