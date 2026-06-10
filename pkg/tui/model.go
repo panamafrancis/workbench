@@ -44,6 +44,7 @@ type dirtyMsg struct {
 }
 type runningMsg struct {
 	tabs map[string]bool
+	err  error
 }
 
 type prBatchDoneMsg struct {
@@ -86,6 +87,8 @@ type Model struct {
 	pendingRepoIdx     int
 	pendingWorktreeIdx int
 	isSidebar          bool
+	zellijHint         string
+	refreshingTabs     bool
 }
 
 func New(cfg *config.Config) *Model {
@@ -110,12 +113,20 @@ func New(cfg *config.Config) *Model {
 	}
 }
 
+func (m *Model) refreshRunningGuarded() tea.Cmd {
+	if m.refreshingTabs {
+		return nil
+	}
+	m.refreshingTabs = true
+	return refreshRunningCmd()
+}
+
 func (m *Model) Init() tea.Cmd {
 	return tea.Batch(
 		m.tickCmd(),
 		m.fetchVisibleCmd(true),
 		refreshDirtyCmd(m.cfg),
-		refreshRunningCmd(),
+		m.refreshRunningGuarded(),
 	)
 }
 
@@ -126,7 +137,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 
 	case tea.FocusMsg:
-		return m, tea.Batch(refreshRunningCmd(), refreshDirtyCmd(m.cfg))
+		return m, tea.Batch(m.refreshRunningGuarded(), refreshDirtyCmd(m.cfg))
 
 	case tea.MouseMsg:
 		if msg.Action == tea.MouseActionRelease && msg.Button == tea.MouseButtonLeft {
@@ -136,7 +147,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tickMsg:
 		var cmds []tea.Cmd
-		cmds = append(cmds, m.tickCmd(), refreshRunningCmd())
+		cmds = append(cmds, m.tickCmd(), m.refreshRunningGuarded())
 		if m.ghAvailable && !m.fetching {
 			cmds = append(cmds, m.fetchStaleCmd())
 		}
@@ -146,7 +157,17 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.tree.dirty = msg.dirty
 
 	case runningMsg:
-		m.tree.openTabs = msg.tabs
+		m.refreshingTabs = false
+		if msg.err != nil {
+			if errors.Is(msg.err, zellij.ErrCircuitOpen) {
+				m.zellijHint = "zellij unreachable"
+			} else {
+				m.zellijHint = "tab sync error"
+			}
+		} else {
+			m.tree.openTabs = msg.tabs
+			m.zellijHint = ""
+		}
 
 	case prBatchDoneMsg:
 		m.fetching = false
@@ -174,7 +195,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cfg = newCfg
 			m.tree.cfg = newCfg
 		}
-		cmds := []tea.Cmd{refreshDirtyCmd(m.cfg), refreshRunningCmd()}
+		cmds := []tea.Cmd{refreshDirtyCmd(m.cfg), m.refreshRunningGuarded()}
 		fetchCmd := m.fetchVisibleCmd(true)
 		if fetchCmd != nil {
 			m.msg = "refreshing..."
@@ -185,7 +206,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 
 	case openDoneMsg:
-		return m, refreshRunningCmd()
+		return m, m.refreshRunningGuarded()
 
 	case openErrMsg:
 		m.err = msg.err
@@ -621,6 +642,9 @@ func (m *Model) contextFooter() string {
 		parts = append(parts, "⟳")
 	} else if m.ghHint != "" {
 		parts = append(parts, "("+m.ghHint+")")
+	}
+	if m.zellijHint != "" {
+		parts = append(parts, "("+m.zellijHint+")")
 	}
 
 	footer := strings.Join(parts, " ")

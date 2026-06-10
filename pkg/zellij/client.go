@@ -3,17 +3,31 @@ package zellij
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/panamafrancis/workbench/pkg/config"
 )
 
-const cmdTimeout = 30 * time.Second
+const (
+	cmdTimeout  = 30 * time.Second
+	cbThreshold = 3
+	cbCooldown  = 60 * time.Second
+)
+
+var ErrCircuitOpen = errors.New("zellij: circuit breaker open (server unresponsive)")
+
+var breaker struct {
+	mu          sync.Mutex
+	failures    int
+	lastFailure time.Time
+}
 
 func IsInZellij() bool {
 	return os.Getenv("ZELLIJ") != ""
@@ -30,7 +44,10 @@ func OpenTab(name, cwd, sidebarWidth string, nonoArgs []string, envVars map[stri
 		"--layout", layoutPath,
 	)
 	if err != nil {
-		return fmt.Errorf("zellij: %s", strings.TrimSpace(stderr))
+		if s := strings.TrimSpace(stderr); s != "" {
+			return fmt.Errorf("zellij: %s", s)
+		}
+		return fmt.Errorf("zellij: %w", err)
 	}
 	return nil
 }
@@ -38,7 +55,10 @@ func OpenTab(name, cwd, sidebarWidth string, nonoArgs []string, envVars map[stri
 func GoToTab(name string) error {
 	_, stderr, err := runZellij("go-to-tab-name", name)
 	if err != nil {
-		return fmt.Errorf("zellij go-to-tab: %s", strings.TrimSpace(stderr))
+		if s := strings.TrimSpace(stderr); s != "" {
+			return fmt.Errorf("zellij go-to-tab: %s", s)
+		}
+		return fmt.Errorf("zellij go-to-tab: %w", err)
 	}
 	return nil
 }
@@ -89,6 +109,9 @@ func closeTab(name string) {
 func OpenOrFocusTab(name, cwd, sidebarWidth string, nonoArgs []string, envVars map[string]string) (created bool, err error) {
 	tabs, queryErr := TabNames()
 	if queryErr != nil {
+		if errors.Is(queryErr, ErrCircuitOpen) {
+			return false, queryErr
+		}
 		err = OpenTab(name, cwd, sidebarWidth, nonoArgs, envVars)
 		return err == nil, err
 	}
@@ -103,6 +126,16 @@ func OpenOrFocusTab(name, cwd, sidebarWidth string, nonoArgs []string, envVars m
 }
 
 func runZellij(actionArgs ...string) (stdout, stderr string, err error) {
+	breaker.mu.Lock()
+	if breaker.failures >= cbThreshold {
+		if time.Since(breaker.lastFailure) < cbCooldown {
+			breaker.mu.Unlock()
+			return "", "", ErrCircuitOpen
+		}
+		breaker.failures = 0
+	}
+	breaker.mu.Unlock()
+
 	ctx, cancel := context.WithTimeout(context.Background(), cmdTimeout)
 	defer cancel()
 
@@ -116,10 +149,19 @@ func runZellij(actionArgs ...string) (stdout, stderr string, err error) {
 	stdout = outBuf.String()
 	stderr = errBuf.String()
 
+	breaker.mu.Lock()
+	if err != nil {
+		breaker.failures++
+		breaker.lastFailure = time.Now()
+	} else {
+		breaker.failures = 0
+	}
+	breaker.mu.Unlock()
+
 	if err != nil {
 		logFailure(args, stdout, stderr, err)
 	}
-	return
+	return stdout, stderr, err
 }
 
 func logFailure(args []string, stdout, stderr string, err error) {

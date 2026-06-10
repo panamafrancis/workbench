@@ -51,6 +51,10 @@ var initCmd = &cobra.Command{
 			return err
 		}
 
+		if err := offerNonoProfile(); err != nil {
+			return err
+		}
+
 		if err := offerGHAuth(); err != nil {
 			return err
 		}
@@ -86,6 +90,22 @@ func ensureConfig() error {
 	fmt.Printf("Wrote %s\n", path)
 	cfg = c
 	return nil
+}
+
+func offerNonoProfile() error {
+	home, _ := os.UserHomeDir()
+	profilePath := filepath.Join(home, ".config", "nono", "profiles", "claude-code-local.json")
+	if _, err := os.Stat(profilePath); err == nil {
+		fmt.Printf("nono profile exists at %s\n", profilePath)
+		return nil
+	}
+	if initNonInteractive {
+		return generateNonoProfile()
+	}
+	if !promptYN("Generate a nono sandbox profile?", true) {
+		return nil
+	}
+	return generateNonoProfile()
 }
 
 func offerGHAuth() error {

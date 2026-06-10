@@ -139,7 +139,7 @@ version: 1
 default_model: claude
 worktree_base: ""          # empty = ~/.workbench/worktrees/
 default_zellij_layout: ""  # override the embedded session layout
-sidebar_width: "15%"       # sidebar pane width in new worktree tabs
+sidebar_width: "20%"       # sidebar pane width in new worktree tabs
 update_check_disabled: false  # set true to disable the update check on start
 
 models:
@@ -201,7 +201,7 @@ repos:
 
 ### Sidebar width
 
-Set `sidebar_width` to control the sidebar pane width in new worktree tabs (default `"15%"`). Already-open tabs are not affected — this is a Zellij limitation.
+Set `sidebar_width` to control the sidebar pane width in new worktree tabs (default `"20%"`). Already-open tabs are not affected — this is a Zellij limitation.
 
 ```yaml
 sidebar_width: "20%"
