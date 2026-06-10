@@ -59,17 +59,17 @@ workbench ls --repo=fix | grep testwt
 # 8. Start a background session (if zellij is available)
 if command -v zellij &>/dev/null; then
     echo "--- start background session ---"
-    workbench start --background ci-test || echo "  (background session not supported in this environment)"
+    workbench start --background ci-test
+    echo "  background session: OK"
 
     # 9. Query session
-    if ZELLIJ_SESSION_NAME=wb-ci-test zellij action query-tab-names 2>/dev/null; then
-        echo "  session query: OK"
-    else
-        echo "  session query: skipped (session not running)"
-    fi
+    echo "--- query session ---"
+    TABS=$(ZELLIJ_SESSION_NAME=wb-ci-test zellij action query-tab-names)
+    echo "  tabs: $TABS"
 
     # 10. Cleanup session
-    zellij delete-session wb-ci-test --force 2>/dev/null || true
+    zellij delete-session wb-ci-test --force
+    echo "  session cleanup: OK"
 fi
 
 # 11. Remove worktree
