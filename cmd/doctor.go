@@ -34,6 +34,8 @@ var doctorCmd = &cobra.Command{
 		for _, r := range results {
 			icon := "✓"
 			switch r.Status {
+			case setup.StatusOK:
+				// default icon
 			case setup.StatusFail:
 				icon = "✗"
 				hasIssues = true

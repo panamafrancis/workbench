@@ -170,17 +170,6 @@ func (t *TreeModel) selectByRow(row int) {
 	}
 }
 
-func (t *TreeModel) breadcrumb() string {
-	sel := t.selected()
-	if sel == nil {
-		return "workbench"
-	}
-	if sel.isRepo {
-		return "workbench > " + sel.alias
-	}
-	return "workbench > " + sel.alias + " > " + sel.worktreeName
-}
-
 func (t *TreeModel) stats() string {
 	repos := len(t.cfg.Repos)
 	worktrees := 0
@@ -259,7 +248,8 @@ func (t *TreeModel) view(width int) string {
 	var sb strings.Builder
 	for i, it := range items {
 		selected := i == t.cursor
-		if it.isRepo {
+		switch {
+		case it.isRepo:
 			r := t.cfg.Repos[it.repoIdx]
 			icon := "▼"
 			if t.collapsed[r.Alias] {
@@ -269,14 +259,14 @@ func (t *TreeModel) view(width int) string {
 			pathLabel := filepath.Base(r.LocalPath)
 			line := fmt.Sprintf("%s %s (%s)%s", icon, r.Alias, pathLabel, count)
 			sb.WriteString(styleRepo.Render(line))
-		} else if it.isPlaceholder {
+		case it.isPlaceholder:
 			line := "  (no worktrees — press n)"
 			if selected {
 				sb.WriteString(styleSelected.Render(line))
 			} else {
 				sb.WriteString(styleMuted.Render(line))
 			}
-		} else {
+		default:
 			w := t.cfg.Repos[it.repoIdx].Worktrees[it.worktreeIdx]
 
 			var prSuffix string

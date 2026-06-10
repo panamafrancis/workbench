@@ -90,3 +90,7 @@ Adding or changing what appears in the worktree tab means editing the KDL templa
 - **Change what opens in a new tab**: edit the KDL template in `pkg/zellij/layout.go`.
 
 **Always update `README.md`** when adding or changing user-facing behavior: new config fields, new CLI flags, new keybindings, changed lifecycle behavior, or nono sandbox requirements.
+
+## Before pushing / creating a PR
+
+Always run `make ci` (fmt + lint + vet + test) and fix all issues before pushing. The linter (`golangci-lint`) enforces errcheck, exhaustive switch, noctx (use `exec.CommandContext`), prealloc, staticcheck, and more — do not suppress warnings, fix them.

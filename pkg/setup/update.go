@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -58,7 +60,10 @@ func fetchLatestRelease() string {
 	if err != nil {
 		return ""
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode != 200 {
 		return ""
@@ -93,10 +98,10 @@ func isNewer(a, b string) bool {
 	for i := range max(len(ap), len(bp)) {
 		ai, bi := 0, 0
 		if i < len(ap) {
-			fmt.Sscanf(ap[i], "%d", &ai)
+			ai, _ = strconv.Atoi(ap[i])
 		}
 		if i < len(bp) {
-			fmt.Sscanf(bp[i], "%d", &bi)
+			bi, _ = strconv.Atoi(bp[i])
 		}
 		if ai != bi {
 			return ai > bi

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -91,19 +92,19 @@ func offerGHAuth() error {
 	if initNonInteractive {
 		return nil
 	}
-	ghCmd := exec.Command("gh", "auth", "status")
-	if ghCmd.Run() == nil {
-		fmt.Println("gh: already authenticated")
-		return nil
-	}
 	if _, err := exec.LookPath("gh"); err != nil {
 		fmt.Println("gh: not installed (skipping — PR features won't work)")
+		return nil //nolint:nilerr // not-found is a skip, not an error
+	}
+	ghCmd := exec.CommandContext(context.Background(), "gh", "auth", "status")
+	if ghCmd.Run() == nil {
+		fmt.Println("gh: already authenticated")
 		return nil
 	}
 	if !promptYN("Run gh auth login?", false) {
 		return nil
 	}
-	cmd := exec.Command("gh", "auth", "login")
+	cmd := exec.CommandContext(context.Background(), "gh", "auth", "login")
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -161,15 +162,12 @@ func generateNonoProfile() error {
 	}
 
 	goPath := ""
-	if out, err := exec.Command("go", "env", "GOPATH").Output(); err == nil {
+	if out, err := exec.CommandContext(context.Background(), "go", "env", "GOPATH").Output(); err == nil {
 		goPath = strings.TrimSpace(string(out))
 	}
 
-	var allowDirs []string
-	allowDirs = append(allowDirs, filepath.Join(home, ".workbench"))
-	for _, d := range repoDirs {
-		allowDirs = append(allowDirs, d)
-	}
+	allowDirs := []string{filepath.Join(home, ".workbench")}
+	allowDirs = append(allowDirs, repoDirs...)
 	if goPath != "" {
 		allowDirs = append(allowDirs,
 			filepath.Join(goPath, "pkg"),
@@ -182,11 +180,9 @@ func generateNonoProfile() error {
 		allowDirs = append(allowDirs, ghConfigDir)
 	}
 
-	var readFiles []string
+	readFiles := make([]string, 0, 1+len(sshKeys))
 	readFiles = append(readFiles, filepath.Join(home, ".ssh", "config"))
-	for _, k := range sshKeys {
-		readFiles = append(readFiles, k)
-	}
+	readFiles = append(readFiles, sshKeys...)
 
 	allowFiles := []string{filepath.Join(home, ".ssh", "known_hosts")}
 	bypassFiles := append([]string{

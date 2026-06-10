@@ -58,7 +58,9 @@ var openCmd = &cobra.Command{
 		}
 
 		if openSession != "" {
-			os.Setenv("ZELLIJ_SESSION_NAME", openSession)
+			if err := os.Setenv("ZELLIJ_SESSION_NAME", openSession); err != nil {
+				return fmt.Errorf("set ZELLIJ_SESSION_NAME: %w", err)
+			}
 		}
 
 		envVars := map[string]string{

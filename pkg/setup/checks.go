@@ -28,7 +28,7 @@ type CheckResult struct {
 }
 
 func RunChecks(cfg *config.Config) []CheckResult {
-	var results []CheckResult
+	results := make([]CheckResult, 0, 10)
 	results = append(results, checkZellij())
 	results = append(results, checkNono())
 	results = append(results, checkGit())
