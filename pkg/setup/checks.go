@@ -72,8 +72,8 @@ func checkNono() CheckResult {
 	if err != nil {
 		return CheckResult{
 			Name:    "nono",
-			Status:  StatusFail,
-			Message: "not found",
+			Status:  StatusWarn,
+			Message: "not found (workbench open will not work)",
 			Hint:    "install from https://nono.sh",
 		}
 	}
