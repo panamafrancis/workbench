@@ -3,14 +3,15 @@ package tui
 import "github.com/charmbracelet/lipgloss"
 
 var (
-	colorPrimary  = lipgloss.Color("12") // bright blue
-	colorMuted    = lipgloss.Color("8")  // dark grey
-	colorSelected = lipgloss.Color("14") // bright cyan
-	colorDirty    = lipgloss.Color("11") // yellow
-	colorHeader   = lipgloss.Color("15") // white
-	colorGreen    = lipgloss.Color("10")
-	colorRed      = lipgloss.Color("9")
-	colorMagenta  = lipgloss.Color("13")
+	colorPrimary    = lipgloss.Color("12") // bright blue
+	colorMuted      = lipgloss.Color("8")  // dark grey
+	colorSelected   = lipgloss.Color("14") // bright cyan
+	colorDirty      = lipgloss.Color("11") // yellow
+	colorHeader     = lipgloss.Color("15") // white
+	colorGreen      = lipgloss.Color("10")
+	colorRed        = lipgloss.Color("9")
+	colorMagenta    = lipgloss.Color("13")
+	colorSelectedBg = lipgloss.Color("237")
 )
 
 var (
@@ -27,6 +28,7 @@ var (
 
 	styleSelected = lipgloss.NewStyle().
 			Foreground(colorSelected).
+			Background(colorSelectedBg).
 			Bold(true)
 
 	styleMuted = lipgloss.NewStyle().
@@ -43,8 +45,16 @@ var (
 	stylePRMerged = lipgloss.NewStyle().Foreground(colorMagenta)
 	stylePRClosed = lipgloss.NewStyle().Foreground(colorRed)
 
-	stylePRDraftSelected  = lipgloss.NewStyle().Foreground(colorMuted).Bold(true)
-	stylePROpenSelected   = lipgloss.NewStyle().Foreground(colorGreen).Bold(true)
-	stylePRMergedSelected = lipgloss.NewStyle().Foreground(colorMagenta).Bold(true)
-	stylePRClosedSelected = lipgloss.NewStyle().Foreground(colorRed).Bold(true)
+	stylePRDraftSelected  = lipgloss.NewStyle().Foreground(colorMuted).Background(colorSelectedBg).Bold(true)
+	stylePROpenSelected   = lipgloss.NewStyle().Foreground(colorGreen).Background(colorSelectedBg).Bold(true)
+	stylePRMergedSelected = lipgloss.NewStyle().Foreground(colorMagenta).Background(colorSelectedBg).Bold(true)
+	stylePRClosedSelected = lipgloss.NewStyle().Foreground(colorRed).Background(colorSelectedBg).Bold(true)
+
+	styleDirtySelected = lipgloss.NewStyle().
+				Foreground(colorDirty).
+				Background(colorSelectedBg)
+
+	styleMutedSelected = lipgloss.NewStyle().
+				Foreground(colorMuted).
+				Background(colorSelectedBg)
 )

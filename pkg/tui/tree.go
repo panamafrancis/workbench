@@ -223,7 +223,7 @@ func refreshRunningCmd() tea.Cmd {
 		}
 		tabs, err := zellij.TabNames()
 		if err != nil {
-			return runningMsg{}
+			return runningMsg{err: err}
 		}
 		return runningMsg{tabs: tabs}
 	}
@@ -262,7 +262,7 @@ func (t *TreeModel) view(width int) string {
 		case it.isPlaceholder:
 			line := "  (no worktrees — press n)"
 			if selected {
-				sb.WriteString(styleSelected.Render(line))
+				padRow(&sb, styleSelected.Render(line), width, styleSelected)
 			} else {
 				sb.WriteString(styleMuted.Render(line))
 			}
@@ -282,16 +282,19 @@ func (t *TreeModel) view(width int) string {
 
 			lineStyle, selStyle := prLineStyles(prStatus)
 
+			isDirty := t.dirty[w.Name]
+			isRunning := t.openTabs[w.Name]
+			modelLabel := "[" + w.Model + "]"
+
 			dirty := ""
-			if t.dirty[w.Name] {
+			if isDirty {
 				dirty = styleDirty.Render("*")
 			}
-
 			running := ""
-			if t.openTabs[w.Name] {
+			if isRunning {
 				running = " ▶"
 			}
-			model := styleMuted.Render("[" + w.Model + "]")
+			model := styleMuted.Render(modelLabel)
 			line := fmt.Sprintf("  ● %-18s %s", w.Name, w.Branch)
 			suffix := dirty + running + " " + model + prSuffix
 			if width > 0 && lipgloss.Width(line)+lipgloss.Width(suffix) > width {
@@ -305,12 +308,15 @@ func (t *TreeModel) view(width int) string {
 			}
 
 			if selected {
-				sb.WriteString(selStyle.Render(line))
-				sb.WriteString(dirty)
-				sb.WriteString(selStyle.Render(running))
-				sb.WriteString(" ")
-				sb.WriteString(model)
-				sb.WriteString(selStyle.Render(prSuffix))
+				var buf strings.Builder
+				buf.WriteString(selStyle.Render(line))
+				if isDirty {
+					buf.WriteString(styleDirtySelected.Render("*"))
+				}
+				buf.WriteString(selStyle.Render(running))
+				buf.WriteString(styleMutedSelected.Render(" " + modelLabel))
+				buf.WriteString(selStyle.Render(prSuffix))
+				padRow(&sb, buf.String(), width, selStyle)
 			} else {
 				sb.WriteString(lineStyle.Render(line))
 				sb.WriteString(dirty)
@@ -327,6 +333,13 @@ func (t *TreeModel) view(width int) string {
 		sb.WriteString("\n")
 	}
 	return sb.String()
+}
+
+func padRow(sb *strings.Builder, content string, width int, bgStyle lipgloss.Style) {
+	sb.WriteString(content)
+	if pad := width - lipgloss.Width(content); pad > 0 {
+		sb.WriteString(bgStyle.Render(strings.Repeat(" ", pad)))
+	}
 }
 
 func prIcon(status github.PRStatus) (string, bool) {

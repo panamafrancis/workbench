@@ -167,7 +167,7 @@ func (c *Config) ResolveSidebarWidth() string {
 	if c.SidebarWidth != "" {
 		return c.SidebarWidth
 	}
-	return "15%"
+	return "20%"
 }
 
 func (c *Config) ResolveModel(model string) string {
