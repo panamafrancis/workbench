@@ -3,10 +3,7 @@ layout {
         pane split_direction="vertical" {
             pane size="15%" name="sidebar" {
                 command "bash"
-                args "-c" "while true; do workbench ls && sleep 0.2 || sleep 2; done"
-                env {
-                    WORKBENCH_SIDEBAR "1"
-                }
+                args "-c" "WORKBENCH_SIDEBAR=1 exec bash -c 'while true; do workbench ls && sleep 0.2 || sleep 2; done'"
             }
             pane name="shell" focus=true
         }

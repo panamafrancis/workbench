@@ -49,7 +49,7 @@ func TestWriteTabLayoutContent(t *testing.T) {
 		{"binary arg", `"claude"`},
 		{"separator arg", `"--"`},
 		{"sidebar restart", `while true; do workbench ls && sleep 0.2 || sleep 2; done`},
-		{"sidebar env", `WORKBENCH_SIDEBAR "1"`},
+		{"sidebar env", `WORKBENCH_SIDEBAR=1`},
 	}
 	for _, c := range checks {
 		if !strings.Contains(kdl, c.contain) {
@@ -71,11 +71,22 @@ func TestWriteTabLayoutWithEnvVars(t *testing.T) {
 	}
 	data, _ := os.ReadFile(path)
 	kdl := string(data)
-	if !strings.Contains(kdl, `WORKBENCH "1"`) {
-		t.Errorf("WORKBENCH env not found in KDL:\n%s", kdl)
+
+	if !strings.Contains(kdl, `command "env"`) {
+		t.Errorf("expected command env wrapper in KDL:\n%s", kdl)
 	}
-	if !strings.Contains(kdl, `WORKBENCH_WORKTREE_NAME "atlanta"`) {
-		t.Errorf("WORKBENCH_WORKTREE_NAME env not found in KDL:\n%s", kdl)
+	if !strings.Contains(kdl, `"WORKBENCH=1"`) {
+		t.Errorf("WORKBENCH=1 env arg not found in KDL:\n%s", kdl)
+	}
+	if !strings.Contains(kdl, `"WORKBENCH_WORKTREE_NAME=atlanta"`) {
+		t.Errorf("WORKBENCH_WORKTREE_NAME=atlanta env arg not found in KDL:\n%s", kdl)
+	}
+	if !strings.Contains(kdl, `"nono"`) {
+		t.Errorf("nono command not found in args in KDL:\n%s", kdl)
+	}
+
+	if strings.Contains(kdl, "env {") {
+		t.Errorf("should not contain env {} block (not valid KDL pane property):\n%s", kdl)
 	}
 }
 

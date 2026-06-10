@@ -39,13 +39,17 @@ func TestWriteSessionLayoutContent(t *testing.T) {
 	}{
 		{"sidebar width", `size="20%"`},
 		{"sidebar restart loop", `while true; do workbench ls && sleep 0.2 || sleep 2; done`},
-		{"sidebar env", `WORKBENCH_SIDEBAR "1"`},
+		{"sidebar env", `WORKBENCH_SIDEBAR=1`},
 		{"shell pane", `name="shell"`},
 	}
 	for _, c := range checks {
 		if !strings.Contains(kdl, c.contain) {
 			t.Errorf("%s: %q not found in KDL:\n%s", c.desc, c.contain, kdl)
 		}
+	}
+
+	if strings.Contains(kdl, "env {") {
+		t.Errorf("should not contain env {} block (not valid KDL pane property):\n%s", kdl)
 	}
 }
 
