@@ -11,6 +11,9 @@ trap 'rm -rf "$HOME"' EXIT
 
 echo "=== e2e: using isolated HOME=$HOME ==="
 
+git config --global user.email "e2e@test.local"
+git config --global user.name "e2e"
+
 # 1. Init
 echo "--- init (non-interactive) ---"
 workbench init --non-interactive
