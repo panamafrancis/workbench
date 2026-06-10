@@ -10,6 +10,8 @@ type KeyMap struct {
 	New      key.Binding
 	Delete   key.Binding
 	Toggle   key.Binding
+	Collapse key.Binding
+	Expand   key.Binding
 	Refresh  key.Binding
 	AddRepo  key.Binding
 	Help     key.Binding
@@ -23,7 +25,9 @@ var DefaultKeyMap = KeyMap{
 	OpenWith: key.NewBinding(key.WithKeys("O"), key.WithHelp("O", "open with model")),
 	New:      key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "new worktree")),
 	Delete:   key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "delete")),
-	Toggle:   key.NewBinding(key.WithKeys(" ", "tab"), key.WithHelp("space", "expand/collapse")),
+	Toggle:   key.NewBinding(key.WithKeys(" ", "tab"), key.WithHelp("space", "fold/unfold")),
+	Collapse: key.NewBinding(key.WithKeys("h", "left"), key.WithHelp("h/←", "collapse")),
+	Expand:   key.NewBinding(key.WithKeys("l", "right"), key.WithHelp("l/→", "expand")),
 	Refresh:  key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh")),
 	AddRepo:  key.NewBinding(key.WithKeys("A"), key.WithHelp("A", "add repo")),
 	Help:     key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),

@@ -1,7 +1,7 @@
 layout {
     tab name="workbench" focus=true {
         pane split_direction="vertical" {
-            pane size="15%" name="sidebar" {
+            pane size="{{.SidebarWidth}}" name="sidebar" {
                 command "bash"
                 args "-c" "while true; do workbench ls && sleep 0.2 || sleep 2; done"
                 env {

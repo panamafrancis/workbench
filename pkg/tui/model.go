@@ -63,6 +63,7 @@ const (
 	modeAddRepoAlias            // waiting for alias
 	modeNewWorktree             // waiting for worktree name (empty = auto)
 	modeConfirmDelete           // waiting for y/n
+	modeConfirmQuit             // waiting for y/n to quit sidebar
 	modeOpenWith                // waiting for model name
 	modeHelp                    // showing keybinding help
 )
@@ -84,6 +85,7 @@ type Model struct {
 	pendingPath        string
 	pendingRepoIdx     int
 	pendingWorktreeIdx int
+	isSidebar          bool
 }
 
 func New(cfg *config.Config) *Model {
@@ -104,6 +106,7 @@ func New(cfg *config.Config) *Model {
 		ghAvailable: true,
 		keys:        DefaultKeyMap,
 		input:       textinput.New(),
+		isSidebar:   os.Getenv("WORKBENCH_SIDEBAR") == "1",
 	}
 }
 
@@ -124,6 +127,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.FocusMsg:
 		return m, tea.Batch(refreshRunningCmd(), refreshDirtyCmd(m.cfg))
+
+	case tea.MouseMsg:
+		if msg.Action == tea.MouseActionRelease && msg.Button == tea.MouseButtonLeft {
+			row := msg.Y - 2
+			m.tree.selectByRow(row)
+		}
 
 	case tickMsg:
 		var cmds []tea.Cmd
@@ -220,6 +229,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.mode == modeConfirmDelete {
 			return m.updateConfirmDelete(msg)
 		}
+		if m.mode == modeConfirmQuit {
+			return m.updateConfirmQuit(msg)
+		}
 		if m.mode != modeNormal {
 			return m.updateInput(msg)
 		}
@@ -227,6 +239,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.msg = ""
 		switch {
 		case key.Matches(msg, m.keys.Quit):
+			if m.isSidebar {
+				m.mode = modeConfirmQuit
+				return m, nil
+			}
 			return m, tea.Quit
 		case key.Matches(msg, m.keys.Up):
 			prev := m.tree.cursor
@@ -240,6 +256,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.tree.cursor != prev {
 				return m, m.fetchIfUncached()
 			}
+		case key.Matches(msg, m.keys.Collapse):
+			m.tree.collapseContaining()
+		case key.Matches(msg, m.keys.Expand):
+			m.tree.expandContaining()
 		case key.Matches(msg, m.keys.Toggle):
 			m.tree.toggleCollapse()
 		case key.Matches(msg, m.keys.Refresh):
@@ -260,7 +280,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.mode = modeNewWorktree
 		case key.Matches(msg, m.keys.Delete):
 			sel := m.tree.selected()
-			if sel == nil || sel.isRepo {
+			if sel == nil || sel.isRepo || sel.isPlaceholder {
 				m.err = fmt.Errorf("select a worktree to delete")
 				return m, nil
 			}
@@ -269,7 +289,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.mode = modeConfirmDelete
 		case key.Matches(msg, m.keys.OpenWith):
 			sel := m.tree.selected()
-			if sel == nil || sel.isRepo {
+			if sel == nil || sel.isRepo || sel.isPlaceholder {
 				m.err = fmt.Errorf("select a worktree to open")
 				return m, nil
 			}
@@ -405,16 +425,18 @@ func (m *Model) createWorktree(nameInput string) tea.Cmd {
 		}
 		_ = os.Remove(wtPath)
 
-		if err := git.CreateWorktree(repo.LocalPath, wtPath, branch); err != nil {
+		_, err := git.CreateWorktree(repo.LocalPath, wtPath, branch)
+		if err != nil {
 			return createWorktreeMsg{err: err}
 		}
 
 		modelKey := cfg.ResolveModel("")
 		repo.Worktrees = append(repo.Worktrees, config.Worktree{
-			Name:   name,
-			Branch: branch,
-			Path:   wtPath,
-			Model:  modelKey,
+			Name:      name,
+			Branch:    branch,
+			Path:      wtPath,
+			CreatedAt: time.Now(),
+			Model:     modelKey,
 		})
 		for i := range cfg.Repos {
 			if cfg.Repos[i].Alias == repo.Alias {
@@ -437,6 +459,16 @@ func (m *Model) updateConfirmDelete(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	default:
 		m.mode = modeNormal
 		m.msg = "delete cancelled"
+		return m, nil
+	}
+}
+
+func (m *Model) updateConfirmQuit(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "y", "Y":
+		return m, tea.Quit
+	default:
+		m.mode = modeNormal
 		return m, nil
 	}
 }
@@ -469,7 +501,7 @@ func (m *Model) deleteWorktree() tea.Cmd {
 
 func (m *Model) openSelected(modelOverride string) tea.Cmd {
 	sel := m.tree.selected()
-	if sel == nil || sel.isRepo {
+	if sel == nil || sel.isRepo || sel.isPlaceholder {
 		return nil
 	}
 	wt := m.cfg.Repos[sel.repoIdx].Worktrees[sel.worktreeIdx]
@@ -490,7 +522,13 @@ func (m *Model) openSelected(modelOverride string) tea.Cmd {
 		if err != nil {
 			return openErrMsg{err}
 		}
-		created, err := zellij.OpenOrFocusTab(wt.Name, wt.Path, m.cfg.ResolveSidebarWidth(), nonoArgs)
+		envVars := map[string]string{
+			"WORKBENCH":               "1",
+			"WORKBENCH_WORKTREE_NAME": wt.Name,
+			"WORKBENCH_REPO_ALIAS":    repo.Alias,
+			"WORKBENCH_BRANCH":        wt.Branch,
+		}
+		created, err := zellij.OpenOrFocusTab(wt.Name, wt.Path, m.cfg.ResolveSidebarWidth(), nonoArgs, envVars)
 		if err != nil {
 			return openErrMsg{err}
 		}
@@ -506,10 +544,7 @@ func (m *Model) openSelected(modelOverride string) tea.Cmd {
 func (m *Model) View() string {
 	var sb strings.Builder
 
-	title := styleHeader.Render("workbench")
-	hint := styleMuted.Render("[?] j/k=nav  enter=open  space=collapse  r=refresh  q=quit")
-	header := lipgloss.JoinHorizontal(lipgloss.Top, title, "  ", hint)
-	sb.WriteString(header)
+	sb.WriteString(styleHeader.Render("workbench"))
 	sb.WriteString("\n")
 	sb.WriteString(styleMuted.Render(strings.Repeat("─", m.width)))
 	sb.WriteString("\n")
@@ -521,7 +556,7 @@ func (m *Model) View() string {
 
 	switch m.mode {
 	case modeNormal:
-		sb.WriteString(styleSelected.Render(m.tree.breadcrumb()))
+		sb.WriteString(styleMuted.Render(m.tree.stats()))
 		sb.WriteString("\n")
 		switch {
 		case m.err != nil:
@@ -529,13 +564,8 @@ func (m *Model) View() string {
 		case m.msg != "":
 			sb.WriteString(styleMuted.Render(m.msg))
 		default:
-			status := "[n]ew  [o]pen  [d]el  [A]dd repo  [r]efresh  [q]uit"
-			if m.fetching {
-				status += "  ⟳ syncing..."
-			} else if m.ghHint != "" {
-				status += "  (" + m.ghHint + ")"
-			}
-			sb.WriteString(styleStatusBar.Render(status))
+			footer := m.contextFooter()
+			sb.WriteString(styleStatusBar.Render(footer))
 		}
 	case modeNewWorktree:
 		repo := m.cfg.Repos[m.pendingRepoIdx]
@@ -546,7 +576,17 @@ func (m *Model) View() string {
 		sb.WriteString(styleMuted.Render("alias: ") + m.input.View())
 	case modeConfirmDelete:
 		wt := m.cfg.Repos[m.pendingRepoIdx].Worktrees[m.pendingWorktreeIdx]
-		sb.WriteString(styleDirty.Render(fmt.Sprintf("delete worktree %q? [y/n]", wt.Name)))
+		prompt := fmt.Sprintf("delete %q?", wt.Name)
+		if m.tree.dirty[wt.Name] {
+			prompt += " (dirty)"
+		}
+		if m.tree.openTabs[wt.Name] {
+			prompt += " (running)"
+		}
+		prompt += " [y/n]"
+		sb.WriteString(styleDirty.Render(prompt))
+	case modeConfirmQuit:
+		sb.WriteString(styleDirty.Render("quit sidebar? [y/n]"))
 	case modeOpenWith:
 		models := make([]string, 0, len(m.cfg.Models))
 		for k := range m.cfg.Models {
@@ -555,25 +595,68 @@ func (m *Model) View() string {
 		slices.Sort(models)
 		sb.WriteString(styleMuted.Render(fmt.Sprintf("model (%s): ", strings.Join(models, "/"))) + m.input.View())
 	case modeHelp:
-		help := strings.Join([]string{
-			"j/↑      up",
-			"k/↓      down",
-			"enter/o  open worktree",
-			"O        open with model",
-			"n        new worktree",
-			"d        delete worktree",
-			"space    expand/collapse",
-			"A        add repo",
-			"r        refresh",
-			"?        this help",
-			"q/esc    quit",
-			"",
-			styleMuted.Render("press any key to close"),
-		}, "\n")
-		sb.WriteString(help)
+		sb.WriteString(m.helpView())
 	}
 
 	return sb.String()
+}
+
+func (m *Model) contextFooter() string {
+	sel := m.tree.selected()
+	var parts []string
+
+	if sel != nil && !sel.isRepo {
+		if sel.isPlaceholder {
+			parts = append(parts, "[n]ew")
+		} else {
+			parts = append(parts, "[o]pen", "[n]ew", "[d]el")
+		}
+	} else if sel != nil && sel.isRepo {
+		parts = append(parts, "[space]unfold")
+	}
+
+	parts = append(parts, "[A]dd repo", "[r]efresh", "[?]help")
+
+	if m.fetching {
+		parts = append(parts, "⟳")
+	} else if m.ghHint != "" {
+		parts = append(parts, "("+m.ghHint+")")
+	}
+
+	footer := strings.Join(parts, " ")
+	for m.width > 0 && lipgloss.Width(footer) > m.width && len(parts) > 1 {
+		parts = parts[:len(parts)-1]
+		footer = strings.Join(parts, " ")
+	}
+	return footer
+}
+
+func (m *Model) helpView() string {
+	lines := []string{
+		styleHeader.Render("Worktree commands"),
+		"  j/k ↑↓   navigate",
+		"  enter/o  open worktree",
+		"  O        open with model",
+		"  n        new worktree",
+		"  d        delete worktree",
+		"  space    fold/unfold repo",
+		"  h/←      collapse  l/→  expand",
+		"",
+		styleHeader.Render("Global"),
+		"  A        add repo",
+		"  r        refresh",
+		"  ?        this help",
+		"  q/esc    quit",
+		"",
+		styleHeader.Render("Zellij basics"),
+		"  Alt+←/→     switch panes",
+		"  Ctrl+t ←/→  switch tabs",
+		"  Ctrl+o d    detach session",
+		"  Ctrl+q      quit session",
+		"",
+		styleMuted.Render("press any key to close"),
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (m *Model) tickCmd() tea.Cmd {
@@ -649,7 +732,7 @@ func (m *Model) fetchIfUncached() tea.Cmd {
 		return nil
 	}
 	sel := m.tree.selected()
-	if sel == nil || sel.isRepo {
+	if sel == nil || sel.isRepo || sel.isPlaceholder {
 		return nil
 	}
 	w := m.cfg.Repos[sel.repoIdx].Worktrees[sel.worktreeIdx]

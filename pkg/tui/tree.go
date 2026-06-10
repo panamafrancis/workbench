@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -15,20 +16,21 @@ import (
 )
 
 type item struct {
-	isRepo       bool
-	repoIdx      int
-	worktreeIdx  int
-	alias        string
-	worktreeName string
+	isRepo        bool
+	isPlaceholder bool
+	repoIdx       int
+	worktreeIdx   int
+	alias         string
+	worktreeName  string
 }
 
 type TreeModel struct {
 	cfg       *config.Config
 	prCache   *github.Cache
-	collapsed map[string]bool // keyed by repo alias
+	collapsed map[string]bool
 	cursor    int
-	dirty     map[string]bool // keyed by worktree name
-	openTabs  map[string]bool // raw result from zellij.TabNames()
+	dirty     map[string]bool
+	openTabs  map[string]bool
 }
 
 func newTree(cfg *config.Config, prCache *github.Cache) TreeModel {
@@ -47,6 +49,9 @@ func (t *TreeModel) items() []item {
 		if t.collapsed[r.Alias] {
 			continue
 		}
+		if len(r.Worktrees) == 0 {
+			out = append(out, item{isPlaceholder: true, repoIdx: ri, alias: r.Alias})
+		}
 		for wi, w := range r.Worktrees {
 			out = append(out, item{repoIdx: ri, worktreeIdx: wi, alias: r.Alias, worktreeName: w.Name})
 		}
@@ -56,23 +61,56 @@ func (t *TreeModel) items() []item {
 
 func (t *TreeModel) clamp() {
 	items := t.items()
+	if len(items) == 0 {
+		t.cursor = 0
+		return
+	}
 	if t.cursor >= len(items) {
 		t.cursor = len(items) - 1
 	}
 	if t.cursor < 0 {
 		t.cursor = 0
 	}
+	if items[t.cursor].isRepo {
+		t.skipToNextWorktree(1)
+	}
 }
 
 func (t *TreeModel) moveUp() {
-	if t.cursor > 0 {
-		t.cursor--
+	items := t.items()
+	for i := t.cursor - 1; i >= 0; i-- {
+		if !items[i].isRepo {
+			t.cursor = i
+			return
+		}
 	}
 }
 
 func (t *TreeModel) moveDown() {
-	if t.cursor < len(t.items())-1 {
-		t.cursor++
+	items := t.items()
+	for i := t.cursor + 1; i < len(items); i++ {
+		if !items[i].isRepo {
+			t.cursor = i
+			return
+		}
+	}
+}
+
+func (t *TreeModel) skipToNextWorktree(dir int) {
+	items := t.items()
+	if dir > 0 {
+		for i := t.cursor; i < len(items); i++ {
+			if !items[i].isRepo {
+				t.cursor = i
+				return
+			}
+		}
+	}
+	for i := t.cursor; i >= 0; i-- {
+		if !items[i].isRepo {
+			t.cursor = i
+			return
+		}
 	}
 }
 
@@ -87,6 +125,30 @@ func (t *TreeModel) toggleCollapse() {
 	t.clamp()
 }
 
+func (t *TreeModel) collapseContaining() {
+	items := t.items()
+	if t.cursor >= len(items) {
+		return
+	}
+	alias := items[t.cursor].alias
+	if !t.collapsed[alias] {
+		t.collapsed[alias] = true
+		t.clamp()
+	}
+}
+
+func (t *TreeModel) expandContaining() {
+	items := t.items()
+	if t.cursor >= len(items) {
+		return
+	}
+	alias := items[t.cursor].alias
+	if t.collapsed[alias] {
+		t.collapsed[alias] = false
+		t.clamp()
+	}
+}
+
 func (t *TreeModel) selected() *item {
 	items := t.items()
 	if len(items) == 0 || t.cursor >= len(items) {
@@ -96,15 +158,73 @@ func (t *TreeModel) selected() *item {
 	return &it
 }
 
+func (t *TreeModel) selectByRow(row int) {
+	items := t.items()
+	if row >= 0 && row < len(items) {
+		if items[row].isRepo {
+			t.collapsed[items[row].alias] = !t.collapsed[items[row].alias]
+			t.clamp()
+		} else {
+			t.cursor = row
+		}
+	}
+}
+
 func (t *TreeModel) breadcrumb() string {
 	sel := t.selected()
 	if sel == nil {
 		return "workbench"
 	}
 	if sel.isRepo {
-		return "workbench  ›  " + sel.alias
+		return "workbench > " + sel.alias
 	}
-	return "workbench  ›  " + sel.alias + "  ›  " + sel.worktreeName
+	return "workbench > " + sel.alias + " > " + sel.worktreeName
+}
+
+func (t *TreeModel) stats() string {
+	repos := len(t.cfg.Repos)
+	worktrees := 0
+	for _, r := range t.cfg.Repos {
+		worktrees += len(r.Worktrees)
+	}
+	running := 0
+	for _, r := range t.cfg.Repos {
+		for _, w := range r.Worktrees {
+			if t.openTabs[w.Name] {
+				running++
+			}
+		}
+	}
+	dirtyCount := 0
+	for _, d := range t.dirty {
+		if d {
+			dirtyCount++
+		}
+	}
+	prOpen := 0
+	if t.prCache != nil {
+		for _, r := range t.cfg.Repos {
+			for _, w := range r.Worktrees {
+				if info := t.prCache.Get(w.Branch); info != nil && (info.Status == github.PROpen || info.Status == github.PRDraft) {
+					prOpen++
+				}
+			}
+		}
+	}
+	parts := []string{
+		fmt.Sprintf("%d repo", repos),
+		fmt.Sprintf("%d wt", worktrees),
+	}
+	if running > 0 {
+		parts = append(parts, fmt.Sprintf("%d▶", running))
+	}
+	if dirtyCount > 0 {
+		parts = append(parts, fmt.Sprintf("%d*", dirtyCount))
+	}
+	if prOpen > 0 {
+		parts = append(parts, fmt.Sprintf("%d⬆", prOpen))
+	}
+	return strings.Join(parts, " · ")
 }
 
 func refreshRunningCmd() tea.Cmd {
@@ -146,11 +266,15 @@ func (t *TreeModel) view(width int) string {
 				icon = "▶"
 			}
 			count := fmt.Sprintf(" [%d]", len(r.Worktrees))
-			line := fmt.Sprintf("%s %s (%s)%s", icon, r.Alias, r.Alias, count)
+			pathLabel := filepath.Base(r.LocalPath)
+			line := fmt.Sprintf("%s %s (%s)%s", icon, r.Alias, pathLabel, count)
+			sb.WriteString(styleRepo.Render(line))
+		} else if it.isPlaceholder {
+			line := "  (no worktrees — press n)"
 			if selected {
 				sb.WriteString(styleSelected.Render(line))
 			} else {
-				sb.WriteString(styleRepo.Render(line))
+				sb.WriteString(styleMuted.Render(line))
 			}
 		} else {
 			w := t.cfg.Repos[it.repoIdx].Worktrees[it.worktreeIdx]
@@ -180,8 +304,6 @@ func (t *TreeModel) view(width int) string {
 			model := styleMuted.Render("[" + w.Model + "]")
 			line := fmt.Sprintf("  ● %-18s %s", w.Name, w.Branch)
 			suffix := dirty + running + " " + model + prSuffix
-			// Measure in display columns: rendered segments carry ANSI
-			// escapes and icons are multi-byte, so byte length overcounts.
 			if width > 0 && lipgloss.Width(line)+lipgloss.Width(suffix) > width {
 				avail := width - lipgloss.Width(suffix)
 				if avail > 0 {

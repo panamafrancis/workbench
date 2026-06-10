@@ -1,8 +1,9 @@
 BINARY     := workbench
 ZELLIJ_DIR := $(HOME)/.config/zellij/layouts
-LDFLAGS    := -s -w
+VERSION    ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+LDFLAGS    := -s -w -X github.com/panamafrancis/workbench/cmd.Version=$(VERSION)
 
-.PHONY: build install setup test fmt vet lint ci clean release-patch release-minor release-major _do_release
+.PHONY: build install setup test fmt vet lint ci clean hooks e2e release-patch release-minor release-major _do_release
 
 build:
 	CGO_ENABLED=0 GOOS=linux  GOARCH=amd64 go build -ldflags="$(LDFLAGS)" -o dist/workbench-linux-amd64  .
@@ -28,6 +29,14 @@ lint:
 	golangci-lint run ./...
 
 ci: fmt lint vet test
+
+hooks:
+	git config core.hooksPath .githooks
+	@echo "Git hooks enrolled from .githooks/"
+
+e2e:
+	go build -ldflags="$(LDFLAGS)" -o dist/workbench .
+	PATH="$(CURDIR)/dist:$$PATH" bash scripts/e2e.sh
 
 clean:
 	rm -rf dist/

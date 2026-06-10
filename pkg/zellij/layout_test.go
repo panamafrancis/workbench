@@ -10,7 +10,7 @@ import (
 func TestWriteTabLayoutPath(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
-	path, err := WriteTabLayout("myworktree", "/wt/path", "15%", []string{"run", "--profile", "claude-code", "--allow", "/wt/path", "--", "claude"})
+	path, err := WriteTabLayout("myworktree", "/wt/path", "15%", []string{"run", "--profile", "claude-code", "--allow", "/wt/path", "--", "claude"}, nil)
 	if err != nil {
 		t.Fatalf("WriteTabLayout() error = %v", err)
 	}
@@ -26,7 +26,7 @@ func TestWriteTabLayoutContent(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
 	nonoArgs := []string{"run", "--profile", "claude-code", "--allow", "/wt/path", "--", "claude"}
-	path, err := WriteTabLayout("atlanta", "/wt/path", "15%", nonoArgs)
+	path, err := WriteTabLayout("atlanta", "/wt/path", "15%", nonoArgs, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,6 +48,8 @@ func TestWriteTabLayoutContent(t *testing.T) {
 		{"profile arg", `"claude-code"`},
 		{"binary arg", `"claude"`},
 		{"separator arg", `"--"`},
+		{"sidebar restart", `while true; do workbench ls && sleep 0.2 || sleep 2; done`},
+		{"sidebar env", `WORKBENCH_SIDEBAR "1"`},
 	}
 	for _, c := range checks {
 		if !strings.Contains(kdl, c.contain) {
@@ -56,11 +58,31 @@ func TestWriteTabLayoutContent(t *testing.T) {
 	}
 }
 
+func TestWriteTabLayoutWithEnvVars(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	env := map[string]string{
+		"WORKBENCH":               "1",
+		"WORKBENCH_WORKTREE_NAME": "atlanta",
+	}
+	path, err := WriteTabLayout("atlanta", "/wt", "15%", []string{"run", "--", "bash"}, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(path)
+	kdl := string(data)
+	if !strings.Contains(kdl, `WORKBENCH "1"`) {
+		t.Errorf("WORKBENCH env not found in KDL:\n%s", kdl)
+	}
+	if !strings.Contains(kdl, `WORKBENCH_WORKTREE_NAME "atlanta"`) {
+		t.Errorf("WORKBENCH_WORKTREE_NAME env not found in KDL:\n%s", kdl)
+	}
+}
+
 func TestWriteTabLayoutQuotesArgs(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
-	// Arg containing a double-quote must be escaped.
-	path, err := WriteTabLayout("tab", "/wt", "15%", []string{`has"quote`})
+	path, err := WriteTabLayout("tab", "/wt", "15%", []string{`has"quote`}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +95,7 @@ func TestWriteTabLayoutQuotesArgs(t *testing.T) {
 func TestWriteTabLayoutCreatesDir(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
-	path, err := WriteTabLayout("x", "/wt", "15%", []string{"nono"})
+	path, err := WriteTabLayout("x", "/wt", "15%", []string{"nono"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,11 +107,11 @@ func TestWriteTabLayoutCreatesDir(t *testing.T) {
 func TestWriteTabLayoutOverwrites(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
-	_, err := WriteTabLayout("tab", "/old", "15%", []string{"old"})
+	_, err := WriteTabLayout("tab", "/old", "15%", []string{"old"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	path, err := WriteTabLayout("tab", "/new", "15%", []string{"new"})
+	path, err := WriteTabLayout("tab", "/new", "15%", []string{"new"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

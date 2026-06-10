@@ -1,0 +1,295 @@
+package cmd
+
+import (
+	"bufio"
+	"encoding/json"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+
+	"github.com/spf13/cobra"
+
+	"github.com/panamafrancis/workbench/pkg/config"
+	"github.com/panamafrancis/workbench/pkg/setup"
+)
+
+var (
+	initNonInteractive bool
+	initProfile        bool
+)
+
+var initCmd = &cobra.Command{
+	Use:   "init",
+	Short: "Set up workbench for first use",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		fmt.Println("workbench init")
+		fmt.Println()
+
+		results := setup.RunChecks(cfg)
+		hardFail := false
+		for _, r := range results {
+			if r.Status == setup.StatusFail {
+				fmt.Printf("  ✗ %s: %s\n", r.Name, r.Message)
+				if r.Hint != "" {
+					fmt.Printf("    → %s\n", r.Hint)
+				}
+				hardFail = true
+			}
+		}
+		if hardFail {
+			return fmt.Errorf("fix the above issues before continuing")
+		}
+
+		if initProfile {
+			return generateNonoProfile()
+		}
+
+		if err := ensureConfig(); err != nil {
+			return err
+		}
+
+		if err := offerGHAuth(); err != nil {
+			return err
+		}
+
+		if err := offerAddRepo(); err != nil {
+			return err
+		}
+
+		fmt.Println()
+		fmt.Println("Setup complete. Run: workbench start")
+		return nil
+	},
+}
+
+func ensureConfig() error {
+	path := config.ConfigPath()
+	if _, err := os.Stat(path); err == nil {
+		fmt.Printf("Config exists at %s\n", path)
+		return nil
+	}
+
+	fmt.Println("Creating default config...")
+	c := config.DefaultConfig()
+
+	if !initNonInteractive {
+		model := promptDefault("Default model", c.DefaultModel)
+		c.DefaultModel = model
+	}
+
+	if err := c.Save(); err != nil {
+		return fmt.Errorf("save config: %w", err)
+	}
+	fmt.Printf("Wrote %s\n", path)
+	cfg = c
+	return nil
+}
+
+func offerGHAuth() error {
+	if initNonInteractive {
+		return nil
+	}
+	ghCmd := exec.Command("gh", "auth", "status")
+	if ghCmd.Run() == nil {
+		fmt.Println("gh: already authenticated")
+		return nil
+	}
+	if _, err := exec.LookPath("gh"); err != nil {
+		fmt.Println("gh: not installed (skipping — PR features won't work)")
+		return nil
+	}
+	if !promptYN("Run gh auth login?", false) {
+		return nil
+	}
+	cmd := exec.Command("gh", "auth", "login")
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+func offerAddRepo() error {
+	if initNonInteractive {
+		return nil
+	}
+	if len(cfg.Repos) > 0 {
+		return nil
+	}
+	if !promptYN("Add a repo now?", true) {
+		return nil
+	}
+	path := promptDefault("Repo path", "")
+	if path == "" {
+		return nil
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+	alias := promptDefault("Alias", filepath.Base(abs))
+	cfg.Repos = append(cfg.Repos, config.Repo{
+		Alias:     alias,
+		LocalPath: abs,
+	})
+	if err := cfg.Save(); err != nil {
+		return err
+	}
+	fmt.Printf("Added repo %q\n", alias)
+	return nil
+}
+
+func generateNonoProfile() error {
+	home, _ := os.UserHomeDir()
+	profileDir := filepath.Join(home, ".config", "nono", "profiles")
+	profilePath := filepath.Join(profileDir, "claude-code-local.json")
+
+	if _, err := os.Stat(profilePath); err == nil {
+		fmt.Printf("Profile already exists at %s\n", profilePath)
+		if initNonInteractive || !promptYN("Overwrite?", false) {
+			return nil
+		}
+	}
+
+	sshKeys := globSSHPublicKeys(home)
+
+	repoDirs := []string{}
+	for _, r := range cfg.Repos {
+		parent := filepath.Dir(r.LocalPath)
+		repoDirs = append(repoDirs, parent)
+	}
+
+	goPath := ""
+	if out, err := exec.Command("go", "env", "GOPATH").Output(); err == nil {
+		goPath = strings.TrimSpace(string(out))
+	}
+
+	var allowDirs []string
+	allowDirs = append(allowDirs, filepath.Join(home, ".workbench"))
+	for _, d := range repoDirs {
+		allowDirs = append(allowDirs, d)
+	}
+	if goPath != "" {
+		allowDirs = append(allowDirs,
+			filepath.Join(goPath, "pkg"),
+			filepath.Join(goPath, "bin"),
+			filepath.Join(goPath, "src"),
+		)
+	}
+	ghConfigDir := filepath.Join(home, ".config", "gh")
+	if _, err := os.Stat(ghConfigDir); err == nil {
+		allowDirs = append(allowDirs, ghConfigDir)
+	}
+
+	var readFiles []string
+	readFiles = append(readFiles, filepath.Join(home, ".ssh", "config"))
+	for _, k := range sshKeys {
+		readFiles = append(readFiles, k)
+	}
+
+	allowFiles := []string{filepath.Join(home, ".ssh", "known_hosts")}
+	bypassFiles := append([]string{
+		filepath.Join(home, ".ssh", "config"),
+		filepath.Join(home, ".ssh", "known_hosts"),
+	}, sshKeys...)
+
+	profile := buildProfileJSON(allowDirs, readFiles, allowFiles, bypassFiles)
+
+	if err := os.MkdirAll(profileDir, 0755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(profilePath, []byte(profile), 0644); err != nil {
+		return err
+	}
+	fmt.Printf("Wrote nono profile to %s\n", profilePath)
+	return nil
+}
+
+func globSSHPublicKeys(home string) []string {
+	pattern := filepath.Join(home, ".ssh", "*.pub")
+	matches, _ := filepath.Glob(pattern)
+	return matches
+}
+
+func buildProfileJSON(allowDirs, readFiles, allowFiles, bypassFiles []string) string {
+	profile := nonoProfile{
+		Extends: []string{"claude-code"},
+		Meta: nonoMeta{
+			Name:        "claude-code-local",
+			Description: "claude-code with project repos, toolchain, and SSH agent",
+		},
+		Filesystem: nonoFilesystem{
+			Allow:             allowDirs,
+			ReadFile:          readFiles,
+			AllowFile:         allowFiles,
+			UnixSocketSubtree: []string{"/private/tmp"},
+			BypassProtection:  bypassFiles,
+		},
+	}
+	data, err := json.MarshalIndent(profile, "", "  ")
+	if err != nil {
+		return "{}"
+	}
+	return string(data) + "\n"
+}
+
+type nonoProfile struct {
+	Extends    []string       `json:"extends"`
+	Meta       nonoMeta       `json:"meta"`
+	Filesystem nonoFilesystem `json:"filesystem"`
+}
+
+type nonoMeta struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
+type nonoFilesystem struct {
+	Allow             []string `json:"allow"`
+	ReadFile          []string `json:"read_file"`
+	AllowFile         []string `json:"allow_file"`
+	UnixSocketSubtree []string `json:"unix_socket_subtree"`
+	BypassProtection  []string `json:"bypass_protection"`
+}
+
+func promptDefault(label, defaultVal string) string {
+	if initNonInteractive {
+		return defaultVal
+	}
+	if defaultVal != "" {
+		fmt.Printf("%s [%s]: ", label, defaultVal)
+	} else {
+		fmt.Printf("%s: ", label)
+	}
+	r := bufio.NewReader(os.Stdin)
+	line, _ := r.ReadString('\n')
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return defaultVal
+	}
+	return line
+}
+
+func promptYN(question string, defaultYes bool) bool {
+	if initNonInteractive {
+		return defaultYes
+	}
+	hint := "[y/N]"
+	if defaultYes {
+		hint = "[Y/n]"
+	}
+	fmt.Printf("%s %s ", question, hint)
+	r := bufio.NewReader(os.Stdin)
+	line, _ := r.ReadString('\n')
+	line = strings.TrimSpace(strings.ToLower(line))
+	if line == "" {
+		return defaultYes
+	}
+	return strings.HasPrefix(line, "y")
+}
+
+func init() {
+	initCmd.Flags().BoolVar(&initNonInteractive, "non-interactive", false, "accept defaults without prompting")
+	initCmd.Flags().BoolVar(&initProfile, "profile", false, "generate a nono profile only")
+}
