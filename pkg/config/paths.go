@@ -30,6 +30,14 @@ func PRCachePath() string {
 	return filepath.Join(CacheDir(), "pr-status.json")
 }
 
+func StatePath() string {
+	return filepath.Join(ConfigDir(), "state.yml")
+}
+
+func LogsDir() string {
+	return filepath.Join(ConfigDir(), "logs")
+}
+
 func WorktreePath(base, alias, name string) string {
 	return filepath.Join(base, alias, name)
 }

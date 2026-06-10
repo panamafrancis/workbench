@@ -20,6 +20,12 @@ var rootCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("load config: %w", err)
 		}
+		name := cmd.Name()
+		if name != "init" && name != "doctor" && name != "help" && name != "version" {
+			if _, statErr := os.Stat(config.ConfigPath()); os.IsNotExist(statErr) {
+				fmt.Fprintln(os.Stderr, "No config found. Run: workbench init")
+			}
+		}
 		return nil
 	},
 }
@@ -36,4 +42,10 @@ func init() {
 	rootCmd.AddCommand(rmCmd)
 	rootCmd.AddCommand(lsCmd)
 	rootCmd.AddCommand(openCmd)
+	rootCmd.AddCommand(startCmd)
+	rootCmd.AddCommand(initCmd)
+	rootCmd.AddCommand(doctorCmd)
+	rootCmd.AddCommand(renameBranchCmd)
+	rootCmd.AddCommand(uninstallCmd)
+	rootCmd.AddCommand(versionCmd)
 }

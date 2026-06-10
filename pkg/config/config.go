@@ -19,8 +19,13 @@ type Config struct {
 	WorktreeBase        string           `yaml:"worktree_base"`
 	DefaultZellijLayout string           `yaml:"default_zellij_layout"`
 	SidebarWidth        string           `yaml:"sidebar_width"`
+	DisableUpdateCheck  bool             `yaml:"update_check_disabled"`
 	Models              map[string]Model `yaml:"models"`
 	Repos               []Repo           `yaml:"repos"`
+}
+
+func (c *Config) UpdateCheck() bool {
+	return !c.DisableUpdateCheck
 }
 
 type Model struct {

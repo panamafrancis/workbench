@@ -1,0 +1,24 @@
+{
+  "name": "workbench",
+  "description": "Workbench worktree management skills for Claude Code",
+  "version": "0.1.0",
+  "commands": [
+    {
+      "name": "rename-branch",
+      "description": "Rename this worktree's branch to a meaningful name",
+      "path": "commands/rename-branch.md"
+    },
+    {
+      "name": "pr",
+      "description": "Create a PR for this worktree (renames branch if needed)",
+      "path": "commands/pr.md"
+    }
+  ],
+  "skills": [
+    {
+      "name": "workbench-conventions",
+      "description": "Branch naming and worktree conventions (only applies when WORKBENCH_WORKTREE_NAME is set)",
+      "path": "skills/conventions.md"
+    }
+  ]
+}

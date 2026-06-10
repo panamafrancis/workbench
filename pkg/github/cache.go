@@ -77,6 +77,21 @@ func (c *Cache) Set(branch string, info *PRInfo) {
 	c.entries[branch] = info
 }
 
+func (c *Cache) Rename(oldBranch, newBranch string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if info, ok := c.entries[oldBranch]; ok {
+		c.entries[newBranch] = info
+		delete(c.entries, oldBranch)
+	}
+}
+
+func (c *Cache) Delete(branch string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.entries, branch)
+}
+
 func (c *Cache) IsStale(branch string, maxAge time.Duration) bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()

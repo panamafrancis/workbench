@@ -15,6 +15,7 @@ var (
 	openWorktree string
 	openModel    string
 	openNoZellij bool
+	openSession  string
 )
 
 var openCmd = &cobra.Command{
@@ -48,14 +49,27 @@ var openCmd = &cobra.Command{
 			return nil
 		}
 
-		if !zellij.IsInZellij() {
+		if !zellij.IsInZellij() && openSession == "" {
 			fmt.Fprintln(os.Stderr, "workbench: not running inside a Zellij session.")
-			fmt.Fprintln(os.Stderr, "Start a session with: zellij --layout ~/.config/zellij/layouts/wb.kdl")
+			fmt.Fprintln(os.Stderr, "Start a session with: workbench start")
 			fmt.Fprintln(os.Stderr, "Or run without Zellij: workbench open --no-zellij ...")
+			fmt.Fprintln(os.Stderr, "Or target a session:  workbench open --session=<name> ...")
 			os.Exit(1)
 		}
 
-		created, err := zellij.OpenOrFocusTab(wt.Name, wt.Path, cfg.ResolveSidebarWidth(), nonoArgs)
+		if openSession != "" {
+			if err := os.Setenv("ZELLIJ_SESSION_NAME", openSession); err != nil {
+				return fmt.Errorf("set ZELLIJ_SESSION_NAME: %w", err)
+			}
+		}
+
+		envVars := map[string]string{
+			"WORKBENCH":               "1",
+			"WORKBENCH_WORKTREE_NAME": wt.Name,
+			"WORKBENCH_REPO_ALIAS":    repo.Alias,
+			"WORKBENCH_BRANCH":        wt.Branch,
+		}
+		created, err := zellij.OpenOrFocusTab(wt.Name, wt.Path, cfg.ResolveSidebarWidth(), nonoArgs, envVars)
 		if err != nil {
 			return err
 		}
@@ -73,5 +87,6 @@ func init() {
 	openCmd.Flags().StringVar(&openWorktree, "worktree", "", "worktree name (required)")
 	openCmd.Flags().StringVar(&openModel, "model", "", "model override (default: worktree's model or config default_model)")
 	openCmd.Flags().BoolVar(&openNoZellij, "no-zellij", false, "print the nono command instead of opening a tab")
+	openCmd.Flags().StringVar(&openSession, "session", "", "target a specific Zellij session (bypasses the in-Zellij check)")
 	_ = openCmd.MarkFlagRequired("worktree")
 }

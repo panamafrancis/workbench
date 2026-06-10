@@ -19,8 +19,8 @@ func IsInZellij() bool {
 	return os.Getenv("ZELLIJ") != ""
 }
 
-func OpenTab(name, cwd, sidebarWidth string, nonoArgs []string) error {
-	layoutPath, err := WriteTabLayout(name, cwd, sidebarWidth, nonoArgs)
+func OpenTab(name, cwd, sidebarWidth string, nonoArgs []string, envVars map[string]string) error {
+	layoutPath, err := WriteTabLayout(name, cwd, sidebarWidth, nonoArgs, envVars)
 	if err != nil {
 		return err
 	}
@@ -86,10 +86,10 @@ func closeTab(name string) {
 	_, _, _ = runZellij("close-tab")
 }
 
-func OpenOrFocusTab(name, cwd, sidebarWidth string, nonoArgs []string) (created bool, err error) {
+func OpenOrFocusTab(name, cwd, sidebarWidth string, nonoArgs []string, envVars map[string]string) (created bool, err error) {
 	tabs, queryErr := TabNames()
 	if queryErr != nil {
-		err = OpenTab(name, cwd, sidebarWidth, nonoArgs)
+		err = OpenTab(name, cwd, sidebarWidth, nonoArgs, envVars)
 		return err == nil, err
 	}
 	if tabs[name] {
@@ -98,7 +98,7 @@ func OpenOrFocusTab(name, cwd, sidebarWidth string, nonoArgs []string) (created 
 		}
 		closeTab(name)
 	}
-	err = OpenTab(name, cwd, sidebarWidth, nonoArgs)
+	err = OpenTab(name, cwd, sidebarWidth, nonoArgs, envVars)
 	return err == nil, err
 }
 

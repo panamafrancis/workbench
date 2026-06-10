@@ -58,8 +58,12 @@ var addWorktreeCmd = &cobra.Command{
 			_ = os.RemoveAll(worktreePath)
 		}
 
-		if err := git.CreateWorktree(repo.LocalPath, worktreePath, branch); err != nil {
+		offline, err := git.CreateWorktree(repo.LocalPath, worktreePath, branch)
+		if err != nil {
 			return err
+		}
+		if offline {
+			fmt.Fprintln(os.Stderr, "warning: offline — branched from last-fetched origin")
 		}
 
 		modelKey := cfg.ResolveModel(addWorktreeModel)

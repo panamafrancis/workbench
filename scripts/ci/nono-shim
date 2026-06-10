@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Fallback nono shim for CI environments where Landlock is not available.
+# Parses: nono run --profile <p> --allow <path> -- <cmd> [args...]
+# Strips nono flags and exec's the command directly (no sandboxing).
+set -euo pipefail
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        run)       shift ;;
+        --profile) shift; shift ;;
+        --allow)   shift; shift ;;
+        --)        shift; break ;;
+        *)         break ;;
+    esac
+done
+
+exec "$@"
