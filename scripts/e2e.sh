@@ -67,8 +67,9 @@ if command -v zellij &>/dev/null; then
     TABS=$(ZELLIJ_SESSION_NAME=wb-ci-test zellij action query-tab-names)
     echo "  tabs: $TABS"
 
-    # 10. Cleanup session
-    zellij delete-session wb-ci-test --force
+    # 10. Cleanup session — delete-session --force may exit non-zero
+    # after killing the session (reports "not found" for the already-dead session)
+    zellij delete-session wb-ci-test --force || true
     echo "  session cleanup: OK"
 fi
 
