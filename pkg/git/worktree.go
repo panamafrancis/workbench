@@ -28,6 +28,16 @@ func DefaultBranch(repoPath string) string {
 	return "main"
 }
 
+func hasRemote(repoPath, name string) bool {
+	cmd := exec.CommandContext(context.Background(), "git", "-C", repoPath, "remote", "get-url", name)
+	return cmd.Run() == nil
+}
+
+func refExists(repoPath, ref string) bool {
+	cmd := exec.CommandContext(context.Background(), "git", "-C", repoPath, "rev-parse", "--verify", ref)
+	return cmd.Run() == nil
+}
+
 func FetchOrigin(repoPath, branch string) error {
 	cmd := exec.CommandContext(context.Background(), "git", "-C", repoPath, "fetch", "origin", branch)
 	var errBuf bytes.Buffer
@@ -40,15 +50,23 @@ func FetchOrigin(repoPath, branch string) error {
 
 func CreateWorktree(repoPath, worktreePath, branch string) (offline bool, err error) {
 	defaultBranch := DefaultBranch(repoPath)
-	if fetchErr := FetchOrigin(repoPath, defaultBranch); fetchErr != nil {
-		check := exec.CommandContext(context.Background(), "git", "-C", repoPath,
-			"rev-parse", "--verify", "origin/"+defaultBranch)
-		if check.Run() != nil {
-			return false, fmt.Errorf("git fetch failed and no local origin/%s: %w", defaultBranch, fetchErr)
+
+	base := "origin/" + defaultBranch
+	if hasRemote(repoPath, "origin") {
+		if fetchErr := FetchOrigin(repoPath, defaultBranch); fetchErr != nil {
+			if !refExists(repoPath, base) {
+				return false, fmt.Errorf("git fetch failed and no local %s: %w", base, fetchErr)
+			}
+			offline = true
+		}
+	} else {
+		base = defaultBranch
+		if !refExists(repoPath, base) {
+			return false, fmt.Errorf("no remote origin and local branch %q does not exist", base)
 		}
 		offline = true
 	}
-	base := "origin/" + defaultBranch
+
 	cmd := exec.CommandContext(context.Background(), "git", "-C", repoPath, "worktree", "add", "-b", branch, worktreePath, base)
 	var errBuf bytes.Buffer
 	cmd.Stderr = &errBuf
