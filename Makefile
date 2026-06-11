@@ -10,7 +10,7 @@ build:
 	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags="$(LDFLAGS)" -o dist/workbench-darwin-arm64 .
 
 install:
-	go install .
+	go install -ldflags="$(LDFLAGS)" .
 
 setup:
 	mkdir -p $(ZELLIJ_DIR)

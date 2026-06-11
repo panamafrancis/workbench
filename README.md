@@ -65,10 +65,14 @@ workbench rename-branch <new-branch> [--worktree=<name>] [--push]
 workbench init [--non-interactive] [--profile]
 workbench doctor [--json]
 workbench uninstall [--dry-run] [--keep-config] [--force]
+workbench docs [topic]                        show documentation (topics: overview, commands, config, ...)
+workbench mcp                                 MCP server (stdio, used by Claude Code)
 workbench version
 ```
 
 ### Session management
+
+Running bare `workbench` with no arguments auto-starts (or resumes) the default session — equivalent to `workbench start`. Inside Zellij it shows help; with no config it hints at `workbench init`.
 
 `workbench start` replaces the old `zellij --layout ...` workflow. It embeds the session layout, manages `wb-`-prefixed Zellij sessions, and uses `syscall.Exec` so workbench doesn't linger as a wrapper process.
 
@@ -259,15 +263,29 @@ workbench uninstall --force      # also remove dirty worktrees
 
 Uninstall does **not** touch: your git repos, nono profiles (`~/.config/nono/`), gh auth, or the workbench binary itself.
 
-## Claude Code plugin
+## MCP server
 
-The `plugin/` directory contains a Claude Code plugin with slash commands and skills:
+Workbench includes an MCP server that integrates with Claude Code (and any MCP-compatible agent). It provides tools and conventions to the agent running inside a workbench session.
 
-- `/workbench:rename-branch` — rename the worktree branch to a meaningful name
-- `/workbench:pr` — create a PR (renames branch first if still auto-generated)
-- `workbench-conventions` skill — branch naming and scope conventions, gated on `WORKBENCH_WORKTREE_NAME`
+### Registration
 
-The plugin is designed to be installed globally — slash commands are namespaced and skills gate on the `WORKBENCH` env var, so they're inert outside workbench sessions.
+`workbench init` offers to register the MCP server automatically. To register manually:
+
+```sh
+claude mcp add workbench -s user -- workbench mcp
+```
+
+### Tools
+
+- **`rename_branch`** — rename the worktree branch and update workbench config + PR cache (replaces bare `git branch -m`)
+- **`create_pr`** — push branch and create a PR via `gh` (refuses if the branch still has an auto-generated name)
+- **`docs`** — look up workbench documentation by topic (overview, commands, config, tui, worktrees, mcp, sandbox, development)
+
+### Prompts
+
+- **`workbench_conventions`** — branch naming, scope discipline, and PR conventions
+
+The MCP server gates on the `WORKBENCH` env var — tools return an error outside workbench sessions, so registration is safe globally.
 
 ## nono sandbox
 

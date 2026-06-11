@@ -25,7 +25,7 @@ type SessionInfo struct {
 func ListSessions() ([]SessionInfo, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), cmdTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "zellij", "list-sessions")
+	cmd := exec.CommandContext(ctx, "zellij", "list-sessions", "--no-formatting")
 	var outBuf, errBuf bytes.Buffer
 	cmd.Stdout = &outBuf
 	cmd.Stderr = &errBuf
