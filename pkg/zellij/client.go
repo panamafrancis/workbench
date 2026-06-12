@@ -52,6 +52,20 @@ func OpenTab(name, cwd, sidebarWidth string, nonoArgs []string, envVars map[stri
 	return nil
 }
 
+func RenameTab(oldName, newName string) error {
+	if err := GoToTab(oldName); err != nil {
+		return err
+	}
+	_, stderr, err := runZellij("rename-tab", newName)
+	if err != nil {
+		if s := strings.TrimSpace(stderr); s != "" {
+			return fmt.Errorf("zellij rename-tab: %s", s)
+		}
+		return fmt.Errorf("zellij rename-tab: %w", err)
+	}
+	return nil
+}
+
 func GoToTab(name string) error {
 	_, stderr, err := runZellij("go-to-tab-name", name)
 	if err != nil {

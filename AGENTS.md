@@ -34,6 +34,7 @@ cmd/                    # Cobra commands
   rm_repo.go            # workbench rm repo
   rm_worktree.go        # workbench rm worktree
   rename_branch.go      # workbench rename-branch
+  stats.go              # workbench stats — lifetime statistics and achievements
   init.go               # workbench init — setup wizard
   doctor.go             # workbench doctor — dependency checks
   uninstall.go          # workbench uninstall
@@ -42,10 +43,10 @@ pkg/
   config/
     config.go           # Config types, Load/Save, FindRepo, FindWorktree, CRUD helpers
     paths.go            # ConfigDir, ConfigPath, StatePath, LayoutsDir, WorktreePath
-    state.go            # State (last_run_version, update check cache), LoadState/Save
+    state.go            # State (last_run_version, update check, gamification stats/achievements), LoadState/Save
   git/
     worktree.go         # DefaultBranch, FetchOrigin, CreateWorktree (returns offline bool), RemoveWorktree
-    names.go            # GenerateName (adj-city), ValidateName
+    names.go            # GenerateName (city names), ValidateName, ExtractBaseCity, IsCityName
     status.go           # IsDirty, BranchName
   github/
     gh.go               # LookupPR via gh CLI
@@ -82,13 +83,13 @@ scripts/
 
 All state lives under `~/.workbench/`:
 - `~/.workbench/config.yml` — repos, worktrees, model definitions
-- `~/.workbench/state.yml` — last-run version, update check cache
+- `~/.workbench/state.yml` — last-run version, update check cache, gamification stats (cities_visited, worktrees_created, worktrees_merged, achievements, activity_days)
 - `~/.workbench/worktrees/<alias>/<name>/` — default worktree location
 - `~/.workbench/layouts/<name>.kdl` — generated Zellij layouts (transient)
 
 `models` is an open map — users add arbitrary entries (`mymodel`) with any `binary`/`nono_profile`/`args`. Never hardcode model names.
 
-`config.Load()` reads from disk every time. `config.Save()` writes atomically via temp+rename.
+`config.Load()` reads from disk every time. `config.Save()` writes atomically via temp+rename. `show_stats` (`*bool`, default true) controls the gamification stats box in the TUI sidebar.
 
 ## TUI model
 

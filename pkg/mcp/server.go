@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/panamafrancis/workbench/pkg/docs"
+	"github.com/panamafrancis/workbench/pkg/git"
 )
 
 const toolTimeout = 120 * time.Second
@@ -270,11 +271,9 @@ func currentBranch() string {
 
 func handleCreatePR(id json.RawMessage, args map[string]any) *response {
 	branch := currentBranch()
-	wtName := os.Getenv("WORKBENCH_WORKTREE_NAME")
-
-	if branch != "" && wtName != "" {
+	if branch != "" {
 		parts := strings.Split(branch, "/")
-		if len(parts) > 0 && parts[len(parts)-1] == wtName {
+		if git.IsCityName(parts[len(parts)-1]) {
 			return textResult(id,
 				"Branch still has the auto-generated name ("+branch+"). "+
 					"Call rename_branch first to give it a meaningful name.",

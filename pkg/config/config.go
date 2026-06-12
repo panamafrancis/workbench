@@ -20,12 +20,20 @@ type Config struct {
 	DefaultZellijLayout string           `yaml:"default_zellij_layout"`
 	SidebarWidth        string           `yaml:"sidebar_width"`
 	DisableUpdateCheck  bool             `yaml:"update_check_disabled"`
+	ShowStats           *bool            `yaml:"show_stats,omitempty"`
 	Models              map[string]Model `yaml:"models"`
 	Repos               []Repo           `yaml:"repos"`
 }
 
 func (c *Config) UpdateCheck() bool {
 	return !c.DisableUpdateCheck
+}
+
+func (c *Config) ResolveShowStats() bool {
+	if c.ShowStats != nil {
+		return *c.ShowStats
+	}
+	return true
 }
 
 type Model struct {
@@ -146,6 +154,18 @@ func (c *Config) FindWorktree(name string) (*Worktree, *Repo) {
 	for ri := range c.Repos {
 		for wi := range c.Repos[ri].Worktrees {
 			if c.Repos[ri].Worktrees[wi].Name == name {
+				return &c.Repos[ri].Worktrees[wi], &c.Repos[ri]
+			}
+		}
+	}
+	return nil, nil
+}
+
+func (c *Config) FindWorktreeByPath(path string) (*Worktree, *Repo) {
+	path = filepath.Clean(path)
+	for ri := range c.Repos {
+		for wi := range c.Repos[ri].Worktrees {
+			if filepath.Clean(c.Repos[ri].Worktrees[wi].Path) == path {
 				return &c.Repos[ri].Worktrees[wi], &c.Repos[ri]
 			}
 		}
