@@ -71,6 +71,7 @@ const (
 
 type Model struct {
 	cfg                *config.Config
+	state              *config.State
 	tree               TreeModel
 	prCache            *github.Cache
 	ghAvailable        bool
@@ -101,9 +102,12 @@ func New(cfg *config.Config) *Model {
 	}
 	zellij.CleanupStaleLayouts(validNames)
 
+	state, _ := config.LoadState()
+
 	t := newTree(cfg, cache)
 	return &Model{
 		cfg:         cfg,
+		state:       state,
 		tree:        t,
 		prCache:     cache,
 		ghAvailable: true,
@@ -195,6 +199,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cfg = newCfg
 			m.tree.cfg = newCfg
 		}
+		if newState, stateErr := config.LoadState(); stateErr == nil {
+			m.state = newState
+		}
 		cmds := []tea.Cmd{refreshDirtyCmd(m.cfg), m.refreshRunningGuarded()}
 		fetchCmd := m.fetchVisibleCmd(true)
 		if fetchCmd != nil {
@@ -216,6 +223,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.removeWorktreeFromConfig(msg.name)
 			m.err = msg.err
 		} else {
+			if newState, stateErr := config.LoadState(); stateErr == nil {
+				m.state = newState
+			}
 			m.msg = fmt.Sprintf("created worktree %q", msg.name)
 			return m, refreshDirtyCmd(m.cfg)
 		}
@@ -230,6 +240,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				m.cfg = newCfg
 				m.tree.cfg = newCfg
+			}
+			if newState, stateErr := config.LoadState(); stateErr == nil {
+				m.state = newState
 			}
 			m.tree.clamp()
 			m.msg = fmt.Sprintf("deleted worktree %q", msg.name)
@@ -462,6 +475,12 @@ func (m *Model) createWorktreeOptimistic(nameInput string) (tea.Model, tea.Cmd) 
 		if err := cfg.Save(); err != nil {
 			return createWorktreeMsg{name: name, err: err}
 		}
+
+		state, _ := config.LoadState()
+		state.RecordWorktreeCreated(name)
+		_ = state.CheckAndUnlockAchievements()
+		_ = state.Save()
+
 		return createWorktreeMsg{name: name}
 	}
 }
@@ -504,6 +523,7 @@ func (m *Model) deleteWorktree() tea.Cmd {
 	repoIdx := m.pendingRepoIdx
 	wtIdx := m.pendingWorktreeIdx
 	cfg := m.cfg
+	prCache := m.prCache
 
 	return func() tea.Msg {
 		repo := cfg.Repos[repoIdx]
@@ -522,6 +542,19 @@ func (m *Model) deleteWorktree() tea.Cmd {
 		if err := cfg.Save(); err != nil {
 			return deleteWorktreeMsg{err: err}
 		}
+
+		state, _ := config.LoadState()
+		if prCache != nil {
+			if info := prCache.Get(wt.Branch); info != nil && info.Status == github.PRMerged {
+				state.RecordWorktreeMerged()
+				if !info.UpdatedAt.IsZero() && info.UpdatedAt.Sub(wt.CreatedAt) < time.Hour {
+					state.UnlockAchievement("speed-demon")
+				}
+			}
+		}
+		_ = state.CheckAndUnlockAchievements()
+		_ = state.Save()
+
 		return deleteWorktreeMsg{name: wt.Name}
 	}
 }
@@ -568,6 +601,36 @@ func (m *Model) openSelected(modelOverride string) tea.Cmd {
 	}
 }
 
+func (m *Model) statsBox() string {
+	if m.state == nil || !m.cfg.ResolveShowStats() || m.height < 15 {
+		return ""
+	}
+	var sb strings.Builder
+	cityCount := len(m.state.CitiesVisited)
+	totalCities := len(git.Cities)
+	streak := m.state.CurrentStreak()
+
+	sb.WriteString(styleMuted.Render(fmt.Sprintf(" Cities: %d/%d", cityCount, totalCities)))
+	sb.WriteString("\n")
+
+	parts := []string{
+		fmt.Sprintf("Created: %d", m.state.WorktreesCreated),
+		fmt.Sprintf("Merged: %d", m.state.WorktreesMerged),
+	}
+	if streak > 0 {
+		parts = append(parts, fmt.Sprintf("Streak: %dd", streak))
+	}
+	sb.WriteString(styleMuted.Render(" " + strings.Join(parts, "  ")))
+	sb.WriteString("\n")
+
+	if len(m.state.Achievements) > 0 {
+		latest := m.state.Achievements[len(m.state.Achievements)-1]
+		sb.WriteString(styleMuted.Render(fmt.Sprintf(" Latest: %s", config.AchievementDescription(latest.ID))))
+		sb.WriteString("\n")
+	}
+	return sb.String()
+}
+
 func (m *Model) View() string {
 	var sb strings.Builder
 
@@ -580,6 +643,12 @@ func (m *Model) View() string {
 
 	sb.WriteString(styleMuted.Render(strings.Repeat("─", m.width)))
 	sb.WriteString("\n")
+
+	if box := m.statsBox(); box != "" {
+		sb.WriteString(box)
+		sb.WriteString(styleMuted.Render(strings.Repeat("─", m.width)))
+		sb.WriteString("\n")
+	}
 
 	switch m.mode {
 	case modeNormal:

@@ -5,10 +5,13 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/panamafrancis/workbench/pkg/config"
 	"github.com/panamafrancis/workbench/pkg/git"
+	"github.com/panamafrancis/workbench/pkg/github"
 	"github.com/panamafrancis/workbench/pkg/zellij"
 )
 
@@ -62,6 +65,19 @@ var rmWorktreeCmd = &cobra.Command{
 		if err := cfg.Save(); err != nil {
 			return err
 		}
+
+		state, _ := config.LoadState()
+		prCache := github.NewCache(config.PRCachePath())
+		_ = prCache.Load()
+		if info := prCache.Get(wt.Branch); info != nil && info.Status == github.PRMerged {
+			state.RecordWorktreeMerged()
+			if !info.UpdatedAt.IsZero() && info.UpdatedAt.Sub(wt.CreatedAt) < time.Hour {
+				state.UnlockAchievement("speed-demon")
+			}
+		}
+		_ = state.CheckAndUnlockAchievements()
+		_ = state.Save()
+
 		zellij.CleanupLayout(name)
 		fmt.Printf("removed worktree %q\n", name)
 		return nil

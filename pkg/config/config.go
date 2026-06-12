@@ -20,12 +20,20 @@ type Config struct {
 	DefaultZellijLayout string           `yaml:"default_zellij_layout"`
 	SidebarWidth        string           `yaml:"sidebar_width"`
 	DisableUpdateCheck  bool             `yaml:"update_check_disabled"`
+	ShowStats           *bool            `yaml:"show_stats,omitempty"`
 	Models              map[string]Model `yaml:"models"`
 	Repos               []Repo           `yaml:"repos"`
 }
 
 func (c *Config) UpdateCheck() bool {
 	return !c.DisableUpdateCheck
+}
+
+func (c *Config) ResolveShowStats() bool {
+	if c.ShowStats != nil {
+		return *c.ShowStats
+	}
+	return true
 }
 
 type Model struct {

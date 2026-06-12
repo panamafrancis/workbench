@@ -4,49 +4,76 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"regexp"
+	"slices"
+	"strconv"
+	"strings"
 )
 
-var adjectives = []string{
-	"bold", "swift", "calm", "bright", "clear", "sharp", "quiet", "brave",
-	"clean", "crisp", "dark", "deep", "dry", "fair", "fast", "firm",
-	"flat", "free", "full", "good", "great", "hard", "high", "keen",
-	"kind", "late", "lean", "long", "loud", "neat", "nice", "open",
-	"pure", "rare", "rich", "safe", "slim", "slow", "smart", "smooth",
-	"soft", "still", "strong", "tall", "thin", "true", "warm", "wide",
-	"wild", "wise",
-}
-
-var cities = []string{
-	"atlanta", "oslo", "kyoto", "lisbon", "nairobi", "dubai", "seoul",
-	"vienna", "prague", "cairo", "lima", "accra", "bogota", "manila",
-	"jakarta", "tehran", "lagos", "dhaka", "karachi", "kolkata",
-	"mumbai", "delhi", "taipei", "osaka", "berlin", "madrid", "rome",
-	"paris", "sydney", "toronto", "chicago", "denver", "austin",
-	"miami", "boston", "seattle", "phoenix", "detroit", "nashville",
-	"portland", "dallas", "houston", "montreal", "havana", "santiago",
-	"budapest", "warsaw", "athens", "zagreb", "dublin",
+// Cities is the pool of city names used for auto-generated worktree names.
+var Cities = []string{
+	"abuja", "accra", "adelaide", "algiers", "amman", "amsterdam",
+	"anchorage", "ankara", "antwerp", "apia", "ashgabat", "astana",
+	"asuncion", "athens", "atlanta", "auckland", "austin",
+	"baghdad", "baku", "bamako", "bangkok", "barcelona", "belem",
+	"belgrade", "belmopan", "bergen", "berlin", "bern", "bilbao",
+	"bogota", "bologna", "boston", "brasilia", "bratislava",
+	"brisbane", "brussels", "bucharest", "budapest", "calgary",
+	"cairo", "canberra", "caracas", "cardiff", "casablanca",
+	"chennai", "chicago", "colombo", "copenhagen", "cork",
+	"dakar", "dallas", "damascus", "darwin", "delhi", "denver",
+	"detroit", "dhaka", "doha", "dresden", "dubai", "dublin",
+	"durban", "edinburgh", "edmonton", "florence", "fortaleza",
+	"frankfurt", "freetown", "fukuoka", "gdansk", "geneva",
+	"genoa", "glasgow", "gothenburg", "granada", "guadalajara",
+	"guatemala", "hamburg", "hanoi", "harare", "havana",
+	"helsinki", "hiroshima", "houston", "hyderabad", "istanbul",
+	"izmir", "jaipur", "jakarta", "jeddah", "jerusalem",
+	"kampala", "karachi", "kathmandu", "kigali", "kingston",
+	"kinshasa", "kolkata", "krakow", "kuching", "kyoto",
+	"lagos", "lahore", "leipzig", "libreville", "lima", "lisbon",
+	"liverpool", "ljubljana", "london", "luanda", "lusaka",
+	"luxembourg", "lyon", "madrid", "malaga", "managua", "manama",
+	"manila", "maputo", "marseille", "medellin", "melbourne",
+	"memphis", "miami", "milan", "minsk", "monaco",
+	"monterrey", "montevideo", "montreal", "moscow", "mumbai",
+	"munich", "muscat", "nagoya", "nairobi", "nantes", "napoli",
+	"nashville", "nassau", "nicosia", "nuremberg", "oakland",
+	"odessa", "osaka", "oslo", "ottawa", "oxford",
+	"palermo", "panama", "paris", "perth", "phoenix", "portland",
+	"porto", "prague", "pretoria", "puebla", "quito",
+	"rabat", "raleigh", "reykjavik", "riga", "riyadh", "rome",
+	"rotterdam", "sacramento", "salzburg", "santiago", "sapporo",
+	"sarajevo", "seattle", "sendai", "seoul", "seville",
+	"shanghai", "singapore", "skopje", "sofia", "stockholm",
+	"stuttgart", "surabaya", "suva", "sydney", "taipei",
+	"tallinn", "tampere", "tbilisi", "tehran", "tijuana",
+	"tirana", "tokyo", "toronto", "tripoli", "tunis", "turin",
+	"valencia", "valletta", "vancouver", "venice", "vienna",
+	"vilnius", "warsaw", "winnipeg", "yokohama", "zagreb",
+	"zanzibar", "zurich",
 }
 
 var nameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,22}[a-z0-9]$|^[a-z0-9]$`)
+
+const maxSuffix = 99
 
 func GenerateName(existing []string) (string, error) {
 	taken := make(map[string]bool, len(existing))
 	for _, n := range existing {
 		taken[n] = true
 	}
-	// Shuffle deterministically based on the number of existing names so the
-	// result is stable for the same input but varies as worktrees are added.
+
 	rng := rand.New(rand.NewPCG(uint64(len(existing)), 0))
-	adjs := make([]string, len(adjectives))
-	copy(adjs, adjectives)
-	rng.Shuffle(len(adjs), func(i, j int) { adjs[i], adjs[j] = adjs[j], adjs[i] })
-	ctys := make([]string, len(cities))
-	copy(ctys, cities)
+	ctys := make([]string, len(Cities))
+	copy(ctys, Cities)
 	rng.Shuffle(len(ctys), func(i, j int) { ctys[i], ctys[j] = ctys[j], ctys[i] })
 
-	for _, adj := range adjs {
-		for _, city := range ctys {
-			candidate := adj + "-" + city
+	for _, city := range ctys {
+		if !taken[city] {
+			return city, nil
+		}
+		for n := 2; n <= maxSuffix; n++ {
+			candidate := city + "-" + strconv.Itoa(n)
 			if !taken[candidate] {
 				return candidate, nil
 			}
@@ -55,14 +82,30 @@ func GenerateName(existing []string) (string, error) {
 	return "", fmt.Errorf("all generated names are taken")
 }
 
+// ExtractBaseCity strips a trailing -N suffix and returns the base city name.
+func ExtractBaseCity(name string) string {
+	idx := strings.LastIndex(name, "-")
+	if idx < 0 {
+		return name
+	}
+	suffix := name[idx+1:]
+	if _, err := strconv.Atoi(suffix); err == nil {
+		return name[:idx]
+	}
+	return name
+}
+
+// IsCityName reports whether name (after stripping a -N suffix) is a known city.
+func IsCityName(name string) bool {
+	return slices.Contains(Cities, ExtractBaseCity(name))
+}
+
 func ValidateName(name string, existing []string) error {
 	if !nameRe.MatchString(name) {
 		return fmt.Errorf("name must be lowercase alphanumeric and hyphens, 1-24 chars")
 	}
-	for _, n := range existing {
-		if n == name {
-			return fmt.Errorf("name %q already in use", name)
-		}
+	if slices.Contains(existing, name) {
+		return fmt.Errorf("name %q already in use", name)
 	}
 	return nil
 }

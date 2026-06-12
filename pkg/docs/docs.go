@@ -242,14 +242,15 @@ const worktrees = `# Worktrees
 
 ## Naming
 
-Auto-generated names are <adjective>-<city> (e.g. bold-atlanta, clear-detroit).
+Auto-generated names are city names (e.g. tokyo, nairobi). On collision, a
+numeric suffix is added (tokyo-2, tokyo-3). ~200 cities are available.
 Names are globally unique across all repos — they serve as Zellij tab titles.
 Custom names must be lowercase alphanumeric and hyphens, 1–24 characters.
 
 ## Branch naming
 
 Auto-created branches follow: wt/<repo-alias>/<worktree-name>
-Example: wt/wb/clear-detroit
+Example: wt/wb/tokyo
 
 Before creating a PR, rename to something meaningful:
   workbench rename-branch wt/wb/session-launcher --push

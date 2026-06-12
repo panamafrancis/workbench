@@ -32,7 +32,7 @@ var rootCmd = &cobra.Command{
 			return fmt.Errorf("load config: %w", err)
 		}
 		name := cmd.Name()
-		if name != "init" && name != "doctor" && name != "help" && name != "version" && name != "mcp" && name != "docs" {
+		if name != "init" && name != "doctor" && name != "help" && name != "version" && name != "mcp" && name != "docs" && name != "stats" {
 			if _, statErr := os.Stat(config.ConfigPath()); os.IsNotExist(statErr) {
 				fmt.Fprintln(os.Stderr, "No config found. Run: workbench init")
 			}

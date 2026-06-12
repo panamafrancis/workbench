@@ -62,6 +62,7 @@ workbench open --worktree=<name> [--model=<model>] [--repo=<alias>] [--no-zellij
 workbench open --worktree=<name> --session=<session>   target a specific session
 
 workbench rename-branch <new-branch> [--worktree=<name>] [--push]
+workbench stats                                show lifetime statistics and achievements
 workbench init [--non-interactive] [--profile]
 workbench doctor [--json]
 workbench uninstall [--dry-run] [--keep-config] [--force]
@@ -80,7 +81,7 @@ Multiple sessions are supported — `workbench start work` and `workbench start 
 
 ### Worktree names
 
-Auto-generated names are `<adjective>-<city>` (e.g. `bold-atlanta`). Names are globally unique across all repos — they serve as Zellij tab titles. Custom names must be lowercase alphanumeric and hyphens, 1–24 characters.
+Auto-generated names are city names (e.g. `tokyo`, `nairobi`). On collision, a numeric suffix is added (`tokyo-2`, `tokyo-3`). ~200 cities are available. Names are globally unique across all repos — they serve as Zellij tab titles. Custom names must be lowercase alphanumeric and hyphens, 1–24 characters.
 
 ### Branch renaming
 
@@ -111,7 +112,7 @@ Do not use bare `git branch -m` — it desyncs workbench config and the PR cache
 | `?` | Toggle help (includes zellij primer) |
 | `q` / `Esc` | Quit (confirms in sidebar mode) |
 
-The sidebar shows a stats line at the bottom (repo count, worktree count, running/dirty/PR indicators) and context-sensitive key hints.
+The sidebar shows a gamification stats box (cities visited, lifetime counters, streak, latest achievement) and a stats line at the bottom (repo count, worktree count, running/dirty/PR indicators) with context-sensitive key hints. Hide the stats box with `show_stats: false` in config.
 
 Mouse: click a repo header to collapse/expand; click a worktree row to select.
 
@@ -130,7 +131,7 @@ All state lives under `~/.workbench/`:
 | Path | Purpose |
 |------|---------|
 | `~/.workbench/config.yml` | Main config |
-| `~/.workbench/state.yml` | Last-run version, update check cache |
+| `~/.workbench/state.yml` | Last-run version, update check cache, gamification stats |
 | `~/.workbench/worktrees/<alias>/<name>/` | Default worktree location |
 | `~/.workbench/layouts/<name>.kdl` | Generated Zellij layouts (transient) |
 | `~/.workbench/cache/` | PR status cache |
@@ -145,6 +146,7 @@ worktree_base: ""          # empty = ~/.workbench/worktrees/
 default_zellij_layout: ""  # override the embedded session layout
 sidebar_width: "20%"       # sidebar pane width in new worktree tabs
 update_check_disabled: false  # set true to disable the update check on start
+show_stats: true           # show gamification stats box in the sidebar (default true)
 
 models:
   claude:

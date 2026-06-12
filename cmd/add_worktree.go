@@ -87,7 +87,16 @@ var addWorktreeCmd = &cobra.Command{
 		if err := cfg.Save(); err != nil {
 			return err
 		}
+
+		state, _ := config.LoadState()
+		state.RecordWorktreeCreated(name)
+		newAchievements := state.CheckAndUnlockAchievements()
+		_ = state.Save()
+
 		fmt.Printf("created worktree %q at %s\n", name, worktreePath)
+		for _, a := range newAchievements {
+			fmt.Printf("  Achievement unlocked: %s\n", config.AchievementDescription(a.ID))
+		}
 		return nil
 	},
 }

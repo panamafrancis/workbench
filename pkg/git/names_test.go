@@ -1,6 +1,7 @@
 package git
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -10,17 +11,25 @@ func TestGenerateNameBasic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateName(nil) error = %v", err)
 	}
-	if !strings.Contains(name, "-") {
-		t.Errorf("GenerateName() = %q, expected adjective-city format", name)
+	if !nameRe.MatchString(name) {
+		t.Errorf("GenerateName() = %q, does not match nameRe", name)
 	}
-	parts := strings.SplitN(name, "-", 2)
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-		t.Errorf("GenerateName() = %q, not two non-empty parts", name)
+	if !IsCityName(name) {
+		t.Errorf("GenerateName() = %q, not a known city", name)
+	}
+}
+
+func TestGenerateNameBarePreferred(t *testing.T) {
+	name, err := GenerateName(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(name, "-") {
+		t.Errorf("GenerateName(nil) = %q, expected bare city name without suffix", name)
 	}
 }
 
 func TestGenerateNameSkipsExisting(t *testing.T) {
-	// Take the first name, then verify generation returns something different.
 	first, err := GenerateName(nil)
 	if err != nil {
 		t.Fatal(err)
@@ -34,8 +43,33 @@ func TestGenerateNameSkipsExisting(t *testing.T) {
 	}
 }
 
+func TestGenerateNameCollisionSuffix(t *testing.T) {
+	first, err := GenerateName(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Take the bare name — next call with same seed characteristics should
+	// eventually produce city-2 when the bare name is taken.
+	// We force the issue by taking ALL bare city names except none,
+	// so instead just take the first name and check the second is different.
+	// More targeted: take just the first city and verify suffix appears.
+	allBare := make([]string, len(Cities))
+	copy(allBare, Cities)
+	suffixed, err := GenerateName(allBare)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := ExtractBaseCity(suffixed)
+	if base == suffixed {
+		t.Fatalf("expected suffixed name when all bare names taken, got %q", suffixed)
+	}
+	if !IsCityName(suffixed) {
+		t.Errorf("suffixed name %q not recognized as city", suffixed)
+	}
+	_ = first // used above
+}
+
 func TestGenerateNameDeterministic(t *testing.T) {
-	// Same existing set → same candidate every time (iteration order is fixed).
 	a, err := GenerateName(nil)
 	if err != nil {
 		t.Fatal(err)
@@ -50,11 +84,11 @@ func TestGenerateNameDeterministic(t *testing.T) {
 }
 
 func TestGenerateNameExhausted(t *testing.T) {
-	// Build a set containing every possible generated name.
-	all := make([]string, 0, len(adjectives)*len(cities))
-	for _, adj := range adjectives {
-		for _, city := range cities {
-			all = append(all, adj+"-"+city)
+	all := make([]string, 0, len(Cities)*(maxSuffix))
+	for _, city := range Cities {
+		all = append(all, city)
+		for n := 2; n <= maxSuffix; n++ {
+			all = append(all, city+"-"+strconv.Itoa(n))
 		}
 	}
 	_, err := GenerateName(all)
@@ -63,11 +97,49 @@ func TestGenerateNameExhausted(t *testing.T) {
 	}
 }
 
+func TestExtractBaseCity(t *testing.T) {
+	cases := []struct {
+		input, want string
+	}{
+		{"tokyo", "tokyo"},
+		{"tokyo-2", "tokyo"},
+		{"tokyo-99", "tokyo"},
+		{"bold-atlanta", "bold-atlanta"},
+		{"new-york", "new-york"},
+		{"new-york-3", "new-york"},
+		{"a", "a"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.input, func(t *testing.T) {
+			got := ExtractBaseCity(tc.input)
+			if got != tc.want {
+				t.Errorf("ExtractBaseCity(%q) = %q, want %q", tc.input, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestIsCityName(t *testing.T) {
+	if !IsCityName("tokyo") {
+		t.Error("IsCityName(tokyo) = false")
+	}
+	if !IsCityName("tokyo-2") {
+		t.Error("IsCityName(tokyo-2) = false")
+	}
+	if IsCityName("bold-atlanta") {
+		t.Error("IsCityName(bold-atlanta) = true, want false")
+	}
+	if IsCityName("nonexistent") {
+		t.Error("IsCityName(nonexistent) = true, want false")
+	}
+}
+
 func TestValidateNameValid(t *testing.T) {
 	cases := []string{
 		"a",
 		"abc",
-		"bold-atlanta",
+		"tokyo",
+		"tokyo-2",
 		"my-worktree-1",
 		"ab",
 		strings.Repeat("a", 24),
