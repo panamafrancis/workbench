@@ -63,6 +63,10 @@ var initCmd = &cobra.Command{
 			return err
 		}
 
+		if err := offerMCPRegistration(); err != nil {
+			return err
+		}
+
 		fmt.Println()
 		fmt.Println("Setup complete. Run: workbench start")
 		return nil
@@ -158,6 +162,43 @@ func offerAddRepo() error {
 		return err
 	}
 	fmt.Printf("Added repo %q\n", alias)
+	return nil
+}
+
+func offerMCPRegistration() error {
+	claudePath, err := exec.LookPath("claude")
+	if err != nil {
+		fmt.Println("claude: not installed (skipping MCP server registration)")
+		return nil //nolint:nilerr // not-found is a skip
+	}
+
+	checkCmd := exec.CommandContext(context.Background(), claudePath, "mcp", "list")
+	if out, err := checkCmd.Output(); err == nil && strings.Contains(string(out), "workbench") {
+		fmt.Println("MCP server: already registered with Claude Code")
+		return nil
+	}
+
+	if !initNonInteractive {
+		if !promptYN("Register workbench MCP server with Claude Code?", true) {
+			return nil
+		}
+	}
+
+	wbPath, err := exec.LookPath("workbench")
+	if err != nil {
+		wbPath = "workbench"
+	}
+
+	cmd := exec.CommandContext(context.Background(),
+		claudePath, "mcp", "add", "workbench", "-s", "user", "--", wbPath, "mcp")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: MCP registration failed: %v\n", err)
+		fmt.Fprintf(os.Stderr, "  You can register manually: claude mcp add workbench -s user -- %s mcp\n", wbPath)
+		return nil //nolint:nilerr // non-fatal
+	}
+	fmt.Println("Registered workbench MCP server with Claude Code")
 	return nil
 }
 

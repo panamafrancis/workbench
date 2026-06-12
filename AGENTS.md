@@ -65,10 +65,11 @@ pkg/
     layout.go           # WriteTabLayout — per-worktree KDL with env injection
     session.go          # ListSessions, WriteSessionLayout (go:embed), CreateBackgroundSession
     session.kdl.tmpl    # Embedded session layout template
-plugin/                 # Claude Code plugin (slash commands + skills)
-  manifest.json
-  commands/             # /workbench:rename-branch, /workbench:pr
-  skills/               # workbench-conventions (gated on WORKBENCH env var)
+plugin/                 # DEPRECATED — replaced by MCP server (cmd/mcp.go + pkg/mcp/)
+pkg/mcp/
+  server.go             # MCP stdio server — rename_branch, create_pr, docs tools + conventions prompt
+pkg/docs/
+  docs.go               # Documentation content organized by topic (used by MCP docs tool + CLI)
 scripts/
   wb.kdl                # Standalone session layout (alternative to embedded)
   e2e.sh                # E2E test script (isolated HOME)
@@ -121,6 +122,7 @@ All state lives under `~/.workbench/`:
 
 - **New inline TUI action**: add key to `keys.go`, add `inputMode` constants if needed, handle in `model.go` `Update` and `updateInput`.
 - **New CLI command**: add file under `cmd/`, wire into `rootCmd` in `cmd/root.go` via `rootCmd.AddCommand(...)` in `init()`.
+- **New MCP tool**: add the tool definition and handler in `pkg/mcp/server.go`.
 - **New config field**: add to structs in `pkg/config/config.go`, update `DefaultConfig()` if it needs a default.
 - **Change what opens in a new tab**: edit the KDL template in `pkg/zellij/layout.go`.
 

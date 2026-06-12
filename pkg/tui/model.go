@@ -213,15 +213,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case createWorktreeMsg:
 		if msg.err != nil {
+			m.removeWorktreeFromConfig(msg.name)
 			m.err = msg.err
 		} else {
-			newCfg, err := config.Load()
-			if err != nil {
-				m.err = err
-			} else {
-				m.cfg = newCfg
-				m.tree.cfg = newCfg
-			}
 			m.msg = fmt.Sprintf("created worktree %q", msg.name)
 			return m, refreshDirtyCmd(m.cfg)
 		}
@@ -353,7 +347,7 @@ func (m *Model) updateInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 		if m.mode == modeNewWorktree {
-			return m, m.createWorktree(val)
+			return m.createWorktreeOptimistic(val)
 		}
 
 		if m.mode == modeAddRepoPath {
@@ -415,60 +409,72 @@ func (m *Model) updateInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m *Model) createWorktree(nameInput string) tea.Cmd {
+func (m *Model) createWorktreeOptimistic(nameInput string) (tea.Model, tea.Cmd) {
 	repoIdx := m.pendingRepoIdx
 	m.mode = modeNormal
-	cfg := m.cfg
 
-	return func() tea.Msg {
-		repo := cfg.Repos[repoIdx]
-		existing := cfg.AllWorktreeNames()
+	repo := m.cfg.Repos[repoIdx]
+	existing := m.cfg.AllWorktreeNames()
 
-		name := nameInput
-		if name == "" {
-			var err error
-			name, err = git.GenerateName(existing)
-			if err != nil {
-				return createWorktreeMsg{err: err}
-			}
-		} else {
-			if err := git.ValidateName(name, existing); err != nil {
-				return createWorktreeMsg{err: err}
-			}
+	name := nameInput
+	if name == "" {
+		var err error
+		name, err = git.GenerateName(existing)
+		if err != nil {
+			m.err = err
+			return m, nil
 		}
+	} else {
+		if err := git.ValidateName(name, existing); err != nil {
+			m.err = err
+			return m, nil
+		}
+	}
 
-		branch := fmt.Sprintf("wt/%s/%s", repo.Alias, name)
-		base := cfg.ResolveWorktreeBase()
-		wtPath := config.WorktreePath(base, repo.Alias, name)
+	branch := fmt.Sprintf("wt/%s/%s", repo.Alias, name)
+	base := m.cfg.ResolveWorktreeBase()
+	wtPath := config.WorktreePath(base, repo.Alias, name)
+	modelKey := m.cfg.ResolveModel("")
 
+	wt := config.Worktree{
+		Name:      name,
+		Branch:    branch,
+		Path:      wtPath,
+		CreatedAt: time.Now(),
+		Model:     modelKey,
+	}
+	m.cfg.Repos[repoIdx].Worktrees = append(m.cfg.Repos[repoIdx].Worktrees, wt)
+	m.tree.cfg = m.cfg
+	m.msg = fmt.Sprintf("creating %q...", name)
+
+	cfg := m.cfg
+	repoPath := repo.LocalPath
+	return m, func() tea.Msg {
 		if err := os.MkdirAll(wtPath, 0755); err != nil {
-			return createWorktreeMsg{err: fmt.Errorf("create dir: %w", err)}
+			return createWorktreeMsg{name: name, err: fmt.Errorf("create dir: %w", err)}
 		}
 		_ = os.Remove(wtPath)
 
-		_, err := git.CreateWorktree(repo.LocalPath, wtPath, branch)
+		_, err := git.CreateWorktree(repoPath, wtPath, branch)
 		if err != nil {
-			return createWorktreeMsg{err: err}
-		}
-
-		modelKey := cfg.ResolveModel("")
-		repo.Worktrees = append(repo.Worktrees, config.Worktree{
-			Name:      name,
-			Branch:    branch,
-			Path:      wtPath,
-			CreatedAt: time.Now(),
-			Model:     modelKey,
-		})
-		for i := range cfg.Repos {
-			if cfg.Repos[i].Alias == repo.Alias {
-				cfg.Repos[i] = repo
-				break
-			}
+			return createWorktreeMsg{name: name, err: err}
 		}
 		if err := cfg.Save(); err != nil {
-			return createWorktreeMsg{err: err}
+			return createWorktreeMsg{name: name, err: err}
 		}
 		return createWorktreeMsg{name: name}
+	}
+}
+
+func (m *Model) removeWorktreeFromConfig(name string) {
+	for ri := range m.cfg.Repos {
+		for wi := range m.cfg.Repos[ri].Worktrees {
+			if m.cfg.Repos[ri].Worktrees[wi].Name == name {
+				m.cfg.Repos[ri].Worktrees = slices.Delete(m.cfg.Repos[ri].Worktrees, wi, wi+1)
+				m.tree.cfg = m.cfg
+				return
+			}
+		}
 	}
 }
 
