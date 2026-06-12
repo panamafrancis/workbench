@@ -17,7 +17,9 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - run: make build
+      - run: make build VERSION="$TAG"
+        env:
+          TAG: ${{ github.ref_name }}
 
       - name: Upload binaries
         uses: actions/upload-artifact@v4
