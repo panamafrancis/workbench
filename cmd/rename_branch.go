@@ -11,7 +11,9 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/panamafrancis/workbench/pkg/config"
+	"github.com/panamafrancis/workbench/pkg/git"
 	"github.com/panamafrancis/workbench/pkg/github"
+	"github.com/panamafrancis/workbench/pkg/zellij"
 )
 
 var (
@@ -36,6 +38,11 @@ var renameBranchCmd = &cobra.Command{
 
 		wt, repo := cfg.FindWorktree(wtName)
 		if wt == nil {
+			if wd, err := os.Getwd(); err == nil {
+				wt, repo = cfg.FindWorktreeByPath(wd)
+			}
+		}
+		if wt == nil {
 			return fmt.Errorf("worktree %q not found", wtName)
 		}
 
@@ -52,12 +59,32 @@ var renameBranchCmd = &cobra.Command{
 			return fmt.Errorf("git branch -m: %s", strings.TrimSpace(errBuf.String()))
 		}
 
-		wt.Branch = newBranch
+		oldWtName := wt.Name
+		parts := strings.Split(newBranch, "/")
+		newWtName := parts[len(parts)-1]
+
+		renameWorktree := false
+		if newWtName != oldWtName {
+			others := cfg.AllWorktreeNames()
+			filtered := others[:0]
+			for _, n := range others {
+				if n != oldWtName {
+					filtered = append(filtered, n)
+				}
+			}
+			if git.ValidateName(newWtName, filtered) == nil {
+				renameWorktree = true
+			}
+		}
+
 		for ri := range cfg.Repos {
 			if cfg.Repos[ri].Alias == repo.Alias {
 				for wi := range cfg.Repos[ri].Worktrees {
-					if cfg.Repos[ri].Worktrees[wi].Name == wtName {
+					if cfg.Repos[ri].Worktrees[wi].Name == oldWtName {
 						cfg.Repos[ri].Worktrees[wi].Branch = newBranch
+						if renameWorktree {
+							cfg.Repos[ri].Worktrees[wi].Name = newWtName
+						}
 						break
 					}
 				}
@@ -73,7 +100,14 @@ var renameBranchCmd = &cobra.Command{
 		prCache.Rename(oldBranch, newBranch)
 		_ = prCache.Save()
 
+		if renameWorktree && zellij.IsInZellij() {
+			_ = zellij.RenameTab(oldWtName, newWtName)
+		}
+
 		fmt.Printf("renamed branch: %s → %s\n", oldBranch, newBranch)
+		if renameWorktree {
+			fmt.Printf("renamed worktree: %s → %s\n", oldWtName, newWtName)
+		}
 
 		if renameBranchPush {
 			pushCmd := exec.CommandContext(context.Background(), "git", "-C", wt.Path, "push", "-u", "origin", newBranch)

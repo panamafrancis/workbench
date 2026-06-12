@@ -161,6 +161,18 @@ func (c *Config) FindWorktree(name string) (*Worktree, *Repo) {
 	return nil, nil
 }
 
+func (c *Config) FindWorktreeByPath(path string) (*Worktree, *Repo) {
+	path = filepath.Clean(path)
+	for ri := range c.Repos {
+		for wi := range c.Repos[ri].Worktrees {
+			if filepath.Clean(c.Repos[ri].Worktrees[wi].Path) == path {
+				return &c.Repos[ri].Worktrees[wi], &c.Repos[ri]
+			}
+		}
+	}
+	return nil, nil
+}
+
 func (c *Config) AllWorktreeNames() []string {
 	var names []string
 	for _, r := range c.Repos {
