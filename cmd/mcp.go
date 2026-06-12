@@ -4,6 +4,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/panamafrancis/workbench/pkg/mcp"
+	"github.com/panamafrancis/workbench/pkg/version"
 )
 
 var mcpCmd = &cobra.Command{
@@ -11,7 +12,7 @@ var mcpCmd = &cobra.Command{
 	Short:  "Run the MCP server (stdio transport, used by Claude Code)",
 	Hidden: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return mcp.Run(Version)
+		return mcp.Run(version.Version)
 	},
 }
 

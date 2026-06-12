@@ -1,7 +1,7 @@
 BINARY     := workbench
 ZELLIJ_DIR := $(HOME)/.config/zellij/layouts
 VERSION    ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
-LDFLAGS    := -s -w -X github.com/panamafrancis/workbench/cmd.Version=$(VERSION)
+LDFLAGS    := -s -w -X github.com/panamafrancis/workbench/pkg/version.Version=$(VERSION)
 
 .PHONY: build install setup test fmt vet lint ci clean hooks e2e release-patch release-minor release-major _do_release
 

@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/panamafrancis/workbench/pkg/setup"
+	"github.com/panamafrancis/workbench/pkg/version"
 	"github.com/panamafrancis/workbench/pkg/zellij"
 )
 
@@ -47,7 +48,7 @@ var startCmd = &cobra.Command{
 
 		updateDone := make(chan string, 1)
 		go func() {
-			updateDone <- setup.CheckForUpdate(Version, cfg)
+			updateDone <- setup.CheckForUpdate(version.Version, cfg)
 		}()
 
 		layoutPath, err := zellij.WriteSessionLayout(sessionName, cfg.ResolveSidebarWidth())
