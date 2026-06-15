@@ -43,6 +43,7 @@ func WriteTabLayout(name, cwd, sidebarWidth string, nonoArgs []string, envVars m
 	}
 
 	kdl := fmt.Sprintf(`layout {
+    cwd "%s"
     pane split_direction="vertical" {
         pane size="%s" name="sidebar" {
             command "bash"
@@ -54,7 +55,7 @@ func WriteTabLayout(name, cwd, sidebarWidth string, nonoArgs []string, envVars m
         }
     }
 }
-`, sidebarWidth, name, cwd, agentCommand, agentArgs)
+`, cwd, sidebarWidth, name, cwd, agentCommand, agentArgs)
 
 	path := filepath.Join(dir, name+".kdl")
 	if err := os.WriteFile(path, []byte(kdl), 0644); err != nil {
