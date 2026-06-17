@@ -90,6 +90,13 @@ type Model struct {
 	isSidebar          bool
 	zellijHint         string
 	refreshingTabs     bool
+	creating           map[string]bool
+	pendingOpen        *pendingOpenRequest
+}
+
+type pendingOpenRequest struct {
+	name          string
+	modelOverride string
 }
 
 func New(cfg *config.Config) *Model {
@@ -219,12 +226,21 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = msg.err
 
 	case createWorktreeMsg:
+		delete(m.creating, msg.name)
 		if msg.err != nil {
+			if m.pendingOpen != nil && m.pendingOpen.name == msg.name {
+				m.pendingOpen = nil
+			}
 			m.removeWorktreeFromConfig(msg.name)
 			m.err = msg.err
 		} else {
 			if newState, stateErr := config.LoadState(); stateErr == nil {
 				m.state = newState
+			}
+			if m.pendingOpen != nil && m.pendingOpen.name == msg.name {
+				openCmd := m.openWorktreeByName(msg.name, m.pendingOpen.modelOverride)
+				m.pendingOpen = nil
+				return m, tea.Batch(openCmd, refreshDirtyCmd(m.cfg))
 			}
 			m.msg = fmt.Sprintf("created worktree %q", msg.name)
 			return m, refreshDirtyCmd(m.cfg)
@@ -458,18 +474,23 @@ func (m *Model) createWorktreeOptimistic(nameInput string) (tea.Model, tea.Cmd) 
 	}
 	m.cfg.Repos[repoIdx].Worktrees = append(m.cfg.Repos[repoIdx].Worktrees, wt)
 	m.tree.cfg = m.cfg
+	if err := os.MkdirAll(wtPath, 0755); err != nil {
+		m.removeWorktreeFromConfig(name)
+		m.err = fmt.Errorf("create dir: %w", err)
+		return m, nil
+	}
+	if m.creating == nil {
+		m.creating = make(map[string]bool)
+	}
+	m.creating[name] = true
 	m.msg = fmt.Sprintf("creating %q...", name)
 
 	cfg := m.cfg
 	repoPath := repo.LocalPath
 	return m, func() tea.Msg {
-		if err := os.MkdirAll(wtPath, 0755); err != nil {
-			return createWorktreeMsg{name: name, err: fmt.Errorf("create dir: %w", err)}
-		}
-		_ = os.Remove(wtPath)
-
 		_, err := git.CreateWorktree(repoPath, wtPath, branch)
 		if err != nil {
+			os.Remove(wtPath)
 			return createWorktreeMsg{name: name, err: err}
 		}
 		if err := cfg.Save(); err != nil {
@@ -565,7 +586,23 @@ func (m *Model) openSelected(modelOverride string) tea.Cmd {
 		return nil
 	}
 	wt := m.cfg.Repos[sel.repoIdx].Worktrees[sel.worktreeIdx]
-	repo := m.cfg.Repos[sel.repoIdx]
+	if m.creating[wt.Name] {
+		m.pendingOpen = &pendingOpenRequest{name: wt.Name, modelOverride: modelOverride}
+		m.msg = fmt.Sprintf("waiting for %q to finish creating...", wt.Name)
+		return nil
+	}
+	return m.openWorktree(wt, m.cfg.Repos[sel.repoIdx], modelOverride)
+}
+
+func (m *Model) openWorktreeByName(name, modelOverride string) tea.Cmd {
+	wt, repo := m.cfg.FindWorktree(name)
+	if wt == nil {
+		return nil
+	}
+	return m.openWorktree(*wt, *repo, modelOverride)
+}
+
+func (m *Model) openWorktree(wt config.Worktree, repo config.Repo, modelOverride string) tea.Cmd {
 	modelKey := m.cfg.ResolveModel(modelOverride)
 	if wt.Model != "" {
 		modelKey = m.cfg.ResolveModel(wt.Model)
