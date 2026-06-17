@@ -490,7 +490,7 @@ func (m *Model) createWorktreeOptimistic(nameInput string) (tea.Model, tea.Cmd) 
 	return m, func() tea.Msg {
 		_, err := git.CreateWorktree(repoPath, wtPath, branch)
 		if err != nil {
-			os.Remove(wtPath)
+			os.Remove(wtPath) //nolint:errcheck
 			return createWorktreeMsg{name: name, err: err}
 		}
 		if err := cfg.Save(); err != nil {
