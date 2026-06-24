@@ -234,6 +234,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.removeWorktreeFromConfig(msg.name)
 			m.err = msg.err
 		} else {
+			// Reload from disk so the tree reflects the persisted state (and
+			// drops any optimistic entry that another process removed) rather
+			// than the in-memory snapshot, mirroring the delete handler.
+			if newCfg, err := config.Load(); err == nil {
+				m.cfg = newCfg
+				m.tree.cfg = newCfg
+				m.tree.clamp()
+			}
 			if newState, stateErr := config.LoadState(); stateErr == nil {
 				m.state = newState
 			}
@@ -485,7 +493,7 @@ func (m *Model) createWorktreeOptimistic(nameInput string) (tea.Model, tea.Cmd) 
 	m.creating[name] = true
 	m.msg = fmt.Sprintf("creating %q...", name)
 
-	cfg := m.cfg
+	alias := repo.Alias
 	repoPath := repo.LocalPath
 	return m, func() tea.Msg {
 		_, err := git.CreateWorktree(repoPath, wtPath, branch)
@@ -493,7 +501,9 @@ func (m *Model) createWorktreeOptimistic(nameInput string) (tea.Model, tea.Cmd) 
 			os.Remove(wtPath) //nolint:errcheck
 			return createWorktreeMsg{name: name, err: err}
 		}
-		if err := cfg.Save(); err != nil {
+		// Persist via a fresh read-modify-write so a stale in-memory snapshot
+		// can't resurrect worktrees deleted by another process or instance.
+		if err := config.AddWorktree(alias, wt); err != nil {
 			return createWorktreeMsg{name: name, err: err}
 		}
 
@@ -557,10 +567,11 @@ func (m *Model) deleteWorktree() tea.Cmd {
 		}
 
 		_ = git.DeleteBranch(repo.LocalPath, wt.Branch)
+		_ = sandbox.ClearSessionCache(wt.Path)
 
-		repo.Worktrees = slices.Delete(repo.Worktrees, wtIdx, wtIdx+1)
-		cfg.Repos[repoIdx] = repo
-		if err := cfg.Save(); err != nil {
+		// Read-modify-write against current disk state so the removal can't
+		// clobber worktrees created concurrently by another process.
+		if err := config.RemoveWorktreeEntry(wt.Name); err != nil {
 			return deleteWorktreeMsg{err: err}
 		}
 
@@ -576,6 +587,7 @@ func (m *Model) deleteWorktree() tea.Cmd {
 		_ = state.CheckAndUnlockAchievements()
 		_ = state.Save()
 
+		zellij.CleanupLayout(wt.Name)
 		return deleteWorktreeMsg{name: wt.Name}
 	}
 }

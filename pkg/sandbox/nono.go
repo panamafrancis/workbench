@@ -47,6 +47,28 @@ func hasPriorSession(worktreePath string) bool {
 	return false
 }
 
+// ClearSessionCache removes any cached agent session transcripts for
+// worktreePath (claude stores them under ~/.claude/projects/<encoded-path>/).
+// Call this when a worktree is deleted so a future worktree created at the same
+// path is not silently resumed into an unrelated session via --continue. It is
+// a no-op when no cache directory exists.
+func ClearSessionCache(worktreePath string) error {
+	if worktreePath == "" {
+		// Guard against nuking ~/.claude/projects wholesale: an empty path
+		// encodes to "" and would resolve to the projects root itself.
+		return nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	dir := filepath.Join(home, ".claude", "projects", encodeProjectPath(worktreePath))
+	if err := os.RemoveAll(dir); err != nil {
+		return fmt.Errorf("remove session cache: %w", err)
+	}
+	return nil
+}
+
 func encodeProjectPath(p string) string {
 	var b strings.Builder
 	for _, r := range p {

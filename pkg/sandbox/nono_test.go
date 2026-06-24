@@ -1,6 +1,8 @@
 package sandbox
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 
@@ -78,6 +80,54 @@ func TestBuildNonoArgsPathIsAllowed(t *testing.T) {
 		}
 	}
 	t.Errorf("--allow not found in args %v", got)
+}
+
+func TestClearSessionCache(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	wtPath := "/some/worktree/path"
+
+	dir := filepath.Join(home, ".claude", "projects", encodeProjectPath(wtPath))
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "session.jsonl"), []byte("{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if !hasPriorSession(wtPath) {
+		t.Fatal("hasPriorSession = false before clear, want true")
+	}
+	if err := ClearSessionCache(wtPath); err != nil {
+		t.Fatalf("ClearSessionCache() error = %v", err)
+	}
+	if hasPriorSession(wtPath) {
+		t.Error("hasPriorSession = true after clear, want false")
+	}
+}
+
+func TestClearSessionCacheMissingIsNoOp(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := ClearSessionCache("/never/created"); err != nil {
+		t.Errorf("ClearSessionCache(missing) = %v, want nil", err)
+	}
+}
+
+// An empty path must not delete the whole projects root.
+func TestClearSessionCacheEmptyPathIsGuarded(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	other := filepath.Join(home, ".claude", "projects", "someotherworktree")
+	if err := os.MkdirAll(other, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ClearSessionCache(""); err != nil {
+		t.Fatalf("ClearSessionCache(\"\") error = %v", err)
+	}
+	if _, err := os.Stat(other); err != nil {
+		t.Errorf("projects root was wiped by empty path: %v", err)
+	}
 }
 
 func TestBuildNonoArgsSeparatorPresent(t *testing.T) {
