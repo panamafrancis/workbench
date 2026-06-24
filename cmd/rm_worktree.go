@@ -54,21 +54,7 @@ var rmWorktreeCmd = &cobra.Command{
 		}
 		_ = sandbox.ClearSessionCache(wt.Path)
 
-		repoEntry, _ := cfg.FindRepo(repo.Alias)
-		for i, w := range repoEntry.Worktrees {
-			if w.Name == name {
-				repoEntry.Worktrees = append(repoEntry.Worktrees[:i], repoEntry.Worktrees[i+1:]...)
-				break
-			}
-		}
-		for i := range cfg.Repos {
-			if cfg.Repos[i].Alias == repo.Alias {
-				cfg.Repos[i] = *repoEntry
-				break
-			}
-		}
-
-		if err := cfg.Save(); err != nil {
+		if err := config.RemoveWorktreeEntry(name); err != nil {
 			return err
 		}
 

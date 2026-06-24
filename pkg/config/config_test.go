@@ -1,8 +1,10 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 )
@@ -147,6 +149,45 @@ func TestAddWorktreeDoesNotResurrectDeleted(t *testing.T) {
 	got := loaded.AllWorktreeNames()
 	if len(got) != 1 || got[0] != "bravo" {
 		t.Errorf("worktrees = %v, want [bravo] (alpha must not be resurrected)", got)
+	}
+}
+
+// Concurrent AddWorktree calls must not lose updates: the per-call read from
+// disk could otherwise clobber a sibling add, but the config lock serializes
+// the Load→Save sequences.
+func TestAddWorktreeConcurrent(t *testing.T) {
+	isolatedHome(t)
+	base := DefaultConfig()
+	base.Repos = []Repo{{Alias: "r1", LocalPath: "/r1"}}
+	if err := base.Save(); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+
+	const n = 16
+	var wg sync.WaitGroup
+	errs := make(chan error, n)
+	for i := range n {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			name := fmt.Sprintf("wt%02d", i)
+			errs <- AddWorktree("r1", Worktree{Name: name, Branch: "wt/r1/" + name})
+		}(i)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("AddWorktree() error = %v", err)
+		}
+	}
+
+	loaded, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if got := len(loaded.AllWorktreeNames()); got != n {
+		t.Errorf("worktree count = %d, want %d (lost updates under concurrency)", got, n)
 	}
 }
 

@@ -53,6 +53,11 @@ func hasPriorSession(worktreePath string) bool {
 // path is not silently resumed into an unrelated session via --continue. It is
 // a no-op when no cache directory exists.
 func ClearSessionCache(worktreePath string) error {
+	if worktreePath == "" {
+		// Guard against nuking ~/.claude/projects wholesale: an empty path
+		// encodes to "" and would resolve to the projects root itself.
+		return nil
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return err

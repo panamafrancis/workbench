@@ -141,40 +141,44 @@ func (c *Config) Save() error {
 // from resurrecting worktrees that were deleted concurrently by another process
 // or TUI instance. A worktree whose name already exists is left untouched.
 func AddWorktree(alias string, wt Worktree) error {
-	cfg, err := Load()
-	if err != nil {
-		return err
-	}
-	repo, idx := cfg.FindRepo(alias)
-	if repo == nil {
-		return fmt.Errorf("repo %q not found", alias)
-	}
-	for _, w := range cfg.Repos[idx].Worktrees {
-		if w.Name == wt.Name {
-			return nil
+	return withConfigLock(func() error {
+		cfg, err := Load()
+		if err != nil {
+			return err
 		}
-	}
-	cfg.Repos[idx].Worktrees = append(cfg.Repos[idx].Worktrees, wt)
-	return cfg.Save()
+		repo, idx := cfg.FindRepo(alias)
+		if repo == nil {
+			return fmt.Errorf("repo %q not found", alias)
+		}
+		for _, w := range cfg.Repos[idx].Worktrees {
+			if w.Name == wt.Name {
+				return nil
+			}
+		}
+		cfg.Repos[idx].Worktrees = append(cfg.Repos[idx].Worktrees, wt)
+		return cfg.Save()
+	})
 }
 
 // RemoveWorktreeEntry reloads the config from disk, removes the worktree with
 // the given name, and saves. Like AddWorktree it works against current disk
 // state so it never clobbers concurrent changes to other worktrees.
 func RemoveWorktreeEntry(name string) error {
-	cfg, err := Load()
-	if err != nil {
-		return err
-	}
-	for ri := range cfg.Repos {
-		for wi := range cfg.Repos[ri].Worktrees {
-			if cfg.Repos[ri].Worktrees[wi].Name == name {
-				cfg.Repos[ri].Worktrees = slices.Delete(cfg.Repos[ri].Worktrees, wi, wi+1)
-				return cfg.Save()
+	return withConfigLock(func() error {
+		cfg, err := Load()
+		if err != nil {
+			return err
+		}
+		for ri := range cfg.Repos {
+			for wi := range cfg.Repos[ri].Worktrees {
+				if cfg.Repos[ri].Worktrees[wi].Name == name {
+					cfg.Repos[ri].Worktrees = slices.Delete(cfg.Repos[ri].Worktrees, wi, wi+1)
+					return cfg.Save()
+				}
 			}
 		}
-	}
-	return nil
+		return nil
+	})
 }
 
 func (c *Config) ResolveWorktreeBase() string {

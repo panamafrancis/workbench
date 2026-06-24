@@ -113,6 +113,23 @@ func TestClearSessionCacheMissingIsNoOp(t *testing.T) {
 	}
 }
 
+// An empty path must not delete the whole projects root.
+func TestClearSessionCacheEmptyPathIsGuarded(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	other := filepath.Join(home, ".claude", "projects", "someotherworktree")
+	if err := os.MkdirAll(other, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ClearSessionCache(""); err != nil {
+		t.Fatalf("ClearSessionCache(\"\") error = %v", err)
+	}
+	if _, err := os.Stat(other); err != nil {
+		t.Errorf("projects root was wiped by empty path: %v", err)
+	}
+}
+
 func TestBuildNonoArgsSeparatorPresent(t *testing.T) {
 	cfg := testConfig()
 	got, err := BuildNonoArgs("/wt/path", "shell", cfg)
