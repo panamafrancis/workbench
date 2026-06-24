@@ -495,10 +495,17 @@ func (m *Model) createWorktreeOptimistic(nameInput string) (tea.Model, tea.Cmd) 
 
 	alias := repo.Alias
 	repoPath := repo.LocalPath
+	createRepo := repo
 	return m, func() tea.Msg {
 		_, err := git.CreateWorktree(repoPath, wtPath, branch)
 		if err != nil {
 			os.Remove(wtPath) //nolint:errcheck
+			return createWorktreeMsg{name: name, err: err}
+		}
+		// Copy gitignored files (copy_files) from the repo into the fresh
+		// worktree before persisting, matching the CLI add-worktree flow.
+		if err := createRepo.RunCopyFiles(wtPath); err != nil {
+			os.RemoveAll(wtPath) //nolint:errcheck
 			return createWorktreeMsg{name: name, err: err}
 		}
 		// Persist via a fresh read-modify-write so a stale in-memory snapshot
