@@ -12,6 +12,7 @@ import (
 	"github.com/panamafrancis/workbench/pkg/config"
 	"github.com/panamafrancis/workbench/pkg/git"
 	"github.com/panamafrancis/workbench/pkg/github"
+	"github.com/panamafrancis/workbench/pkg/sandbox"
 	"github.com/panamafrancis/workbench/pkg/zellij"
 )
 
@@ -47,6 +48,11 @@ var rmWorktreeCmd = &cobra.Command{
 		if err := git.RemoveWorktree(repo.LocalPath, wt.Path); err != nil {
 			return err
 		}
+
+		if err := git.DeleteBranch(repo.LocalPath, wt.Branch); err != nil {
+			fmt.Fprintf(os.Stderr, "delete branch: %v\n", err)
+		}
+		_ = sandbox.ClearSessionCache(wt.Path)
 
 		repoEntry, _ := cfg.FindRepo(repo.Alias)
 		for i, w := range repoEntry.Worktrees {

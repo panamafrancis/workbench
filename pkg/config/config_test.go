@@ -86,6 +86,97 @@ func TestSaveAndLoadRoundtrip(t *testing.T) {
 	}
 }
 
+func TestAddWorktreeReadModifyWrite(t *testing.T) {
+	isolatedHome(t)
+	base := DefaultConfig()
+	base.Repos = []Repo{{Alias: "r1", LocalPath: "/r1"}}
+	if err := base.Save(); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+
+	if err := AddWorktree("r1", Worktree{Name: "alpha", Branch: "wt/r1/alpha"}); err != nil {
+		t.Fatalf("AddWorktree() error = %v", err)
+	}
+
+	loaded, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if got := loaded.AllWorktreeNames(); len(got) != 1 || got[0] != "alpha" {
+		t.Errorf("worktrees = %v, want [alpha]", got)
+	}
+}
+
+func TestAddWorktreeUnknownRepo(t *testing.T) {
+	isolatedHome(t)
+	if err := DefaultConfig().Save(); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	if err := AddWorktree("nope", Worktree{Name: "x"}); err == nil {
+		t.Error("AddWorktree(unknown repo) = nil, want error")
+	}
+}
+
+// A stale caller adding a worktree must not resurrect a worktree that was
+// deleted from disk after the caller took its in-memory snapshot.
+func TestAddWorktreeDoesNotResurrectDeleted(t *testing.T) {
+	isolatedHome(t)
+	base := DefaultConfig()
+	base.Repos = []Repo{{Alias: "r1", LocalPath: "/r1", Worktrees: []Worktree{
+		{Name: "alpha", Branch: "wt/r1/alpha"},
+	}}}
+	if err := base.Save(); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+
+	// Simulate another process deleting "alpha" from disk.
+	if err := RemoveWorktreeEntry("alpha"); err != nil {
+		t.Fatalf("RemoveWorktreeEntry() error = %v", err)
+	}
+
+	// "base" is now stale (still has alpha). Adding bravo via the helper must
+	// read current disk state, so alpha stays gone.
+	if err := AddWorktree("r1", Worktree{Name: "bravo", Branch: "wt/r1/bravo"}); err != nil {
+		t.Fatalf("AddWorktree() error = %v", err)
+	}
+
+	loaded, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	got := loaded.AllWorktreeNames()
+	if len(got) != 1 || got[0] != "bravo" {
+		t.Errorf("worktrees = %v, want [bravo] (alpha must not be resurrected)", got)
+	}
+}
+
+func TestRemoveWorktreeEntry(t *testing.T) {
+	isolatedHome(t)
+	base := DefaultConfig()
+	base.Repos = []Repo{{Alias: "r1", LocalPath: "/r1", Worktrees: []Worktree{
+		{Name: "alpha"}, {Name: "bravo"},
+	}}}
+	if err := base.Save(); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+
+	if err := RemoveWorktreeEntry("alpha"); err != nil {
+		t.Fatalf("RemoveWorktreeEntry() error = %v", err)
+	}
+	// Removing a missing name is a no-op, not an error.
+	if err := RemoveWorktreeEntry("ghost"); err != nil {
+		t.Fatalf("RemoveWorktreeEntry(missing) error = %v", err)
+	}
+
+	loaded, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if got := loaded.AllWorktreeNames(); len(got) != 1 || got[0] != "bravo" {
+		t.Errorf("worktrees = %v, want [bravo]", got)
+	}
+}
+
 func TestSaveIsAtomic(t *testing.T) {
 	isolatedHome(t)
 	cfg := DefaultConfig()
