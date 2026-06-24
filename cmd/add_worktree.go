@@ -66,6 +66,10 @@ var addWorktreeCmd = &cobra.Command{
 			fmt.Fprintln(os.Stderr, "warning: offline — branched from last-fetched origin")
 		}
 
+		if err := repo.RunCopyFiles(worktreePath); err != nil {
+			return err
+		}
+
 		modelKey := cfg.ResolveModel(addWorktreeModel)
 
 		repo.Worktrees = append(repo.Worktrees, config.Worktree{

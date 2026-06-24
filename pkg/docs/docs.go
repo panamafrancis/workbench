@@ -176,6 +176,7 @@ Models is an open map — add any binary with any nono profile.
   repos:
     - alias: wb
       local_path: /path/to/repo
+      copy_files: [".claude", ".env"]   copied from repo to new worktrees
       startup_script: ""                run before opening a worktree
       cleanup_script: ""                run before removing a worktree
       worktrees:
@@ -190,6 +191,12 @@ Models is an open map — add any binary with any nono profile.
   WORKBENCH_WORKTREE_NAME=<name>
   WORKBENCH_REPO_ALIAS=<alias>
   WORKBENCH_BRANCH=<branch>
+
+## Environment variables injected into scripts
+
+  WORKBENCH_REPO_BASE_PATH=<repo local_path>
+  WORKBENCH_WORKTREE_PATH=<worktree path>
+  WORKBENCH_WORKTREE_NAME=<worktree name>
 `
 
 const tui = `# TUI Sidebar
@@ -262,8 +269,9 @@ Do NOT use bare git branch -m — it desyncs workbench config and PR cache.
 1. Name generated or validated (synchronous)
 2. Worktree appears immediately in the TUI (optimistic update)
 3. git fetch origin + git worktree add runs in background
-4. On success: config saved, message shown
-5. On failure: worktree removed from TUI, error shown
+4. copy_files entries copied from repo to worktree (if configured)
+5. On success: config saved, message shown
+6. On failure: worktree removed from TUI, error shown
 
 ## Offline support
 

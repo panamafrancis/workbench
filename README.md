@@ -166,6 +166,7 @@ models:
 repos:
   - alias: ss
     local_path: /path/to/scoring-service
+    copy_files: [".claude", ".env"]  # copied from repo to new worktrees
     startup_script: ""     # run before opening a worktree
     cleanup_script: ""     # run before removing a worktree
     worktrees:
@@ -191,10 +192,11 @@ Then use it with `workbench open --model=mymodel` or set it as `default_model`.
 
 ### Startup and cleanup scripts
 
-Scripts are run as `bash -- <script>` with two environment variables:
+Scripts are run as `bash -- <script>` with these environment variables:
 
 | Variable | Value |
 |----------|-------|
+| `WORKBENCH_REPO_BASE_PATH` | Absolute path to the repo (the `local_path` from config) |
 | `WORKBENCH_WORKTREE_PATH` | Absolute path to the worktree |
 | `WORKBENCH_WORKTREE_NAME` | Worktree name |
 
@@ -204,6 +206,20 @@ repos:
     startup_script: /path/to/setup.sh    # runs on workbench open
     cleanup_script: /path/to/teardown.sh # runs on workbench rm worktree
 ```
+
+### Copying files to new worktrees
+
+Git worktrees only contain tracked files. To automatically copy gitignored files (like `.env` or `.claude/`) from the repo into each new worktree, use `copy_files`:
+
+```yaml
+repos:
+  - alias: ss
+    copy_files:
+      - .claude
+      - .env
+```
+
+Paths are relative to the repo root. Both files and directories are supported. Directories are copied recursively. The copy runs after `git worktree add` and before any startup script.
 
 ### Sidebar width
 

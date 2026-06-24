@@ -50,6 +50,7 @@ type Model struct {
 type Repo struct {
 	Alias               string     `yaml:"alias"`
 	LocalPath           string     `yaml:"local_path"`
+	CopyFiles           []string   `yaml:"copy_files,omitempty"`
 	StartupScript       string     `yaml:"startup_script"`
 	CleanupScript       string     `yaml:"cleanup_script"`
 	StartupInstructions string     `yaml:"startup_instructions"`
@@ -251,23 +252,83 @@ func (r *Repo) RunStartup(worktreePath, worktreeName string) error {
 	if r.StartupScript == "" {
 		return nil
 	}
-	return runScript(r.StartupScript, worktreePath, worktreeName)
+	return runScript(r.StartupScript, r.LocalPath, worktreePath, worktreeName)
 }
 
 func (r *Repo) RunCleanup(worktreePath, worktreeName string) error {
 	if r.CleanupScript == "" {
 		return nil
 	}
-	return runScript(r.CleanupScript, worktreePath, worktreeName)
+	return runScript(r.CleanupScript, r.LocalPath, worktreePath, worktreeName)
 }
 
-func runScript(script, worktreePath, worktreeName string) error {
+func (r *Repo) RunCopyFiles(worktreePath string) error {
+	repoRoot := filepath.Clean(r.LocalPath) + string(filepath.Separator)
+	for _, pattern := range r.CopyFiles {
+		if filepath.IsAbs(pattern) {
+			return fmt.Errorf("copy_files: absolute paths not allowed: %s", pattern)
+		}
+
+		src := filepath.Clean(filepath.Join(r.LocalPath, pattern))
+		if !strings.HasPrefix(src+string(filepath.Separator), repoRoot) && src != filepath.Clean(r.LocalPath) {
+			return fmt.Errorf("copy_files: path escapes repo root: %s", pattern)
+		}
+		dst := filepath.Join(worktreePath, pattern)
+
+		info, err := os.Stat(src)
+		if err != nil {
+			return fmt.Errorf("copy_files: %s: %w", pattern, err)
+		}
+
+		if info.IsDir() {
+			if err := copyDir(src, dst); err != nil {
+				return fmt.Errorf("copy_files: %s: %w", pattern, err)
+			}
+		} else {
+			if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+				return fmt.Errorf("copy_files: %s: %w", pattern, err)
+			}
+			if err := copyFile(src, dst, info.Mode()); err != nil {
+				return fmt.Errorf("copy_files: %s: %w", pattern, err)
+			}
+		}
+	}
+	return nil
+}
+
+func copyFile(src, dst string, mode os.FileMode) error {
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(dst, data, mode)
+}
+
+func copyDir(src, dst string) error {
+	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, rel)
+		if info.IsDir() {
+			return os.MkdirAll(target, info.Mode())
+		}
+		return copyFile(path, target, info.Mode())
+	})
+}
+
+func runScript(script, repoPath, worktreePath, worktreeName string) error {
 	script = filepath.Clean(script)
 	if _, err := os.Stat(script); err != nil {
 		return fmt.Errorf("script not found: %s", script)
 	}
 	cmd := exec.CommandContext(context.Background(), "bash", "--", script)
 	cmd.Env = append(os.Environ(),
+		"WORKBENCH_REPO_BASE_PATH="+repoPath,
 		"WORKBENCH_WORKTREE_PATH="+worktreePath,
 		"WORKBENCH_WORKTREE_NAME="+worktreeName,
 	)

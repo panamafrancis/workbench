@@ -125,6 +125,7 @@ All state lives under `~/.workbench/`:
 - **New CLI command**: add file under `cmd/`, wire into `rootCmd` in `cmd/root.go` via `rootCmd.AddCommand(...)` in `init()`.
 - **New MCP tool**: add the tool definition and handler in `pkg/mcp/server.go`.
 - **New config field**: add to structs in `pkg/config/config.go`, update `DefaultConfig()` if it needs a default.
+- **Worktree creation hooks**: `copy_files` runs first (copies gitignored files from repo), then `startup_script`.
 - **Change what opens in a new tab**: edit the KDL template in `pkg/zellij/layout.go`.
 
 **Always update `README.md`** when adding or changing user-facing behavior: new config fields, new CLI flags, new keybindings, changed lifecycle behavior, or nono sandbox requirements.
