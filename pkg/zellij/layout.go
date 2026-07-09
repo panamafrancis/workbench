@@ -47,7 +47,7 @@ func WriteTabLayout(name, cwd, sidebarWidth string, nonoArgs []string, envVars m
     pane split_direction="vertical" {
         pane size="%s" name="sidebar" {
             command "bash"
-            args "-c" "WORKBENCH_SIDEBAR=1 exec bash -c 'while true; do workbench ls && sleep 0.2 || sleep 2; done'"
+            args "-c" "WORKBENCH_SIDEBAR=1 exec bash -c 'while true; do workbench ls && sleep 2 || sleep 5; done'"
         }
         pane name="%s" cwd="%s" focus=true close_on_exit=true {
             %s

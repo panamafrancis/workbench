@@ -10,13 +10,15 @@ import (
 )
 
 type cacheFile struct {
-	Entries map[string]*PRInfo `json:"entries"`
+	Entries    map[string]*PRInfo `json:"entries"`
+	RetryAfter time.Time          `json:"retry_after,omitzero"`
 }
 
 type Cache struct {
-	path    string
-	entries map[string]*PRInfo
-	mu      sync.RWMutex
+	path       string
+	entries    map[string]*PRInfo
+	retryAfter time.Time
+	mu         sync.RWMutex
 }
 
 func NewCache(path string) *Cache {
@@ -43,12 +45,13 @@ func (c *Cache) Load() error {
 	if f.Entries != nil {
 		c.entries = f.Entries
 	}
+	c.retryAfter = f.RetryAfter
 	return nil
 }
 
 func (c *Cache) Save() error {
 	c.mu.RLock()
-	f := cacheFile{Entries: c.entries}
+	f := cacheFile{Entries: c.entries, RetryAfter: c.retryAfter}
 	data, err := json.MarshalIndent(f, "", "  ")
 	c.mu.RUnlock()
 	if err != nil {
@@ -90,6 +93,23 @@ func (c *Cache) Delete(branch string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	delete(c.entries, branch)
+}
+
+// SetRetryAfter records a timestamp before which no GitHub fetches should be
+// attempted. It persists via Save so the backoff survives process restarts —
+// important for the sidebar's restart loop.
+func (c *Cache) SetRetryAfter(t time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.retryAfter = t
+}
+
+// InBackoff reports whether the fetch backoff window (set by SetRetryAfter) is
+// still active as of now.
+func (c *Cache) InBackoff(now time.Time) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return now.Before(c.retryAfter)
 }
 
 func (c *Cache) IsStale(branch string, maxAge time.Duration) bool {

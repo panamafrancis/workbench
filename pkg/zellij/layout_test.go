@@ -48,7 +48,7 @@ func TestWriteTabLayoutContent(t *testing.T) {
 		{"profile arg", `"claude-code"`},
 		{"binary arg", `"claude"`},
 		{"separator arg", `"--"`},
-		{"sidebar restart", `while true; do workbench ls && sleep 0.2 || sleep 2; done`},
+		{"sidebar restart", `while true; do workbench ls && sleep 2 || sleep 5; done`},
 		{"sidebar env", `WORKBENCH_SIDEBAR=1`},
 	}
 	for _, c := range checks {
