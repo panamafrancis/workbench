@@ -33,4 +33,19 @@ func TestIsPermanentError(t *testing.T) {
 	if IsPermanentError(nil) {
 		t.Error("nil should not be permanent")
 	}
+	if IsPermanentError(ErrGHRateLimited) {
+		t.Error("rate-limit errors must not be permanent (they must recover)")
+	}
+}
+
+func TestIsRateLimited(t *testing.T) {
+	if !IsRateLimited(ErrGHRateLimited) {
+		t.Error("ErrGHRateLimited should be rate limited")
+	}
+	if IsRateLimited(ErrGHAuth) {
+		t.Error("auth error is not a rate limit")
+	}
+	if IsRateLimited(nil) {
+		t.Error("nil is not a rate limit")
+	}
 }

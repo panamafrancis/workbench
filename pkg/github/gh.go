@@ -31,6 +31,7 @@ type PRInfo struct {
 
 var ErrGHNotFound = errors.New("gh CLI not found")
 var ErrGHAuth = errors.New("gh auth required")
+var ErrGHRateLimited = errors.New("gh rate limited")
 
 type ghPR struct {
 	Number    int       `json:"number"`
@@ -60,6 +61,9 @@ func LookupPR(repoPath, branch string) (*PRInfo, error) {
 			stderr := string(exitErr.Stderr)
 			if exitErr.ExitCode() == 4 || strings.Contains(stderr, "not logged in") || strings.Contains(stderr, "authentication") {
 				return nil, ErrGHAuth
+			}
+			if strings.Contains(strings.ToLower(stderr), "rate limit") {
+				return nil, ErrGHRateLimited
 			}
 			return nil, fmt.Errorf("gh: %s", stderr)
 		}
@@ -103,4 +107,8 @@ func mapStatus(state string, isDraft bool) PRStatus {
 
 func IsPermanentError(err error) bool {
 	return errors.Is(err, ErrGHNotFound) || errors.Is(err, ErrGHAuth)
+}
+
+func IsRateLimited(err error) bool {
+	return errors.Is(err, ErrGHRateLimited)
 }

@@ -77,6 +77,44 @@ func TestCacheLoadMissingFile(t *testing.T) {
 	}
 }
 
+func TestCacheBackoff(t *testing.T) {
+	now := time.Now()
+	c := NewCache("")
+	if c.InBackoff(now) {
+		t.Error("fresh cache should not be in backoff")
+	}
+
+	c.SetRetryAfter(now.Add(15 * time.Minute))
+	if !c.InBackoff(now) {
+		t.Error("should be in backoff before retry_after")
+	}
+	if c.InBackoff(now.Add(16 * time.Minute)) {
+		t.Error("should not be in backoff after retry_after")
+	}
+}
+
+func TestCacheBackoffPersists(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "pr-status.json")
+	retryAfter := time.Date(2026, 7, 9, 12, 44, 0, 0, time.UTC)
+
+	c := NewCache(path)
+	c.SetRetryAfter(retryAfter)
+	if err := c.Save(); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	c2 := NewCache(path)
+	if err := c2.Load(); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if !c2.InBackoff(retryAfter.Add(-time.Second)) {
+		t.Error("backoff should survive reload")
+	}
+	if c2.InBackoff(retryAfter.Add(time.Second)) {
+		t.Error("backoff should have expired after retry_after")
+	}
+}
+
 func TestCacheSaveCreatesDir(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "sub", "dir")
 	path := filepath.Join(dir, "cache.json")

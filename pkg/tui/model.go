@@ -25,6 +25,9 @@ const (
 	tickInterval  = 60 * time.Second
 	activeMaxAge  = 5 * time.Minute
 	visibleMaxAge = 15 * time.Minute
+	// rateLimitCooldown suppresses all GitHub fetches after a rate-limit
+	// error. Persisted in the PR cache so it survives sidebar restarts.
+	rateLimitCooldown = 15 * time.Minute
 )
 
 type refreshMsg struct{}
@@ -135,7 +138,10 @@ func (m *Model) refreshRunningGuarded() tea.Cmd {
 func (m *Model) Init() tea.Cmd {
 	return tea.Batch(
 		m.tickCmd(),
-		m.fetchVisibleCmd(true),
+		// Non-forced: respect the on-disk PR cache. The sidebar runs in a
+		// restart loop, so forcing here would re-hit the GitHub GraphQL API
+		// for every worktree on every restart and exhaust the rate limit.
+		m.fetchStaleCmd(),
 		refreshDirtyCmd(m.cfg),
 		m.refreshRunningGuarded(),
 	)
@@ -182,20 +188,23 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case prBatchDoneMsg:
 		m.fetching = false
-		if msg.ghErr != nil {
-			if github.IsPermanentError(msg.ghErr) {
-				m.ghAvailable = false
-				if errors.Is(msg.ghErr, github.ErrGHNotFound) {
-					m.ghHint = "gh CLI not found"
-				} else {
-					m.ghHint = "gh auth required"
-				}
-			} else {
-				m.ghHint = "sync error"
-			}
-		} else {
+		switch {
+		case msg.ghErr == nil:
 			m.ghAvailable = true
 			m.ghHint = ""
+		case github.IsPermanentError(msg.ghErr):
+			m.ghAvailable = false
+			if errors.Is(msg.ghErr, github.ErrGHNotFound) {
+				m.ghHint = "gh CLI not found"
+			} else {
+				m.ghHint = "gh auth required"
+			}
+		case github.IsRateLimited(msg.ghErr):
+			// Leave ghAvailable true so fetches resume once the persisted
+			// cooldown (InBackoff) expires.
+			m.ghHint = "gh rate limited"
+		default:
+			m.ghHint = "sync error"
 		}
 
 	case refreshMsg:
@@ -824,6 +833,9 @@ func (m *Model) fetchVisibleCmd(force bool) tea.Cmd {
 	if m.fetching {
 		return nil
 	}
+	if m.prCache != nil && m.prCache.InBackoff(time.Now()) {
+		return nil
+	}
 
 	maxAge := visibleMaxAge
 	if force {
@@ -869,6 +881,11 @@ func (m *Model) fetchVisibleCmd(force bool) tea.Cmd {
 					_ = cache.Save()
 					return prBatchDoneMsg{ghErr: err}
 				}
+				if github.IsRateLimited(err) {
+					cache.SetRetryAfter(time.Now().Add(rateLimitCooldown))
+					_ = cache.Save()
+					return prBatchDoneMsg{ghErr: err}
+				}
 				continue
 			}
 			cache.Set(t.branch, info)
@@ -884,6 +901,9 @@ func (m *Model) fetchStaleCmd() tea.Cmd {
 
 func (m *Model) fetchIfUncached() tea.Cmd {
 	if m.fetching || !m.ghAvailable {
+		return nil
+	}
+	if m.prCache != nil && m.prCache.InBackoff(time.Now()) {
 		return nil
 	}
 	sel := m.tree.selected()

@@ -116,9 +116,11 @@ The sidebar shows a gamification stats box (cities visited, lifetime counters, s
 
 Mouse: click a repo header to collapse/expand; click a worktree row to select.
 
-The sidebar auto-restarts if it crashes or is accidentally quit — the layout wraps `workbench ls` in a restart loop. If `workbench ls` exits with an error, it waits 2 seconds before retrying.
+The sidebar auto-restarts if it crashes or is accidentally quit — the layout wraps `workbench ls` in a restart loop. It waits 2 seconds between restarts (5 seconds if `workbench ls` exits with an error). Restarts reuse the on-disk PR status cache rather than re-querying GitHub, so a churning sidebar doesn't hammer the API.
 
 The sidebar refreshes automatically when its pane gains focus (e.g. switching back from a worktree tab), so the `▶` running indicators stay up to date without pressing `r`.
+
+PR status is fetched via the `gh` CLI (GitHub's GraphQL API) and cached on disk. If GitHub rate-limits the account, the sidebar shows a `gh rate limited` hint and pauses all PR fetches for 15 minutes before retrying, so it recovers on its own without draining the quota.
 
 ### Offline support
 

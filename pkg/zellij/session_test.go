@@ -38,7 +38,7 @@ func TestWriteSessionLayoutContent(t *testing.T) {
 		contain string
 	}{
 		{"sidebar width", `size="20%"`},
-		{"sidebar restart loop", `while true; do workbench ls && sleep 0.2 || sleep 2; done`},
+		{"sidebar restart loop", `while true; do workbench ls && sleep 2 || sleep 5; done`},
 		{"sidebar env", `WORKBENCH_SIDEBAR=1`},
 		{"shell pane", `name="shell"`},
 	}
