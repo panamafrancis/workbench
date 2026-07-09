@@ -59,6 +59,9 @@ var rmWorktreeCmd = &cobra.Command{
 		}
 
 		state, _ := config.LoadState()
+		// Keep the name reserved until its Claude history is gone; ReserveAndReclaim
+		// drops it right away if cleanup already removed the transcript.
+		state.ReserveAndReclaim(wt.Name, wt.Path, sandbox.HasPriorSession)
 		prCache := github.NewCache(config.PRCachePath())
 		_ = prCache.Load()
 		if info := prCache.Get(wt.Branch); info != nil && info.Status == github.PRMerged {

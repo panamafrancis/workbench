@@ -19,17 +19,19 @@ func BuildNonoArgs(worktreePath, modelKey string, cfg *config.Config) ([]string,
 	args = append(args, m.Args...)
 	// Only resume (e.g. claude --continue) when a prior session exists for this
 	// worktree; otherwise the binary would error on a fresh worktree.
-	if len(m.ResumeArgs) > 0 && hasPriorSession(worktreePath) {
+	if len(m.ResumeArgs) > 0 && HasPriorSession(worktreePath) {
 		args = append(args, m.ResumeArgs...)
 	}
 	return args, nil
 }
 
-// hasPriorSession reports whether a claude session transcript already exists for
+// HasPriorSession reports whether a claude session transcript already exists for
 // worktreePath. Claude stores transcripts at
 // ~/.claude/projects/<encoded-path>/<session>.jsonl, where the path is encoded
-// by replacing every non-alphanumeric character with a dash.
-func hasPriorSession(worktreePath string) bool {
+// by replacing every non-alphanumeric character with a dash. It doubles as the
+// "is the Claude history still around?" check that gates reusing a retired
+// worktree/city name.
+func HasPriorSession(worktreePath string) bool {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return false

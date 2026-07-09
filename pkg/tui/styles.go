@@ -57,4 +57,15 @@ var (
 	styleMutedSelected = lipgloss.NewStyle().
 				Foreground(colorMuted).
 				Background(colorSelectedBg)
+
+	// Passive "you are here" marker for the worktree whose tab this sidebar
+	// belongs to. Independent of the cursor selection highlight.
+	styleActiveMarker = lipgloss.NewStyle().
+				Foreground(colorPrimary).
+				Bold(true)
+
+	styleActiveMarkerSelected = lipgloss.NewStyle().
+					Foreground(colorPrimary).
+					Background(colorSelectedBg).
+					Bold(true)
 )

@@ -115,6 +115,9 @@ func New(cfg *config.Config) *Model {
 	state, _ := config.LoadState()
 
 	t := newTree(cfg, cache)
+	// Injected into the sidebar pane by WriteTabLayout; empty for the root
+	// session sidebar. Drives the passive "you are here" marker.
+	t.activeWorktree = os.Getenv("WORKBENCH_WORKTREE_NAME")
 	return &Model{
 		cfg:         cfg,
 		state:       state,
@@ -124,6 +127,36 @@ func New(cfg *config.Config) *Model {
 		keys:        DefaultKeyMap,
 		input:       textinput.New(),
 		isSidebar:   os.Getenv("WORKBENCH_SIDEBAR") == "1",
+	}
+}
+
+// reloadLocalState re-reads config.yml and state.yml (the shared on-disk cache)
+// so the sidebar reflects current state without triggering a full refresh's
+// network PR fetch. It is a no-op while a worktree is being created (an
+// optimistic in-memory entry isn't persisted yet) or while an input/confirm
+// mode is active (pendingRepoIdx/pendingWorktreeIdx point into the current
+// slice and must not shift under it).
+func (m *Model) reloadLocalState() {
+	if m.mode != modeNormal || len(m.creating) > 0 {
+		return
+	}
+	if newCfg, err := config.Load(); err == nil {
+		// Preserve the selection by worktree name across the cfg swap: a
+		// concurrent change from another tab can reorder rows, so re-pinning by
+		// index alone would silently move the cursor to a different worktree.
+		var selectedName string
+		if sel := m.tree.selected(); sel != nil && !sel.isRepo && !sel.isPlaceholder {
+			selectedName = sel.worktreeName
+		}
+		m.cfg = newCfg
+		m.tree.cfg = newCfg
+		if selectedName != "" {
+			m.tree.selectWorktree(selectedName)
+		}
+		m.tree.clamp()
+	}
+	if newState, err := config.LoadState(); err == nil {
+		m.state = newState
 	}
 }
 
@@ -154,6 +187,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 
 	case tea.FocusMsg:
+		// Regaining focus (e.g. switching back to this tab) reloads the shared
+		// on-disk state so a long-lived sidebar doesn't show a stale snapshot
+		// that another tab has since changed — without the network PR fetch a
+		// full refresh does.
+		m.reloadLocalState()
 		return m, tea.Batch(m.refreshRunningGuarded(), refreshDirtyCmd(m.cfg))
 
 	case tea.MouseMsg:
@@ -163,6 +201,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tickMsg:
+		// Periodically re-sync the on-disk state so tabs converge even if no
+		// focus event fires; the network PR fetch stays on its own staleness
+		// schedule below.
+		m.reloadLocalState()
 		var cmds []tea.Cmd
 		cmds = append(cmds, m.tickCmd(), m.refreshRunningGuarded())
 		if m.ghAvailable && !m.fetching {
@@ -464,8 +506,14 @@ func (m *Model) createWorktreeOptimistic(nameInput string) (tea.Model, tea.Cmd) 
 
 	name := nameInput
 	if name == "" {
+		// Skip names still reserved by worktrees whose Claude history lingers,
+		// mirroring the CLI add-worktree flow, so a new tab can't collide with a
+		// stale session of the same name.
+		genState, _ := config.LoadState()
+		genState.ReclaimReservedCities(m.cfg.WorktreeNameSet(), sandbox.HasPriorSession)
+		excluded := append(append([]string{}, existing...), genState.ReservedNames()...)
 		var err error
-		name, err = git.GenerateName(existing)
+		name, err = git.GenerateName(excluded)
 		if err != nil {
 			m.err = err
 			return m, nil
@@ -524,6 +572,9 @@ func (m *Model) createWorktreeOptimistic(nameInput string) (tea.Model, tea.Cmd) 
 		}
 
 		state, _ := config.LoadState()
+		// Reserve the new name and prune stale reserved entries (see the CLI
+		// add-worktree flow).
+		state.ReserveAndReclaim(name, wtPath, sandbox.HasPriorSession)
 		state.RecordWorktreeCreated(name)
 		_ = state.CheckAndUnlockAchievements()
 		_ = state.Save()
@@ -592,6 +643,9 @@ func (m *Model) deleteWorktree() tea.Cmd {
 		}
 
 		state, _ := config.LoadState()
+		// Keep the name reserved until its Claude history is cleaned up;
+		// ReserveAndReclaim releases it once ClearSessionCache has removed it.
+		state.ReserveAndReclaim(wt.Name, wt.Path, sandbox.HasPriorSession)
 		if prCache != nil {
 			if info := prCache.Get(wt.Branch); info != nil && info.Status == github.PRMerged {
 				state.RecordWorktreeMerged()

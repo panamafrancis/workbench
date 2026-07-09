@@ -83,7 +83,7 @@ scripts/
 
 All state lives under `~/.workbench/`:
 - `~/.workbench/config.yml` — repos, worktrees, model definitions
-- `~/.workbench/state.yml` — last-run version, update check cache, gamification stats (cities_visited, worktrees_created, worktrees_merged, achievements, activity_days)
+- `~/.workbench/state.yml` — last-run version, update check cache, gamification stats (cities_visited, worktrees_created, worktrees_merged, achievements, activity_days), and `reserved_cities` (names still occupied by a worktree or its lingering Claude history, excluded from name generation)
 - `~/.workbench/worktrees/<alias>/<name>/` — default worktree location
 - `~/.workbench/layouts/<name>.kdl` — generated Zellij layouts (transient)
 
@@ -99,13 +99,17 @@ All state lives under `~/.workbench/`:
 
 **Refresh reloads from disk** — `refreshMsg` calls `config.Load()` and replaces both `m.cfg` and `m.tree.cfg`. Don't just call `refreshDirty()` alone.
 
+**Local re-sync on focus/tick** — `reloadLocalState()` re-reads `config.yml` + `state.yml` and swaps `m.cfg`/`m.tree.cfg`/`m.state` on `tea.FocusMsg` and every `tickMsg`, so sidebars in different tabs stay consistent without a manual `r`. It deliberately skips the network PR fetch (that's what the full `refreshMsg` is for). It's a no-op while `m.mode != modeNormal` or a create is in flight (`m.creating`), because reloading would either shift the `pendingRepoIdx`/`pendingWorktreeIdx` slice indices under an open confirm/input mode or drop an optimistic worktree that isn't persisted yet.
+
 **Inline input mode** — the model has an `inputMode` state machine (`modeNormal` / `modeAddRepoPath` / `modeAddRepoAlias` / `modeNewWorktree` / `modeConfirmDelete` / `modeConfirmQuit` / `modeOpenWith` / `modeHelp`). When mode is non-normal, `Update` routes `tea.KeyMsg` to `updateInput()` which handles `enter`/`esc` and passes everything else to the `textinput.Model`. Use this same pattern for any future inline prompts.
 
 **Key bindings** — defined in `pkg/tui/keys.go`. Add new bindings to both `KeyMap` struct and `DefaultKeyMap`, then handle in `model.go`'s `Update` switch.
 
 **Sidebar mode** — when `WORKBENCH_SIDEBAR=1` is set (injected by the layout), `q` prompts for confirmation instead of quitting immediately. The layout wraps `workbench ls` in a restart loop with backoff (`sleep 0.2` on success, `sleep 2` on failure).
 
-**Env injection** — `WriteTabLayout` in `layout.go` accepts a `map[string]string` of env vars to inject into the agent pane's KDL `env {}` block. Keys are sorted for deterministic output.
+**Env injection** — `WriteTabLayout` in `layout.go` accepts a `map[string]string` of env vars to inject into the agent pane's KDL `env {}` block. Keys are sorted for deterministic output. The **sidebar** pane also gets `WORKBENCH_WORKTREE_NAME=<name>` (the tab's worktree); the TUI reads it in `New()` into `tree.activeWorktree` to render the passive `▸` "you are here" marker (see `tree.go` `view`). The root session sidebar has no such env, so `activeWorktree` is empty and no marker shows.
+
+**Pane vs tab naming** — the agent pane's *display* name is `{repo}/{worktree}` (derived from `WORKBENCH_REPO_ALIAS` in the injected env, KDL-escaped via `quoteKDL` since aliases aren't charset-validated). The Zellij *tab* name and the layout filename stay the bare worktree name — that name keys tab lookups (`OpenOrFocusTab`, `TabNames`, the TUI `openTabs` map) and is a path component, so it must remain slash-free and validated. `WriteTabLayout` validates the worktree name up front with `git.ValidateName`.
 
 ## Zellij session management
 

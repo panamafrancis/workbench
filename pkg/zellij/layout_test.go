@@ -90,6 +90,47 @@ func TestWriteTabLayoutWithEnvVars(t *testing.T) {
 	}
 }
 
+func TestWriteTabLayoutPaneNameComposite(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	env := map[string]string{"WORKBENCH_REPO_ALIAS": "wb"}
+	path, err := WriteTabLayout("atlanta", "/wt", "15%", []string{"run", "--", "bash"}, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(path)
+	if !strings.Contains(string(data), `pane name="wb/atlanta"`) {
+		t.Errorf("expected pane name \"wb/atlanta\":\n%s", string(data))
+	}
+
+	// Without an alias, the pane name falls back to the bare worktree name.
+	path2, err := WriteTabLayout("atlanta", "/wt", "15%", []string{"run", "--", "bash"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data2, _ := os.ReadFile(path2)
+	if !strings.Contains(string(data2), `pane name="atlanta"`) {
+		t.Errorf("expected bare pane name \"atlanta\":\n%s", string(data2))
+	}
+}
+
+func TestWriteTabLayoutRejectsUnsafeName(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	unsafe := []string{
+		`x'; touch /tmp/pwned; '`, // shell injection attempt
+		`a"b`,                     // would break the KDL string
+		`foo bar`,                 // space
+		`$(whoami)`,               // command substitution
+		"",                        // empty
+	}
+	for _, name := range unsafe {
+		if _, err := WriteTabLayout(name, "/wt", "15%", []string{"nono"}, nil); err == nil {
+			t.Errorf("WriteTabLayout(%q) = nil error, want rejection", name)
+		}
+	}
+}
+
 func TestWriteTabLayoutQuotesArgs(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 

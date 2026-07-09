@@ -5,6 +5,52 @@ import (
 	"time"
 )
 
+func TestReserveCityAndNames(t *testing.T) {
+	s := &State{}
+	s.ReserveCity("tokyo", "/wt/tokyo")
+	s.ReserveCity("oslo", "/wt/oslo")
+	s.ReserveCity("tokyo", "/wt/tokyo-new") // idempotent, updates path
+	if len(s.ReservedCities) != 2 {
+		t.Fatalf("ReservedCities = %v, want 2 entries", s.ReservedCities)
+	}
+	if s.ReservedCities[0].Path != "/wt/tokyo-new" {
+		t.Errorf("re-reserving tokyo did not update path: %q", s.ReservedCities[0].Path)
+	}
+	names := s.ReservedNames()
+	if len(names) != 2 || names[0] != "tokyo" || names[1] != "oslo" {
+		t.Errorf("ReservedNames() = %v, want [tokyo oslo]", names)
+	}
+}
+
+func TestReclaimReservedCities(t *testing.T) {
+	s := &State{}
+	s.ReserveCity("inconfig", "/wt/inconfig") // still a live worktree
+	s.ReserveCity("history", "/wt/history")   // deleted but transcript remains
+	s.ReserveCity("gone", "/wt/gone")         // deleted and cleaned up
+
+	inConfig := map[string]bool{"inconfig": true}
+	hasHistory := func(path string) bool { return path == "/wt/history" }
+
+	changed := s.ReclaimReservedCities(inConfig, hasHistory)
+	if !changed {
+		t.Error("ReclaimReservedCities reported no change, want true")
+	}
+	names := s.ReservedNames()
+	if len(names) != 2 {
+		t.Fatalf("ReservedNames() = %v, want [inconfig history]", names)
+	}
+	for _, n := range names {
+		if n == "gone" {
+			t.Errorf("%q should have been released", n)
+		}
+	}
+
+	// A second reclaim with nothing to release must report no change.
+	if s.ReclaimReservedCities(inConfig, hasHistory) {
+		t.Error("second ReclaimReservedCities reported change, want false")
+	}
+}
+
 func TestRecordWorktreeCreated(t *testing.T) {
 	s := &State{}
 	s.RecordWorktreeCreated("tokyo")
