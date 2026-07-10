@@ -22,6 +22,22 @@ type State struct {
 	WorktreesMerged  int           `yaml:"worktrees_merged,omitempty"`
 	Achievements     []Achievement `yaml:"achievements,omitempty"`
 	ActivityDays     []string      `yaml:"activity_days,omitempty"`
+
+	// ReservedCities holds worktree names that are still "occupied" and must not
+	// be handed out again by name generation — either because a worktree of that
+	// name still exists or because its Claude transcript hasn't been cleaned up
+	// yet. A name created in one repo must not be reused elsewhere while its
+	// Zellij tab / Claude history could still collide. Entries are released by
+	// ReclaimReservedCities once both conditions clear.
+	ReservedCities []ReservedCity `yaml:"reserved_cities,omitempty"`
+}
+
+// ReservedCity pins a generated worktree name and the path whose Claude
+// transcript keeps it reserved. Path is recorded so a reclaim pass can tell
+// when the history has been cleaned up.
+type ReservedCity struct {
+	Name string `yaml:"name"`
+	Path string `yaml:"path"`
 }
 
 type Achievement struct {
@@ -104,6 +120,58 @@ func (s *State) RecordWorktreeCreated(name string) {
 		}
 	}
 	s.recordActivity()
+}
+
+// ReserveCity records name (and the worktree path that anchors its Claude
+// history) as occupied so future name generation skips it. It is idempotent.
+func (s *State) ReserveCity(name, path string) {
+	for i := range s.ReservedCities {
+		if s.ReservedCities[i].Name == name {
+			s.ReservedCities[i].Path = path
+			return
+		}
+	}
+	s.ReservedCities = append(s.ReservedCities, ReservedCity{Name: name, Path: path})
+}
+
+// ReservedNames returns the names currently held in the reserved-cities cache.
+func (s *State) ReservedNames() []string {
+	names := make([]string, len(s.ReservedCities))
+	for i, rc := range s.ReservedCities {
+		names[i] = rc.Name
+	}
+	return names
+}
+
+// ReserveAndReclaim reserves name (anchored at path) and then releases any
+// reserved names now safe to reuse. It reads the current config from disk
+// itself so every call site behaves identically regardless of how stale the
+// caller's in-memory config view is — callers must persist with Save().
+func (s *State) ReserveAndReclaim(name, path string, historyExists func(path string) bool) {
+	s.ReserveCity(name, path)
+	var inConfig map[string]bool
+	if cfg, err := Load(); err == nil {
+		inConfig = cfg.WorktreeNameSet()
+	}
+	s.ReclaimReservedCities(inConfig, historyExists)
+}
+
+// ReclaimReservedCities releases reserved names that are safe to reuse: the
+// worktree no longer exists (its name isn't in inConfig) and its Claude history
+// has been cleaned up (historyExists reports false for its path). It reports
+// whether anything was released so the caller can decide to persist.
+func (s *State) ReclaimReservedCities(inConfig map[string]bool, historyExists func(path string) bool) bool {
+	kept := s.ReservedCities[:0]
+	changed := false
+	for _, rc := range s.ReservedCities {
+		if inConfig[rc.Name] || historyExists(rc.Path) {
+			kept = append(kept, rc)
+		} else {
+			changed = true
+		}
+	}
+	s.ReservedCities = kept
+	return changed
 }
 
 func (s *State) RecordWorktreeMerged() {

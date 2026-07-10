@@ -231,6 +231,17 @@ func (c *Config) AllWorktreeNames() []string {
 	return names
 }
 
+// WorktreeNameSet returns the set of all worktree names across every repo,
+// convenient for membership checks (e.g. reserved-city reclaim).
+func (c *Config) WorktreeNameSet() map[string]bool {
+	names := c.AllWorktreeNames()
+	set := make(map[string]bool, len(names))
+	for _, n := range names {
+		set[n] = true
+	}
+	return set
+}
+
 func (c *Config) ResolveSidebarWidth() string {
 	if c.SidebarWidth != "" {
 		return c.SidebarWidth

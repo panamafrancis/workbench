@@ -95,14 +95,14 @@ func TestClearSessionCache(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if !hasPriorSession(wtPath) {
-		t.Fatal("hasPriorSession = false before clear, want true")
+	if !HasPriorSession(wtPath) {
+		t.Fatal("HasPriorSession = false before clear, want true")
 	}
 	if err := ClearSessionCache(wtPath); err != nil {
 		t.Fatalf("ClearSessionCache() error = %v", err)
 	}
-	if hasPriorSession(wtPath) {
-		t.Error("hasPriorSession = true after clear, want false")
+	if HasPriorSession(wtPath) {
+		t.Error("HasPriorSession = true after clear, want false")
 	}
 }
 

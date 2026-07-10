@@ -9,6 +9,7 @@ import (
 
 	"github.com/panamafrancis/workbench/pkg/config"
 	"github.com/panamafrancis/workbench/pkg/git"
+	"github.com/panamafrancis/workbench/pkg/sandbox"
 )
 
 var (
@@ -30,8 +31,15 @@ var addWorktreeCmd = &cobra.Command{
 		existing := cfg.AllWorktreeNames()
 		name := addWorktreeName
 		if name == "" {
+			// Exclude names still reserved from earlier worktrees whose Claude
+			// history hasn't been cleaned up yet, so a fresh worktree can't
+			// collide with a lingering session/tab of the same name. Reclaim
+			// first so names freed since last run become available again.
+			genState, _ := config.LoadState()
+			genState.ReclaimReservedCities(cfg.WorktreeNameSet(), sandbox.HasPriorSession)
+			excluded := append(append([]string{}, existing...), genState.ReservedNames()...)
 			var err error
-			name, err = git.GenerateName(existing)
+			name, err = git.GenerateName(excluded)
 			if err != nil {
 				return err
 			}
@@ -93,6 +101,9 @@ var addWorktreeCmd = &cobra.Command{
 		}
 
 		state, _ := config.LoadState()
+		// Reserve the new name and prune any reserved entries whose history is
+		// gone (reads the freshly-saved config from disk internally).
+		state.ReserveAndReclaim(name, worktreePath, sandbox.HasPriorSession)
 		state.RecordWorktreeCreated(name)
 		newAchievements := state.CheckAndUnlockAchievements()
 		_ = state.Save()

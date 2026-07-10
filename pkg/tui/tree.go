@@ -31,6 +31,10 @@ type TreeModel struct {
 	cursor    int
 	dirty     map[string]bool
 	openTabs  map[string]bool
+	// activeWorktree is the worktree whose Zellij tab this sidebar belongs to,
+	// injected via WORKBENCH_WORKTREE_NAME. Empty for the root session sidebar.
+	// It drives a passive "you are here" marker, distinct from the cursor.
+	activeWorktree string
 }
 
 func newTree(cfg *config.Config, prCache *github.Cache) TreeModel {
@@ -146,6 +150,19 @@ func (t *TreeModel) expandContaining() {
 	if t.collapsed[alias] {
 		t.collapsed[alias] = false
 		t.clamp()
+	}
+}
+
+// selectWorktree moves the cursor onto the row for the named worktree, if it
+// still exists. Used to preserve the selection across a config reload so a
+// concurrent change from another tab can't leave the cursor pointing at a
+// different worktree than the user had highlighted.
+func (t *TreeModel) selectWorktree(name string) {
+	for i, it := range t.items() {
+		if !it.isRepo && !it.isPlaceholder && it.worktreeName == name {
+			t.cursor = i
+			return
+		}
 	}
 }
 
@@ -284,7 +301,16 @@ func (t *TreeModel) view(width int) string {
 
 			isDirty := t.dirty[w.Name]
 			isRunning := t.openTabs[w.Name]
+			isActive := t.activeWorktree != "" && w.Name == t.activeWorktree
 			modelLabel := "[" + w.Model + "]"
+
+			// A one-cell gutter marker points at the worktree this sidebar's tab
+			// belongs to, regardless of where the cursor is. Inactive rows render
+			// a blank cell so the name column stays aligned.
+			marker := " "
+			if isActive {
+				marker = "▸"
+			}
 
 			dirty := ""
 			if isDirty {
@@ -295,10 +321,11 @@ func (t *TreeModel) view(width int) string {
 				running = " ▶"
 			}
 			model := styleMuted.Render(modelLabel)
-			line := fmt.Sprintf("  ● %-18s %s", w.Name, w.Branch)
+			line := fmt.Sprintf(" ● %-18s %s", w.Name, w.Branch)
 			suffix := dirty + running + " " + model + prSuffix
-			if width > 0 && lipgloss.Width(line)+lipgloss.Width(suffix) > width {
-				avail := width - lipgloss.Width(suffix)
+			// The marker occupies one leading cell in addition to line.
+			if width > 0 && 1+lipgloss.Width(line)+lipgloss.Width(suffix) > width {
+				avail := width - 1 - lipgloss.Width(suffix)
 				if avail > 0 {
 					runes := []rune(line)
 					if len(runes) > avail {
@@ -309,6 +336,7 @@ func (t *TreeModel) view(width int) string {
 
 			if selected {
 				var buf strings.Builder
+				buf.WriteString(styleActiveMarkerSelected.Render(marker))
 				buf.WriteString(selStyle.Render(line))
 				if isDirty {
 					buf.WriteString(styleDirtySelected.Render("*"))
@@ -318,6 +346,7 @@ func (t *TreeModel) view(width int) string {
 				buf.WriteString(selStyle.Render(prSuffix))
 				padRow(&sb, buf.String(), width, selStyle)
 			} else {
+				sb.WriteString(styleActiveMarker.Render(marker))
 				sb.WriteString(lineStyle.Render(line))
 				sb.WriteString(dirty)
 				sb.WriteString(lineStyle.Render(running))
