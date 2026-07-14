@@ -127,7 +127,31 @@ func Load() (*Config, error) {
 	if cfg.Models == nil {
 		cfg.Models = DefaultConfig().Models
 	}
+	backfillSessionArgs(cfg.Models)
 	return &cfg, nil
+}
+
+// backfillSessionArgs fills in new_session_args/resume_session_args for models
+// that still match a shipped default (same key and binary) but predate those
+// fields. This lets multi-agent tools (supatree) resume distinct sessions in a
+// shared directory without requiring users to hand-edit an existing config. It
+// only adds capability — it never overwrites args the user already set — and is
+// invisible to workbench, which does not read these fields.
+func backfillSessionArgs(models map[string]Model) {
+	for key, dm := range DefaultConfig().Models {
+		if len(dm.NewSessionArgs) == 0 && len(dm.ResumeSessionArgs) == 0 {
+			continue
+		}
+		m, ok := models[key]
+		if !ok || m.Binary != dm.Binary {
+			continue
+		}
+		if len(m.NewSessionArgs) == 0 && len(m.ResumeSessionArgs) == 0 {
+			m.NewSessionArgs = dm.NewSessionArgs
+			m.ResumeSessionArgs = dm.ResumeSessionArgs
+			models[key] = m
+		}
+	}
 }
 
 func (c *Config) Save() error {

@@ -46,10 +46,31 @@ func BuildAgentNonoArgs(worktreePath, modelKey string, cfg *config.Config, sessi
 		args = append(args, substituteSession(m.ResumeSessionArgs, sessionID)...)
 	case sessionID != "" && !resume && len(m.NewSessionArgs) > 0:
 		args = append(args, substituteSession(m.NewSessionArgs, sessionID)...)
-	case len(m.ResumeArgs) > 0 && HasPriorSession(worktreePath):
+	case resume && len(m.ResumeArgs) > 0 && HasPriorSession(worktreePath):
+		// Fallback for models without session-ID args: directory-scoped resume
+		// (e.g. --continue). Only when actually resuming — a *new* agent must
+		// never inherit whatever ran last in a shared directory.
 		args = append(args, m.ResumeArgs...)
 	}
 	return args, nil
+}
+
+// SessionExists reports whether a transcript for sessionID already exists under
+// worktreePath's claude project directory. It is the authoritative "should I
+// resume?" signal: a session ID that was generated but never launched (or was
+// launched under a model that ignored it) has no transcript, so the agent
+// starts fresh with --session-id rather than failing to --resume a phantom id.
+func SessionExists(worktreePath, sessionID string) bool {
+	if sessionID == "" {
+		return false
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return false
+	}
+	p := filepath.Join(home, ".claude", "projects", encodeProjectPath(worktreePath), sessionID+".jsonl")
+	_, err = os.Stat(p)
+	return err == nil
 }
 
 // SupportsSessions reports whether modelKey defines explicit session-ID launch
