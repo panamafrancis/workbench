@@ -5,13 +5,19 @@ Sandboxed git worktree manager. Each piece of work gets a git worktree opened as
 ## Build & run
 
 ```sh
-make build          # produces ./workbench binary
-make install        # copies to /usr/local/bin/workbench
+make build          # produces workbench + supatree binaries under dist/
+make install        # go install both binaries
 make ci             # fmt + lint + vet + test
-make e2e            # build + run scripts/e2e.sh
+make e2e            # build + run scripts/e2e.sh AND scripts/e2e-supatree.sh
 make hooks          # enroll .githooks/ as git hooks
 go test ./...
 ```
+
+This repo ships **two** binaries: `workbench` (root package, `cmd/`) and
+`supatree` (`cmd/supatree`, commands in `supacmd/`). supatree reuses the
+workbench `pkg/*` packages; shared code (the zellij `Workspace`, the MCP
+`Server` framework, `config.WithFileLock`) is parameterized rather than
+duplicated. See the "Supatree" section below.
 
 Start a Zellij session with the sidebar:
 ```sh
@@ -117,6 +123,8 @@ All state lives under `~/.workbench/`:
 
 `pkg/zellij/session.go` provides `ListSessions`, `WriteSessionLayout`, `CreateBackgroundSession`, `DeleteSession`.
 
+Layout/session writing hangs off a `zellij.Workspace` (`pkg/zellij/workspace.go`) that carries the tool-specific bits (`LayoutsDir`, `SidebarCommand`, `SidebarEnvVar`, `SidebarActiveEnvVar`, `SessionPrefix`, `SessionTab`). `WriteTabLayout`, `OpenTab`, `OpenOrFocusTab`, `CleanupLayout`, `CleanupStaleLayouts`, `WriteSessionLayout` are methods on it; `WorkbenchWorkspace()` / supatree's own workspace supply the values. Pure `zellij action` wrappers (`GoToTab`, `TabNames`, `ListSessions`, ...) stay free functions.
+
 `pkg/zellij/client.go` provides tab-level operations (`OpenTab`, `GoToTab`, `OpenOrFocusTab`). These call `zellij action` subcommands and only work inside a Zellij session.
 
 ## nono sandbox
@@ -127,12 +135,28 @@ All state lives under `~/.workbench/`:
 
 - **New inline TUI action**: add key to `keys.go`, add `inputMode` constants if needed, handle in `model.go` `Update` and `updateInput`.
 - **New CLI command**: add file under `cmd/`, wire into `rootCmd` in `cmd/root.go` via `rootCmd.AddCommand(...)` in `init()`.
-- **New MCP tool**: add the tool definition and handler in `pkg/mcp/server.go`.
+- **New MCP tool**: `pkg/mcp` is a reusable framework — `rpc.go` has the JSON-RPC `Server{Name,Version,Tools,Prompts,Gate}` + stdio loop; `workbench.go` builds the workbench tool set. Add workbench tools there; supatree tools live in `pkg/supatree/mcp.go`. Tool handlers have signature `func(args map[string]any) (text string, isError bool)`.
 - **New config field**: add to structs in `pkg/config/config.go`, update `DefaultConfig()` if it needs a default.
 - **Worktree creation hooks**: `copy_files` runs first (copies gitignored files from repo), then `startup_script`.
 - **Change what opens in a new tab**: edit the KDL template in `pkg/zellij/layout.go`.
 
 **Always update `README.md`** when adding or changing user-facing behavior: new config fields, new CLI flags, new keybindings, changed lifecycle behavior, or nono sandbox requirements.
+
+## Supatree
+
+`supatree` manages a set of worktrees — one per repo — for a single cross-repo issue. State lives under `~/.supatree/`.
+
+**Model.** A *stack* is a git repo (`supatree scaffold`) holding `supatree.yml` (member repo aliases + `deps` edges), `AGENTS.md`, and `scripts/`. A *supatree* is a worktree of that stack repo at `~/.supatree/trees/<name>/` on branch `st/<name>`, with each member repo checked out under `repos/<alias>/` on branch `st/<slug>/<alias>` (slug starts as the city name; `rename-branch` changes it). Member repo *definitions* come from workbench's `~/.workbench/config.yml` (resolved by alias) — supatree never duplicates them.
+
+**Discovery.** The registry (`~/.supatree/config.yml`) lists only stacks + defaults. Live supatrees are discovered by scanning the trees base for `<name>/.supatree/meta.yml` (`supatree.List`). Per-tree state: `.supatree/meta.yml` (name/slug/stack/model), `.supatree/agents.yml` (named agents + session IDs), `.supatree/info.md` (generated). All three are gitignored, as is `repos/`.
+
+**Package layout.** `pkg/supatree/`: `paths.go`, `config.go` (registry), `spec.go` (supatree.yml), `meta.go`, `deps.go` (`TopoSort`), `instance.go` (`LoadInstance`/`List`/`Get`), `create.go`, `sync.go`, `remove.go`, `rename.go`, `agents.go`, `contextfile.go` (info.md + scaffolded AGENTS.md), `scaffold.go`, `startup.go`, `mcp.go`. CLI in `supacmd/`, entry `cmd/supatree/main.go`.
+
+**Agents.** Several agents share the supatree root but resume independently via session IDs (`Model.NewSessionArgs`/`ResumeSessionArgs`, `{session_id}` substituted by `sandbox.BuildAgentNonoArgs`). `supatree open [--agent <name>]` opens/resumes a root agent; `--repo <alias>` opens an agent scoped to one member (dir-based resume). Tab names: `<name>` for the `main` agent, `<name>:<agent>` otherwise.
+
+**MCP tools** (`supatree mcp`, gated by `SUPATREE=1` except `docs`/`supatree_info`): `supatree_info`, `sync`, `rename_branches`, `create_pr`, `create_prs`, `pr_status`, `docs`. `create_pr`/`create_prs` refuse a still-city-name slug and (unless `force`) a repo whose dependencies have no PRs yet.
+
+**Conventions.** Reuse workbench packages — never fork them. `git.CreateWorktree`/`RemoveWorktree`/`RenameBranch`/`CommitsAhead`, `repo.RunCopyFiles`/`RunStartup`/`RunCleanup`, `github.LookupPR`/`Cache`, `sandbox.BuildNonoArgs`/`BuildAgentNonoArgs`, `config.WithFileLock`. `make ci` + both e2e scripts must stay green.
 
 ## Before pushing / creating a PR
 
