@@ -27,6 +27,16 @@ func DefaultTreesBase() string {
 	return filepath.Join(Dir(), "trees")
 }
 
+// StacksDir is where scaffolded stack repos live by default.
+func StacksDir() string {
+	return filepath.Join(Dir(), "stacks")
+}
+
+// DefaultStackPath is the default location of a stack repo named name.
+func DefaultStackPath(name string) string {
+	return filepath.Join(StacksDir(), name)
+}
+
 // LayoutsDir holds generated Zellij layouts (transient).
 func LayoutsDir() string {
 	return filepath.Join(Dir(), "layouts")

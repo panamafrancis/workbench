@@ -25,19 +25,21 @@ for r in terraform keystone admin; do
     workbench add repo "$HOME/src/$r" --alias="$r" >/dev/null
 done
 
-# 2. Scaffold a stack (two repos to start).
+# 2. Scaffold a stack (two repos to start). Default location is
+# ~/.supatree/stacks/<name>; --repos avoids the interactive picker.
 echo "--- scaffold stack ---"
-supatree scaffold "$HOME/stacks/s" --repos terraform,keystone --alias s
-[ -f "$HOME/stacks/s/supatree.yml" ] || fail "supatree.yml not scaffolded"
-[ -f "$HOME/stacks/s/AGENTS.md" ]   || fail "AGENTS.md not scaffolded"
+supatree scaffold s --repos=terraform,keystone
+STACK="$HOME/.supatree/stacks/s"
+[ -f "$STACK/supatree.yml" ] || fail "supatree.yml not scaffolded at default location"
+[ -f "$STACK/AGENTS.md" ]    || fail "AGENTS.md not scaffolded"
 
 # Add a dependency edge (keystone depends on terraform) and commit it.
-cat > "$HOME/stacks/s/supatree.yml" <<'YML'
+cat > "$STACK/supatree.yml" <<'YML'
 members: [terraform, keystone]
 deps:
   keystone: [terraform]
 YML
-git -C "$HOME/stacks/s" commit -qam "add dep edge"
+git -C "$STACK" commit -qam "add dep edge"
 
 # 3. Create a supatree.
 echo "--- supatree new ---"

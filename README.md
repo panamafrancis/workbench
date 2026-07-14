@@ -335,8 +335,9 @@ The MCP server gates on the `WORKBENCH` env var — tools return an error outsid
 supatree init                                   # set up ~/.supatree, register MCP
 workbench add repo ~/code/terraform --alias=terraform
 workbench add repo ~/code/keystone  --alias=keystone
-supatree scaffold ~/stacks/fraud --repos=terraform,keystone --alias=fraud
-# edit ~/stacks/fraud/supatree.yml to add deps, commit it
+supatree scaffold fraud                         # pick repos interactively; stack at ~/.supatree/stacks/fraud
+# (or non-interactively: supatree scaffold fraud --repos=terraform,keystone)
+# edit ~/.supatree/stacks/fraud/supatree.yml to add deps, commit it
 supatree start                                  # start the st-main Zellij session
 supatree new --stack=fraud                      # create a city-named supatree
 supatree open <name>                            # open the root agent (sees all repos)

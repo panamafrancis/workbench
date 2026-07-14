@@ -16,6 +16,7 @@ var (
 	styleHeader   = lipgloss.NewStyle().Bold(true).Foreground(colorHeader)
 	styleTree     = lipgloss.NewStyle().Bold(true).Foreground(colorPrimary)
 	styleSub      = lipgloss.NewStyle().Foreground(colorMuted).Italic(true)
+	styleRow      = lipgloss.NewStyle().Foreground(colorHeader)
 	styleSelected = lipgloss.NewStyle().Foreground(colorSelected).Background(colorSelectedBg).Bold(true)
 	styleMuted    = lipgloss.NewStyle().Foreground(colorMuted)
 	styleDirty    = lipgloss.NewStyle().Foreground(colorDirty)
