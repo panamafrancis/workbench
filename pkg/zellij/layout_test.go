@@ -131,6 +131,22 @@ func TestWriteTabLayoutRejectsUnsafeName(t *testing.T) {
 	}
 }
 
+func TestWriteTabLayoutRejectsUnsafeSuffix(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	// A "<name>:<suffix>" tab identity must validate the suffix too — it reaches
+	// the sidebar bash command via SidebarActiveEnvVar.
+	unsafe := []string{"atlanta:x=1 && curl evil", "atlanta:a b", `atlanta:a"b`}
+	for _, name := range unsafe {
+		if _, err := WorkbenchWorkspace().WriteTabLayout(name, "/wt", "15%", []string{"nono"}, nil); err == nil {
+			t.Errorf("WriteTabLayout(%q) = nil error, want rejection", name)
+		}
+	}
+	// A well-formed suffix is accepted.
+	if _, err := WorkbenchWorkspace().WriteTabLayout("atlanta:reviewer", "/wt", "15%", []string{"nono"}, nil); err != nil {
+		t.Errorf("WriteTabLayout(atlanta:reviewer) = %v, want nil", err)
+	}
+}
+
 func TestWriteTabLayoutQuotesArgs(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 

@@ -16,10 +16,17 @@ func (w Workspace) WriteTabLayout(name, cwd, sidebarWidth string, nonoArgs []str
 	// ([a-z0-9-]) before interpolation. This is fail-safe defense-in-depth:
 	// callers already validate at creation, but a hand-edited config must not be
 	// able to inject shell or break the layout here. Supatree agent tabs use a
-	// "<name>:<agent>" identity, so allow a single colon-separated suffix.
-	base, _, _ := strings.Cut(name, ":")
+	// "<name>:<agent>" identity, so allow a single colon-separated suffix —
+	// validating BOTH halves with the same charset (the suffix reaches the
+	// sidebar bash command via SidebarActiveEnvVar, so it must be sanitized too).
+	base, suffix, hasSuffix := strings.Cut(name, ":")
 	if err := git.ValidateName(base, nil); err != nil {
 		return "", fmt.Errorf("refusing to write layout for invalid tab name %q: %w", name, err)
+	}
+	if hasSuffix {
+		if err := git.ValidateName(suffix, nil); err != nil {
+			return "", fmt.Errorf("refusing to write layout for invalid tab name %q: %w", name, err)
+		}
 	}
 
 	// The tab/layout identity stays the bare (validated) name — it keys tab

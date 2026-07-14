@@ -35,6 +35,15 @@ func TestEnsureAgentCreatesThenResumes(t *testing.T) {
 	}
 }
 
+func TestEnsureAgentRejectsUnsafeName(t *testing.T) {
+	root := t.TempDir()
+	for _, bad := range []string{"x=1 && curl evil", "a:b", "a b", ""} {
+		if _, _, err := EnsureAgent(root, bad, "claude", time.Now()); err == nil {
+			t.Errorf("EnsureAgent(%q) = nil error, want rejection", bad)
+		}
+	}
+}
+
 func TestEnsureAgentDistinctSessions(t *testing.T) {
 	root := t.TempDir()
 	now := time.Now()

@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/panamafrancis/workbench/pkg/git"
 )
 
 // Agent is one named LLM agent attached to a supatree. Several agents share the
@@ -69,6 +71,11 @@ func FindAgent(agents []Agent, name string) *Agent {
 // with a fresh session ID (via now for the timestamp) if it does not yet exist.
 // The bool result reports whether the agent was newly created.
 func EnsureAgent(root, name, model string, now time.Time) (Agent, bool, error) {
+	// Agent names become part of a Zellij tab identity ("<tree>:<agent>") that is
+	// spliced into layout files, so restrict them to the safe charset up front.
+	if err := git.ValidateName(name, nil); err != nil {
+		return Agent{}, false, fmt.Errorf("invalid agent name %q: %w", name, err)
+	}
 	agents, err := LoadAgents(root)
 	if err != nil {
 		return Agent{}, false, err
