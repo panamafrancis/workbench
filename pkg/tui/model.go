@@ -95,6 +95,7 @@ type Model struct {
 	refreshingTabs     bool
 	creating           map[string]bool
 	pendingOpen        *pendingOpenRequest
+	ws                 zellij.Workspace
 }
 
 type pendingOpenRequest struct {
@@ -106,11 +107,12 @@ func New(cfg *config.Config) *Model {
 	cache := github.NewCache(config.PRCachePath())
 	_ = cache.Load()
 
+	ws := zellij.WorkbenchWorkspace()
 	validNames := make(map[string]bool)
 	for _, name := range cfg.AllWorktreeNames() {
 		validNames[name] = true
 	}
-	zellij.CleanupStaleLayouts(validNames)
+	ws.CleanupStaleLayouts(validNames)
 
 	state, _ := config.LoadState()
 
@@ -127,6 +129,7 @@ func New(cfg *config.Config) *Model {
 		keys:        DefaultKeyMap,
 		input:       textinput.New(),
 		isSidebar:   os.Getenv("WORKBENCH_SIDEBAR") == "1",
+		ws:          ws,
 	}
 }
 
@@ -657,7 +660,7 @@ func (m *Model) deleteWorktree() tea.Cmd {
 		_ = state.CheckAndUnlockAchievements()
 		_ = state.Save()
 
-		zellij.CleanupLayout(wt.Name)
+		m.ws.CleanupLayout(wt.Name)
 		return deleteWorktreeMsg{name: wt.Name}
 	}
 }
@@ -707,7 +710,7 @@ func (m *Model) openWorktree(wt config.Worktree, repo config.Repo, modelOverride
 			"WORKBENCH_REPO_ALIAS":    repo.Alias,
 			"WORKBENCH_BRANCH":        wt.Branch,
 		}
-		created, err := zellij.OpenOrFocusTab(wt.Name, wt.Path, m.cfg.ResolveSidebarWidth(), nonoArgs, envVars)
+		created, err := m.ws.OpenOrFocusTab(wt.Name, wt.Path, m.cfg.ResolveSidebarWidth(), nonoArgs, envVars)
 		if err != nil {
 			return openErrMsg{err}
 		}

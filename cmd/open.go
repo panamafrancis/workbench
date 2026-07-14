@@ -69,7 +69,7 @@ var openCmd = &cobra.Command{
 			"WORKBENCH_REPO_ALIAS":    repo.Alias,
 			"WORKBENCH_BRANCH":        wt.Branch,
 		}
-		created, err := zellij.OpenOrFocusTab(wt.Name, wt.Path, cfg.ResolveSidebarWidth(), nonoArgs, envVars)
+		created, err := wbZ.OpenOrFocusTab(wt.Name, wt.Path, cfg.ResolveSidebarWidth(), nonoArgs, envVars)
 		if err != nil {
 			return err
 		}

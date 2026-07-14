@@ -10,8 +10,6 @@ import (
 	"path/filepath"
 	"strings"
 	"text/template"
-
-	"github.com/panamafrancis/workbench/pkg/config"
 )
 
 //go:embed session.kdl.tmpl
@@ -59,8 +57,8 @@ func ListSessions() ([]SessionInfo, error) {
 	return sessions, nil
 }
 
-func WriteSessionLayout(name, sidebarWidth string) (string, error) {
-	dir := config.LayoutsDir()
+func (w Workspace) WriteSessionLayout(name, sidebarWidth string) (string, error) {
+	dir := w.LayoutsDir
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return "", fmt.Errorf("create layouts dir: %w", err)
 	}
@@ -69,7 +67,12 @@ func WriteSessionLayout(name, sidebarWidth string) (string, error) {
 		return "", fmt.Errorf("parse session template: %w", err)
 	}
 	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, struct{ SidebarWidth string }{sidebarWidth}); err != nil {
+	data := struct {
+		SidebarWidth string
+		SidebarArg   string
+		TabName      string
+	}{sidebarWidth, w.sidebarBashArg(""), w.SessionTab}
+	if err := tmpl.Execute(&buf, data); err != nil {
 		return "", fmt.Errorf("render session template: %w", err)
 	}
 	path := filepath.Join(dir, "session-"+name+".kdl")
@@ -102,8 +105,4 @@ func CreateBackgroundSession(name, layoutPath string) error {
 		return fmt.Errorf("zellij create-background: %s", strings.TrimSpace(errBuf.String()))
 	}
 	return nil
-}
-
-func SessionPrefix() string {
-	return "wb-"
 }

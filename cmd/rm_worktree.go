@@ -73,7 +73,7 @@ var rmWorktreeCmd = &cobra.Command{
 		_ = state.CheckAndUnlockAchievements()
 		_ = state.Save()
 
-		zellij.CleanupLayout(name)
+		wbZ.CleanupLayout(name)
 		fmt.Printf("removed worktree %q\n", name)
 		return nil
 	},

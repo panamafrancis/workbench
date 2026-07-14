@@ -30,7 +30,7 @@ var startCmd = &cobra.Command{
 			return nil
 		}
 
-		prefix := zellij.SessionPrefix()
+		prefix := wbZ.SessionPrefix
 
 		if startGC {
 			return gcDeadSessions(prefix)
@@ -51,7 +51,7 @@ var startCmd = &cobra.Command{
 			updateDone <- setup.CheckForUpdate(version.Version, cfg)
 		}()
 
-		layoutPath, err := zellij.WriteSessionLayout(sessionName, cfg.ResolveSidebarWidth())
+		layoutPath, err := wbZ.WriteSessionLayout(sessionName, cfg.ResolveSidebarWidth())
 		if err != nil {
 			return err
 		}

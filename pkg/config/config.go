@@ -45,6 +45,14 @@ type Model struct {
 	// worktree being opened (e.g. claude's "--continue"). Empty for models that
 	// have no resume concept.
 	ResumeArgs []string `yaml:"resume_args"`
+	// NewSessionArgs and ResumeSessionArgs support pinning a launch to a specific
+	// session ID so several named agents can share one directory yet resume
+	// independently (used by supatree). Each occurrence of the literal
+	// "{session_id}" is substituted with the agent's generated ID. Empty for
+	// models whose CLI has no explicit session-ID flag; supatree then falls back
+	// to a single directory-resumed agent via ResumeArgs.
+	NewSessionArgs    []string `yaml:"new_session_args,omitempty"`
+	ResumeSessionArgs []string `yaml:"resume_session_args,omitempty"`
 }
 
 type Repo struct {
@@ -71,10 +79,12 @@ func DefaultConfig() *Config {
 		DefaultModel: "claude",
 		Models: map[string]Model{
 			"claude": {
-				NonoProfile: "claude-code",
-				Binary:      "claude",
-				Args:        []string{"--dangerously-skip-permissions"},
-				ResumeArgs:  []string{"--continue"},
+				NonoProfile:       "claude-code",
+				Binary:            "claude",
+				Args:              []string{"--dangerously-skip-permissions"},
+				ResumeArgs:        []string{"--continue"},
+				NewSessionArgs:    []string{"--session-id", "{session_id}"},
+				ResumeSessionArgs: []string{"--resume", "{session_id}"},
 			},
 			"codex": {
 				NonoProfile: "default",

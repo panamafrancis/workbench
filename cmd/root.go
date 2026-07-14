@@ -12,6 +12,9 @@ import (
 
 var cfg *config.Config
 
+// wbZ is the zellij workspace for workbench-managed sessions and layouts.
+var wbZ = zellij.WorkbenchWorkspace()
+
 var rootCmd = &cobra.Command{
 	Use:   "workbench",
 	Short: "Sandboxed git worktree manager",
