@@ -47,7 +47,7 @@ func MCPServer(version string) *mcp.Server {
 				Name:        "rename_branches",
 				Description: "Rename every member branch from st/<slug>/<alias> to st/<new_slug>/<alias>. Do this before creating PRs so branches have a meaningful name.",
 				InputSchema: objectSchema(map[string]any{
-					"new_slug": stringProp("New branch slug (lowercase, alphanumeric and hyphens)"),
+					"new_slug": stringProp("New branch slug (lowercase alphanumeric and hyphens, max 40 chars)"),
 					"push":     boolProp("Push the new branches and delete the old remote branches"),
 				}, []string{"new_slug"}),
 				Handler: handleRenameBranches,
