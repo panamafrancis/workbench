@@ -45,6 +45,14 @@ type Model struct {
 	// worktree being opened (e.g. claude's "--continue"). Empty for models that
 	// have no resume concept.
 	ResumeArgs []string `yaml:"resume_args"`
+	// NewSessionArgs and ResumeSessionArgs support pinning a launch to a specific
+	// session ID so several named agents can share one directory yet resume
+	// independently (used by supatree). Each occurrence of the literal
+	// "{session_id}" is substituted with the agent's generated ID. Empty for
+	// models whose CLI has no explicit session-ID flag; supatree then falls back
+	// to a single directory-resumed agent via ResumeArgs.
+	NewSessionArgs    []string `yaml:"new_session_args,omitempty"`
+	ResumeSessionArgs []string `yaml:"resume_session_args,omitempty"`
 }
 
 type Repo struct {
@@ -71,10 +79,12 @@ func DefaultConfig() *Config {
 		DefaultModel: "claude",
 		Models: map[string]Model{
 			"claude": {
-				NonoProfile: "claude-code",
-				Binary:      "claude",
-				Args:        []string{"--dangerously-skip-permissions"},
-				ResumeArgs:  []string{"--continue"},
+				NonoProfile:       "claude-code",
+				Binary:            "claude",
+				Args:              []string{"--dangerously-skip-permissions"},
+				ResumeArgs:        []string{"--continue"},
+				NewSessionArgs:    []string{"--session-id", "{session_id}"},
+				ResumeSessionArgs: []string{"--resume", "{session_id}"},
 			},
 			"codex": {
 				NonoProfile: "default",
@@ -117,7 +127,31 @@ func Load() (*Config, error) {
 	if cfg.Models == nil {
 		cfg.Models = DefaultConfig().Models
 	}
+	backfillSessionArgs(cfg.Models)
 	return &cfg, nil
+}
+
+// backfillSessionArgs fills in new_session_args/resume_session_args for models
+// that still match a shipped default (same key and binary) but predate those
+// fields. This lets multi-agent tools (supatree) resume distinct sessions in a
+// shared directory without requiring users to hand-edit an existing config. It
+// only adds capability — it never overwrites args the user already set — and is
+// invisible to workbench, which does not read these fields.
+func backfillSessionArgs(models map[string]Model) {
+	for key, dm := range DefaultConfig().Models {
+		if len(dm.NewSessionArgs) == 0 && len(dm.ResumeSessionArgs) == 0 {
+			continue
+		}
+		m, ok := models[key]
+		if !ok || m.Binary != dm.Binary {
+			continue
+		}
+		if len(m.NewSessionArgs) == 0 && len(m.ResumeSessionArgs) == 0 {
+			m.NewSessionArgs = dm.NewSessionArgs
+			m.ResumeSessionArgs = dm.ResumeSessionArgs
+			models[key] = m
+		}
+	}
 }
 
 func (c *Config) Save() error {

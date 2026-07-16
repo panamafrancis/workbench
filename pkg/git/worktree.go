@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"strconv"
 	"strings"
 )
 
@@ -94,4 +95,48 @@ func DeleteBranch(repoPath, branch string) error {
 		return fmt.Errorf("git branch -D: %s", strings.TrimSpace(errBuf.String()))
 	}
 	return nil
+}
+
+// RenameBranch renames the currently checked-out branch of the worktree at
+// worktreePath to newName (git branch -m).
+func RenameBranch(worktreePath, newName string) error {
+	cmd := exec.CommandContext(context.Background(), "git", "-C", worktreePath, "branch", "-m", newName)
+	var errBuf bytes.Buffer
+	cmd.Stderr = &errBuf
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("git branch -m: %s", strings.TrimSpace(errBuf.String()))
+	}
+	return nil
+}
+
+// CurrentBranch returns the checked-out branch name at worktreePath.
+func CurrentBranch(worktreePath string) (string, error) {
+	cmd := exec.CommandContext(context.Background(), "git", "-C", worktreePath, "rev-parse", "--abbrev-ref", "HEAD")
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("git rev-parse: %w", err)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// CommitsAhead returns how many commits the worktree's HEAD is ahead of its
+// origin default branch (origin/<default>). Returns 0 if the base ref cannot be
+// resolved (e.g. offline with no local base), so callers treat "unknown" as
+// "nothing to PR".
+func CommitsAhead(worktreePath string) (int, error) {
+	base := "origin/" + DefaultBranch(worktreePath)
+	if !refExists(worktreePath, base) {
+		return 0, nil
+	}
+	cmd := exec.CommandContext(context.Background(), "git", "-C", worktreePath,
+		"rev-list", "--count", base+"..HEAD")
+	out, err := cmd.Output()
+	if err != nil {
+		return 0, fmt.Errorf("git rev-list: %w", err)
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil {
+		return 0, fmt.Errorf("parse rev-list count: %w", err)
+	}
+	return n, nil
 }

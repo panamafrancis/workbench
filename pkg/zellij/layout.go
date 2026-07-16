@@ -7,22 +7,30 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/panamafrancis/workbench/pkg/config"
 	"github.com/panamafrancis/workbench/pkg/git"
 )
 
-func WriteTabLayout(name, cwd, sidebarWidth string, nonoArgs []string, envVars map[string]string) (string, error) {
+func (w Workspace) WriteTabLayout(name, cwd, sidebarWidth string, nonoArgs []string, envVars map[string]string) (string, error) {
 	// name is spliced into both a KDL pane name and the sidebar pane's bash -c
 	// command, so reject anything outside the validated worktree-name charset
 	// ([a-z0-9-]) before interpolation. This is fail-safe defense-in-depth:
 	// callers already validate at creation, but a hand-edited config must not be
-	// able to inject shell or break the layout here.
-	if err := git.ValidateName(name, nil); err != nil {
-		return "", fmt.Errorf("refusing to write layout for invalid worktree name %q: %w", name, err)
+	// able to inject shell or break the layout here. Supatree agent tabs use a
+	// "<name>:<agent>" identity, so allow a single colon-separated suffix —
+	// validating BOTH halves with the same charset (the suffix reaches the
+	// sidebar bash command via SidebarActiveEnvVar, so it must be sanitized too).
+	base, suffix, hasSuffix := strings.Cut(name, ":")
+	if err := git.ValidateName(base, nil); err != nil {
+		return "", fmt.Errorf("refusing to write layout for invalid tab name %q: %w", name, err)
+	}
+	if hasSuffix {
+		if err := git.ValidateName(suffix, nil); err != nil {
+			return "", fmt.Errorf("refusing to write layout for invalid tab name %q: %w", name, err)
+		}
 	}
 
-	// The tab/layout identity stays the bare (validated) worktree name — it keys
-	// tab lookups and the layout filename. The agent pane's *display* name gets a
+	// The tab/layout identity stays the bare (validated) name — it keys tab
+	// lookups and the layout filename. The agent pane's *display* name gets a
 	// "{repo}/{worktree}" label for context. The alias comes from config and is
 	// not charset-validated, so it goes through quoteKDL to stay KDL-safe (it's
 	// a KDL string here, not a shell command).
@@ -31,7 +39,7 @@ func WriteTabLayout(name, cwd, sidebarWidth string, nonoArgs []string, envVars m
 		displayName = alias + "/" + name
 	}
 
-	dir := config.LayoutsDir()
+	dir := w.LayoutsDir
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return "", fmt.Errorf("create layouts dir: %w", err)
 	}
@@ -67,7 +75,7 @@ func WriteTabLayout(name, cwd, sidebarWidth string, nonoArgs []string, envVars m
     pane split_direction="vertical" {
         pane size="%s" name="sidebar" {
             command "bash"
-            args "-c" "WORKBENCH_WORKTREE_NAME=%s WORKBENCH_SIDEBAR=1 exec bash -c 'while true; do workbench ls && sleep 2 || sleep 5; done'"
+            args "-c" "%s"
         }
         pane name=%s cwd="%s" focus=true close_on_exit=true {
             %s
@@ -75,7 +83,7 @@ func WriteTabLayout(name, cwd, sidebarWidth string, nonoArgs []string, envVars m
         }
     }
 }
-`, cwd, sidebarWidth, name, quoteKDL(displayName), cwd, agentCommand, agentArgs)
+`, cwd, sidebarWidth, w.sidebarBashArg(name), quoteKDL(displayName), cwd, agentCommand, agentArgs)
 
 	path := filepath.Join(dir, name+".kdl")
 	if err := os.WriteFile(path, []byte(kdl), 0644); err != nil {
@@ -93,13 +101,28 @@ func quoteKDL(s string) string {
 	return `"` + s + `"`
 }
 
-func CleanupLayout(name string) {
-	path := filepath.Join(config.LayoutsDir(), name+".kdl")
+// sidebarBashArg builds the bash -c argument that runs the sidebar CLI in a
+// restart loop (fast retry on clean exit, slow retry on failure). When
+// activeName is non-empty and the workspace defines SidebarActiveEnvVar, that
+// env var is injected so the sidebar can mark the current tab ("you are here").
+func (w Workspace) sidebarBashArg(activeName string) string {
+	prefix := ""
+	if activeName != "" && w.SidebarActiveEnvVar != "" {
+		prefix = w.SidebarActiveEnvVar + "=" + activeName + " "
+	}
+	return fmt.Sprintf(
+		"%s%s=1 exec bash -c 'while true; do %s && sleep 2 || sleep 5; done'",
+		prefix, w.SidebarEnvVar, w.SidebarCommand,
+	)
+}
+
+func (w Workspace) CleanupLayout(name string) {
+	path := filepath.Join(w.LayoutsDir, name+".kdl")
 	_ = os.Remove(path)
 }
 
-func CleanupStaleLayouts(validNames map[string]bool) {
-	entries, err := os.ReadDir(config.LayoutsDir())
+func (w Workspace) CleanupStaleLayouts(validNames map[string]bool) {
+	entries, err := os.ReadDir(w.LayoutsDir)
 	if err != nil {
 		return
 	}
@@ -109,7 +132,7 @@ func CleanupStaleLayouts(validNames map[string]bool) {
 		}
 		name := strings.TrimSuffix(e.Name(), ".kdl")
 		if !validNames[name] {
-			_ = os.Remove(filepath.Join(config.LayoutsDir(), e.Name()))
+			_ = os.Remove(filepath.Join(w.LayoutsDir, e.Name()))
 		}
 	}
 }

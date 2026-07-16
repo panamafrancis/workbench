@@ -25,6 +25,70 @@ func BuildNonoArgs(worktreePath, modelKey string, cfg *config.Config) ([]string,
 	return args, nil
 }
 
+// BuildAgentNonoArgs builds nono args for launching a named agent in
+// worktreePath. When the model defines session-ID args and sessionID != "", the
+// launch is pinned to that session — NewSessionArgs for a fresh start,
+// ResumeSessionArgs to resume — with every "{session_id}" token replaced by
+// sessionID. This lets several agents share one directory (a supatree root) yet
+// resume independently. When the model has no session-ID args, it falls back to
+// BuildNonoArgs semantics (append ResumeArgs iff a prior directory session
+// exists), which only supports a single directory-scoped agent.
+func BuildAgentNonoArgs(worktreePath, modelKey string, cfg *config.Config, sessionID string, resume bool) ([]string, error) {
+	m, ok := cfg.Models[modelKey]
+	if !ok {
+		return nil, fmt.Errorf("unknown model %q (add it under 'models:' in config)", modelKey)
+	}
+	args := []string{"run", "--profile", m.NonoProfile, "--allow", worktreePath, "--"}
+	args = append(args, m.Binary)
+	args = append(args, m.Args...)
+	switch {
+	case sessionID != "" && resume && len(m.ResumeSessionArgs) > 0:
+		args = append(args, substituteSession(m.ResumeSessionArgs, sessionID)...)
+	case sessionID != "" && !resume && len(m.NewSessionArgs) > 0:
+		args = append(args, substituteSession(m.NewSessionArgs, sessionID)...)
+	case resume && len(m.ResumeArgs) > 0 && HasPriorSession(worktreePath):
+		// Fallback for models without session-ID args: directory-scoped resume
+		// (e.g. --continue). Only when actually resuming — a *new* agent must
+		// never inherit whatever ran last in a shared directory.
+		args = append(args, m.ResumeArgs...)
+	}
+	return args, nil
+}
+
+// SessionExists reports whether a transcript for sessionID already exists under
+// worktreePath's claude project directory. It is the authoritative "should I
+// resume?" signal: a session ID that was generated but never launched (or was
+// launched under a model that ignored it) has no transcript, so the agent
+// starts fresh with --session-id rather than failing to --resume a phantom id.
+func SessionExists(worktreePath, sessionID string) bool {
+	if sessionID == "" {
+		return false
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return false
+	}
+	p := filepath.Join(home, ".claude", "projects", encodeProjectPath(worktreePath), sessionID+".jsonl")
+	_, err = os.Stat(p)
+	return err == nil
+}
+
+// SupportsSessions reports whether modelKey defines explicit session-ID launch
+// args, i.e. whether multiple independently-resumable agents can share one
+// directory. Callers use this to fall back to a single directory-scoped agent.
+func SupportsSessions(modelKey string, cfg *config.Config) bool {
+	m, ok := cfg.Models[modelKey]
+	return ok && len(m.NewSessionArgs) > 0
+}
+
+func substituteSession(args []string, id string) []string {
+	out := make([]string, len(args))
+	for i, a := range args {
+		out[i] = strings.ReplaceAll(a, "{session_id}", id)
+	}
+	return out
+}
+
 // HasPriorSession reports whether a claude session transcript already exists for
 // worktreePath. Claude stores transcripts at
 // ~/.claude/projects/<encoded-path>/<session>.jsonl, where the path is encoded

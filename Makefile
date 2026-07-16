@@ -8,9 +8,12 @@ LDFLAGS    := -s -w -X github.com/panamafrancis/workbench/pkg/version.Version=$(
 build:
 	CGO_ENABLED=0 GOOS=linux  GOARCH=amd64 go build -ldflags="$(LDFLAGS)" -o dist/workbench-linux-amd64  .
 	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags="$(LDFLAGS)" -o dist/workbench-darwin-arm64 .
+	CGO_ENABLED=0 GOOS=linux  GOARCH=amd64 go build -ldflags="$(LDFLAGS)" -o dist/supatree-linux-amd64   ./cmd/supatree
+	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags="$(LDFLAGS)" -o dist/supatree-darwin-arm64  ./cmd/supatree
 
 install:
 	go install -ldflags="$(LDFLAGS)" .
+	go install -ldflags="$(LDFLAGS)" ./cmd/supatree
 
 setup:
 	mkdir -p $(ZELLIJ_DIR)
@@ -36,7 +39,9 @@ hooks:
 
 e2e:
 	go build -ldflags="$(LDFLAGS)" -o dist/workbench .
+	go build -ldflags="$(LDFLAGS)" -o dist/supatree ./cmd/supatree
 	PATH="$(CURDIR)/dist:$$PATH" bash scripts/e2e.sh
+	PATH="$(CURDIR)/dist:$$PATH" bash scripts/e2e-supatree.sh
 
 clean:
 	rm -rf dist/

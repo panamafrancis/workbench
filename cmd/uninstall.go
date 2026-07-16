@@ -79,12 +79,12 @@ var uninstallCmd = &cobra.Command{
 				fmt.Fprintf(os.Stderr, "  warning: remove %s: %v\n", w.name, err)
 			}
 			_ = git.DeleteBranch(w.repoPath, w.branch)
-			zellij.CleanupLayout(w.name)
+			wbZ.CleanupLayout(w.name)
 			fmt.Printf("  removed worktree %s\n", w.name)
 		}
 
 		sessions, _ := zellij.ListSessions()
-		prefix := zellij.SessionPrefix()
+		prefix := wbZ.SessionPrefix
 		for _, s := range sessions {
 			if strings.HasPrefix(s.Name, prefix) {
 				_ = zellij.DeleteSession(s.Name)

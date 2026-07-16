@@ -10,7 +10,7 @@ import (
 func TestWriteTabLayoutPath(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
-	path, err := WriteTabLayout("myworktree", "/wt/path", "15%", []string{"run", "--profile", "claude-code", "--allow", "/wt/path", "--", "claude"}, nil)
+	path, err := WorkbenchWorkspace().WriteTabLayout("myworktree", "/wt/path", "15%", []string{"run", "--profile", "claude-code", "--allow", "/wt/path", "--", "claude"}, nil)
 	if err != nil {
 		t.Fatalf("WriteTabLayout() error = %v", err)
 	}
@@ -26,7 +26,7 @@ func TestWriteTabLayoutContent(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
 	nonoArgs := []string{"run", "--profile", "claude-code", "--allow", "/wt/path", "--", "claude"}
-	path, err := WriteTabLayout("atlanta", "/wt/path", "15%", nonoArgs, nil)
+	path, err := WorkbenchWorkspace().WriteTabLayout("atlanta", "/wt/path", "15%", nonoArgs, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +65,7 @@ func TestWriteTabLayoutWithEnvVars(t *testing.T) {
 		"WORKBENCH":               "1",
 		"WORKBENCH_WORKTREE_NAME": "atlanta",
 	}
-	path, err := WriteTabLayout("atlanta", "/wt", "15%", []string{"run", "--", "bash"}, env)
+	path, err := WorkbenchWorkspace().WriteTabLayout("atlanta", "/wt", "15%", []string{"run", "--", "bash"}, env)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +94,7 @@ func TestWriteTabLayoutPaneNameComposite(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
 	env := map[string]string{"WORKBENCH_REPO_ALIAS": "wb"}
-	path, err := WriteTabLayout("atlanta", "/wt", "15%", []string{"run", "--", "bash"}, env)
+	path, err := WorkbenchWorkspace().WriteTabLayout("atlanta", "/wt", "15%", []string{"run", "--", "bash"}, env)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +104,7 @@ func TestWriteTabLayoutPaneNameComposite(t *testing.T) {
 	}
 
 	// Without an alias, the pane name falls back to the bare worktree name.
-	path2, err := WriteTabLayout("atlanta", "/wt", "15%", []string{"run", "--", "bash"}, nil)
+	path2, err := WorkbenchWorkspace().WriteTabLayout("atlanta", "/wt", "15%", []string{"run", "--", "bash"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,16 +125,32 @@ func TestWriteTabLayoutRejectsUnsafeName(t *testing.T) {
 		"",                        // empty
 	}
 	for _, name := range unsafe {
-		if _, err := WriteTabLayout(name, "/wt", "15%", []string{"nono"}, nil); err == nil {
+		if _, err := WorkbenchWorkspace().WriteTabLayout(name, "/wt", "15%", []string{"nono"}, nil); err == nil {
 			t.Errorf("WriteTabLayout(%q) = nil error, want rejection", name)
 		}
+	}
+}
+
+func TestWriteTabLayoutRejectsUnsafeSuffix(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	// A "<name>:<suffix>" tab identity must validate the suffix too — it reaches
+	// the sidebar bash command via SidebarActiveEnvVar.
+	unsafe := []string{"atlanta:x=1 && curl evil", "atlanta:a b", `atlanta:a"b`}
+	for _, name := range unsafe {
+		if _, err := WorkbenchWorkspace().WriteTabLayout(name, "/wt", "15%", []string{"nono"}, nil); err == nil {
+			t.Errorf("WriteTabLayout(%q) = nil error, want rejection", name)
+		}
+	}
+	// A well-formed suffix is accepted.
+	if _, err := WorkbenchWorkspace().WriteTabLayout("atlanta:reviewer", "/wt", "15%", []string{"nono"}, nil); err != nil {
+		t.Errorf("WriteTabLayout(atlanta:reviewer) = %v, want nil", err)
 	}
 }
 
 func TestWriteTabLayoutQuotesArgs(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
-	path, err := WriteTabLayout("tab", "/wt", "15%", []string{`has"quote`}, nil)
+	path, err := WorkbenchWorkspace().WriteTabLayout("tab", "/wt", "15%", []string{`has"quote`}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +163,7 @@ func TestWriteTabLayoutQuotesArgs(t *testing.T) {
 func TestWriteTabLayoutCreatesDir(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
-	path, err := WriteTabLayout("x", "/wt", "15%", []string{"nono"}, nil)
+	path, err := WorkbenchWorkspace().WriteTabLayout("x", "/wt", "15%", []string{"nono"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,11 +175,11 @@ func TestWriteTabLayoutCreatesDir(t *testing.T) {
 func TestWriteTabLayoutOverwrites(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
-	_, err := WriteTabLayout("tab", "/old", "15%", []string{"old"}, nil)
+	_, err := WorkbenchWorkspace().WriteTabLayout("tab", "/old", "15%", []string{"old"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	path, err := WriteTabLayout("tab", "/new", "15%", []string{"new"}, nil)
+	path, err := WorkbenchWorkspace().WriteTabLayout("tab", "/new", "15%", []string{"new"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

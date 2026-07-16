@@ -9,7 +9,7 @@ import (
 
 func TestWriteSessionLayoutPath(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	path, err := WriteSessionLayout("wb-main", "15%")
+	path, err := WorkbenchWorkspace().WriteSessionLayout("wb-main", "15%")
 	if err != nil {
 		t.Fatalf("WriteSessionLayout() error = %v", err)
 	}
@@ -23,7 +23,7 @@ func TestWriteSessionLayoutPath(t *testing.T) {
 
 func TestWriteSessionLayoutContent(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	path, err := WriteSessionLayout("wb-main", "20%")
+	path, err := WorkbenchWorkspace().WriteSessionLayout("wb-main", "20%")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +54,7 @@ func TestWriteSessionLayoutContent(t *testing.T) {
 }
 
 func TestSessionPrefix(t *testing.T) {
-	if got := SessionPrefix(); got != "wb-" {
-		t.Errorf("SessionPrefix() = %q, want %q", got, "wb-")
+	if got := WorkbenchWorkspace().SessionPrefix; got != "wb-" {
+		t.Errorf("SessionPrefix = %q, want %q", got, "wb-")
 	}
 }

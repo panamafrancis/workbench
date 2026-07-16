@@ -317,6 +317,45 @@ claude mcp add workbench -s user -- workbench mcp
 
 The MCP server gates on the `WORKBENCH` env var — tools return an error outside workbench sessions, so registration is safe globally.
 
+## supatree — multi-repo worktrees for one issue
+
+`supatree` is a companion binary (built and installed alongside `workbench`) for work that spans several repos at once — e.g. a change to `terraform`, then `keystone-api`, then `admin-frontend`. It creates one worktree per repo under a shared root so a single agent can run at the top and see every repo, and it orchestrates per-repo PR creation.
+
+### Model
+
+- A **stack** is a git repo holding the repo selection (`supatree.yml`), an agent guide (`AGENTS.md`), and `scripts/`. Create one with `supatree scaffold`.
+- A **supatree** is a worktree of that stack repo at `~/.supatree/trees/<name>/`, with each member repo checked out under `repos/<alias>/`. It is named with a city name, like workbench worktrees.
+- Member repos are referenced by their **workbench alias** — supatree reuses workbench's registered repo definitions (path, `copy_files`, scripts). Register repos with `workbench add repo` first.
+- Member branches are `st/<slug>/<alias>` (the slug starts as the city name; rename it before opening PRs). The stack worktree itself is on `st/<name>`.
+- Dependencies between repos (`deps:` in `supatree.yml`) drive creation order, the merge order shown in `.supatree/info.md`, and `create_prs` ordering.
+
+### Quickstart
+
+```sh
+supatree init                                   # set up ~/.supatree, register MCP
+workbench add repo ~/code/terraform --alias=terraform
+workbench add repo ~/code/keystone  --alias=keystone
+supatree scaffold fraud                         # pick repos interactively; stack at ~/.supatree/stacks/fraud
+# (or non-interactively: supatree scaffold fraud --repos=terraform,keystone)
+# edit ~/.supatree/stacks/fraud/supatree.yml to add deps, commit it
+supatree start                                  # start the st-main Zellij session
+supatree new --stack=fraud                      # create a city-named supatree
+supatree open <name>                            # open the root agent (sees all repos)
+supatree open <name> --agent=reviewer           # a second, independently-resumable agent
+supatree ls                                     # list supatrees + member PR status
+supatree sync <name>                            # reconcile after editing supatree.yml
+supatree rename-branch <slug> <name>            # rename all member branches
+supatree rm <name>                              # tear down all member worktrees
+```
+
+### Agents
+
+All agents run at the supatree root under a nono sandbox that allows the whole tree. Multiple named agents (`--agent`) share the directory but resume independently via cached session IDs. `--repo <alias>` opens an agent scoped to a single member repo instead.
+
+### MCP tools
+
+`supatree init` registers an MCP server (`claude mcp add supatree -s user -- supatree mcp`). Inside a supatree, the agent gets: `supatree_info`, `sync`, `rename_branches`, `create_pr`, `create_prs` (dependency-ordered), `pr_status`, and `docs`. PR tools refuse to run while the branch slug is still an auto-generated city name, and (unless forced) while a repo's dependencies have no PRs yet. Tools gate on the `SUPATREE` env var, so global registration is safe.
+
 ## nono sandbox
 
 workbench passes `--allow <worktree-path>` to nono so the sandboxed process can read and write only its own worktree. The profile name comes from the model config entry (`nono_profile`). The built-in `claude` model uses the `claude-code` profile; everything else defaults to `default`.
