@@ -344,7 +344,7 @@ supatree open <name>                            # open the root agent (sees all 
 supatree open <name> --agent=reviewer           # a second, independently-resumable agent
 supatree ls                                     # list supatrees + member PR status
 supatree sync <name>                            # reconcile after editing supatree.yml
-supatree rename-branch <slug> <name>            # rename all member branches
+supatree rename-branch <slug> <name>            # rename all member branches (slug: max 40 chars)
 supatree rm <name>                              # tear down all member worktrees
 ```
 
@@ -354,7 +354,9 @@ All agents run at the supatree root under a nono sandbox that allows the whole t
 
 ### MCP tools
 
-`supatree init` registers an MCP server (`claude mcp add supatree -s user -- supatree mcp`). Inside a supatree, the agent gets: `supatree_info`, `sync`, `rename_branches`, `create_pr`, `create_prs` (dependency-ordered), `pr_status`, and `docs`. PR tools refuse to run while the branch slug is still an auto-generated city name, and (unless forced) while a repo's dependencies have no PRs yet. Tools gate on the `SUPATREE` env var, so global registration is safe.
+`supatree init` registers an MCP server (`claude mcp add supatree -s user -- supatree mcp`) — **run it before your first supatree**, otherwise the supatree PR tools won't appear and you'll only see workbench's own tools. Inside a supatree, the agent gets: `supatree_info`, `sync`, `rename_branches`, `create_pr`, `create_prs` (dependency-ordered), `pr_status`, and `docs`. PR tools refuse to run while the branch slug is still an auto-generated city name, and (unless forced) while a repo's dependencies have no PRs yet. Tools gate on the `SUPATREE` env var, so global registration is safe. New branch slugs (`rename_branches` / `rename-branch`) are lowercase alphanumeric and hyphens, max 40 chars.
+
+The **workbench** MCP tools (`create_pr`, `rename_branch`) are for plain workbench worktrees, not supatrees: inside a supatree they detect `SUPATREE=1` and redirect you to the supatree tools above rather than acting on the wrong branch.
 
 ## nono sandbox
 

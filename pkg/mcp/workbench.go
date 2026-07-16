@@ -26,6 +26,12 @@ func WorkbenchServer(version string) *Server {
 			if name == "docs" {
 				return ""
 			}
+			if os.Getenv("SUPATREE") == "1" {
+				return "You're inside a supatree, not a plain workbench worktree. " +
+					"Use the supatree MCP tools instead: create_prs (all members, dependency-ordered) " +
+					"or create_pr (one member), and rename_branches for the st/<slug>/<alias> branches. " +
+					"If those tools aren't listed, run `supatree init` to register the supatree MCP server."
+			}
 			if os.Getenv("WORKBENCH") != "1" {
 				return "Not inside a workbench session (WORKBENCH env var not set)."
 			}
@@ -40,7 +46,7 @@ func WorkbenchServer(version string) *Server {
 					"properties": map[string]any{
 						"new_name": map[string]any{
 							"type":        "string",
-							"description": "New branch name — keep the wt/<alias>/ prefix (e.g. wt/wb/session-launcher)",
+							"description": "New branch name — keep the wt/<alias>/ prefix (e.g. wt/wb/session-launcher). The final segment is lowercase alphanumeric and hyphens, max 40 chars.",
 						},
 						"push": map[string]any{
 							"type":        "boolean",

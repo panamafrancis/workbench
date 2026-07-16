@@ -143,6 +143,8 @@ func TestValidateNameValid(t *testing.T) {
 		"my-worktree-1",
 		"ab",
 		strings.Repeat("a", 24),
+		"fix-user-soft-delete-restore",
+		strings.Repeat("a", 40),
 	}
 	for _, name := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -161,7 +163,7 @@ func TestValidateNameInvalidPattern(t *testing.T) {
 		"UPPER",
 		"has space",
 		"has.dot",
-		strings.Repeat("a", 25),
+		strings.Repeat("a", 41),
 	}
 	for _, name := range cases {
 		t.Run(name, func(t *testing.T) {

@@ -53,7 +53,7 @@ var Cities = []string{
 	"zanzibar", "zurich",
 }
 
-var nameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,22}[a-z0-9]$|^[a-z0-9]$`)
+var nameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,38}[a-z0-9]$|^[a-z0-9]$`)
 
 const maxSuffix = 99
 
@@ -102,7 +102,7 @@ func IsCityName(name string) bool {
 
 func ValidateName(name string, existing []string) error {
 	if !nameRe.MatchString(name) {
-		return fmt.Errorf("name must be lowercase alphanumeric and hyphens, 1-24 chars")
+		return fmt.Errorf("name must be lowercase alphanumeric and hyphens, 1-40 chars")
 	}
 	if slices.Contains(existing, name) {
 		return fmt.Errorf("name %q already in use", name)

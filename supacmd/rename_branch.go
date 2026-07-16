@@ -13,7 +13,9 @@ var renameBranchPush bool
 var renameBranchCmd = &cobra.Command{
 	Use:   "rename-branch <new-slug> [name]",
 	Short: "Rename every member branch to st/<new-slug>/<alias>",
-	Args:  cobra.RangeArgs(1, 2),
+	Long: "Rename every member branch to st/<new-slug>/<alias>.\n\n" +
+		"<new-slug> is lowercase alphanumeric and hyphens, max 40 chars.",
+	Args: cobra.RangeArgs(1, 2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		newSlug := args[0]
 		name, err := resolveTreeName(args[1:])
