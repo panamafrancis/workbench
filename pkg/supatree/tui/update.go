@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -14,18 +15,48 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
+	case tea.FocusMsg:
+		// Switching back to this tab reloads live state so a long-lived sidebar
+		// doesn't show a snapshot another tab has since changed.
+		if m.mode == modeNormal {
+			m.reloadWithSelection()
+		}
+		return m, tea.Batch(m.backgroundCmds()...)
 	case tickMsg:
-		return m, tea.Batch(m.tickCmd(), m.refreshDirtyCmd(), m.refreshRunningCmd())
+		// Periodically re-read live state so new/removed supatrees appear across
+		// tabs without a manual refresh; the PR fetch stays on its staleness gate.
+		if m.mode == modeNormal {
+			m.reloadWithSelection()
+		}
+		return m, tea.Batch(append(m.backgroundCmds(), m.tickCmd())...)
 	case dirtyMsg:
 		m.dirty = msg.dirty
 	case runningMsg:
 		m.openTabs = msg.tabs
 	case prMsg:
-		_ = m.prCache.Load()
+		m.fetching = false
+		switch {
+		case msg.err == nil:
+			m.ghAvailable = true
+			m.prHint = ""
+		case github.IsRateLimited(msg.err):
+			// Leave ghAvailable true: the persisted backoff (InBackoff) gates
+			// retries and lifts on its own.
+			m.prHint = "gh rate limited"
+		case github.IsPermanentError(msg.err):
+			// No backoff is armed for auth/not-found, so stop the tick fetch loop
+			// from retrying every tick forever; a manual `r` still forces a retry.
+			m.ghAvailable = false
+			m.prHint = "gh auth required"
+		default:
+			// Transient error (network blip): clear any stale hint since the
+			// successful branches refreshed and nothing is persistently wrong.
+			m.prHint = ""
+		}
 	case actionDoneMsg:
 		m.msg = msg.msg
 		m.err = msg.err
-		m.reload()
+		m.reloadWithSelection()
 		return m, tea.Batch(m.refreshDirtyCmd(), m.refreshRunningCmd())
 	case tea.KeyMsg:
 		if m.mode != modeNormal {
@@ -49,8 +80,20 @@ func (m *Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "k", "up":
 		m.moveCursor(-1)
 	case "r":
-		m.reload()
-		return m, tea.Batch(m.refreshDirtyCmd(), m.refreshRunningCmd(), m.fetchPRCmd())
+		m.reloadWithSelection()
+		return m, tea.Batch(m.refreshDirtyCmd(), m.refreshRunningCmd(), m.fetchPRCmd(true))
+	case " ":
+		if r := m.selected(); r != nil {
+			m.setCollapse(r.tree, !m.collapsed[r.tree])
+		}
+	case "h", "left":
+		if r := m.selected(); r != nil {
+			m.setCollapse(r.tree, true)
+		}
+	case "l", "right":
+		if r := m.selected(); r != nil {
+			m.setCollapse(r.tree, false)
+		}
 	case "enter", "o":
 		return m, m.openSelected()
 	case "a":
@@ -62,9 +105,16 @@ func (m *Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.input.Focus()
 		}
 	case "n":
-		m.mode = modeNewTree
+		m.actionStack = ""
 		m.input.SetValue("")
-		m.input.Placeholder = stackPlaceholder(m)
+		if len(m.stCfg.Stacks) > 1 {
+			// Ambiguous: pick the stack first, then name the tree.
+			m.mode = modeNewTree
+			m.input.Placeholder = stackPlaceholder(m)
+		} else {
+			m.mode = modeNewTreeName
+			m.input.Placeholder = "name (blank = auto)"
+		}
 		m.input.Focus()
 	case "s":
 		if r := m.selected(); r != nil {
@@ -94,7 +144,7 @@ func (m *Model) updateInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	}
 
-	// Text-input modes (new agent / new tree).
+	// Text-input modes (new agent / new tree stack / new tree name).
 	switch msg.String() {
 	case "esc":
 		m.mode = modeNormal
@@ -102,17 +152,37 @@ func (m *Model) updateInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "enter":
 		val := m.input.Value()
-		isAgent := m.mode == modeNewAgent
-		tree := m.actionTree
-		m.mode = modeNormal
-		m.input.Blur()
-		if isAgent {
+		switch m.mode {
+		case modeNewAgent:
+			tree := m.actionTree
+			m.mode = modeNormal
+			m.input.Blur()
 			if val == "" {
 				return m, nil
 			}
 			return m, m.openAgent(tree, val)
+		case modeNewTree:
+			// Stack is required when >1 is registered; stay on the prompt rather
+			// than deferring an "ambiguous stack" error until after the name step.
+			if val == "" {
+				return m, nil
+			}
+			m.actionStack = val
+			m.mode = modeNewTreeName
+			m.input.SetValue("")
+			m.input.Placeholder = "name (blank = auto)"
+			return m, nil
+		case modeNewTreeName:
+			stack := m.actionStack
+			m.mode = modeNormal
+			m.input.Blur()
+			return m, m.newTree(stack, val)
+		case modeNormal, modeConfirmDelete, modeConfirmQuit:
+			// Not text-input modes; handled earlier in updateInput.
 		}
-		return m, m.newTree(val)
+		m.mode = modeNormal
+		m.input.Blur()
+		return m, nil
 	default:
 		var cmd tea.Cmd
 		m.input, cmd = m.input.Update(msg)
@@ -203,9 +273,9 @@ func (m *Model) removeTree(tree string) tea.Cmd {
 	}
 }
 
-func (m *Model) newTree(stack string) tea.Cmd {
+func (m *Model) newTree(stack, name string) tea.Cmd {
 	return func() tea.Msg {
-		inst, _, err := supatree.New(m.stCfg, m.wbCfg, supatree.CreateOptions{Stack: stack})
+		inst, _, err := supatree.New(m.stCfg, m.wbCfg, supatree.CreateOptions{Stack: stack, Name: name})
 		if err != nil {
 			return actionDoneMsg{err: err}
 		}
@@ -240,26 +310,73 @@ func (m *Model) refreshRunningCmd() tea.Cmd {
 	}
 }
 
-func (m *Model) fetchPRCmd() tea.Cmd {
-	insts := m.insts
-	cache := m.prCache
-	return func() tea.Msg {
-		for _, inst := range insts {
-			for _, mem := range inst.Members {
-				if !mem.Exists {
-					continue
-				}
-				info, err := github.LookupPR(mem.Path, mem.Branch)
-				if err != nil {
-					if github.IsPermanentError(err) {
-						return prMsg{}
-					}
-					continue
-				}
-				cache.Set(mem.Branch, info)
+// backgroundCmds is the dirty/running/PR refresh triple shared by the focus and
+// tick handlers. The PR fetch is skipped while gh is known-unavailable (a
+// permanent error), so a broken auth doesn't spawn a fetch every tick forever.
+func (m *Model) backgroundCmds() []tea.Cmd {
+	cmds := []tea.Cmd{m.refreshDirtyCmd(), m.refreshRunningCmd()}
+	if m.ghAvailable {
+		cmds = append(cmds, m.fetchPRCmd(false))
+	}
+	return cmds
+}
+
+// fetchPRCmd fetches PR status for member branches. When force is false it only
+// fetches entries older than prStaleAge, and it always respects the persisted
+// backoff window — together these keep the restart loop and per-tab sidebars
+// from exhausting the gh rate limit. A rate-limit response arms a cooldown that
+// survives restarts.
+func (m *Model) fetchPRCmd(force bool) tea.Cmd {
+	if m.fetching {
+		return nil
+	}
+	// Re-read the on-disk cache first so this long-lived sidebar picks up the
+	// backoff (and freshly cached statuses) another tab's sidebar persisted —
+	// otherwise each tab would independently keep hitting a rate-limited API.
+	// Safe here because the m.fetching guard above rules out an in-flight writer.
+	_ = m.prCache.Load()
+	if m.prCache.InBackoff(time.Now()) {
+		return nil
+	}
+
+	type target struct{ path, branch string }
+	var targets []target
+	for _, inst := range m.insts {
+		for _, mem := range inst.Members {
+			if !mem.Exists {
+				continue
+			}
+			if force || m.prCache.IsStale(mem.Branch, prStaleAge) {
+				targets = append(targets, target{mem.Path, mem.Branch})
 			}
 		}
+	}
+	if len(targets) == 0 {
+		return nil
+	}
+
+	m.fetching = true
+	cache := m.prCache
+	return func() tea.Msg {
+		var lastErr error
+		for _, t := range targets {
+			info, err := github.LookupPR(t.path, t.branch)
+			if err != nil {
+				lastErr = err
+				if github.IsPermanentError(err) {
+					_ = cache.Save()
+					return prMsg{err: err}
+				}
+				if github.IsRateLimited(err) {
+					cache.SetRetryAfter(time.Now().Add(rateLimitCooldown))
+					_ = cache.Save()
+					return prMsg{err: err}
+				}
+				continue
+			}
+			cache.Set(t.branch, info)
+		}
 		_ = cache.Save()
-		return prMsg{}
+		return prMsg{err: lastErr}
 	}
 }

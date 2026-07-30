@@ -24,11 +24,12 @@ var (
 // supatreeWorkspace is the zellij workspace for supatree sessions and layouts.
 func supatreeWorkspace() zellij.Workspace {
 	return zellij.Workspace{
-		LayoutsDir:     supatree.LayoutsDir(),
-		SidebarCommand: "supatree ls",
-		SidebarEnvVar:  "SUPATREE_SIDEBAR",
-		SessionPrefix:  "st-",
-		SessionTab:     "supatree",
+		LayoutsDir:          supatree.LayoutsDir(),
+		SidebarCommand:      "supatree ls",
+		SidebarEnvVar:       "SUPATREE_SIDEBAR",
+		SidebarActiveEnvVar: "SUPATREE_ACTIVE_TREE",
+		SessionPrefix:       "st-",
+		SessionTab:          "supatree",
 	}
 }
 
