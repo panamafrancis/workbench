@@ -19,7 +19,7 @@ var lsCmd = &cobra.Command{
 			return lsPlain()
 		}
 		p := tea.NewProgram(stui.New(stCfg, wbCfg, supatreeWorkspace()),
-			tea.WithAltScreen(), tea.WithMouseCellMotion())
+			tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithReportFocus())
 		_, err := p.Run()
 		return err
 	},
