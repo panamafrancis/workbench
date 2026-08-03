@@ -1,11 +1,13 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/panamafrancis/workbench/pkg/config"
 	"github.com/panamafrancis/workbench/pkg/git"
 	"github.com/panamafrancis/workbench/pkg/github"
 	"github.com/panamafrancis/workbench/pkg/supatree"
@@ -33,6 +35,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.dirty = msg.dirty
 	case runningMsg:
 		m.openTabs = msg.tabs
+	case prSkippedMsg:
+		m.fetching = false
 	case prMsg:
 		m.fetching = false
 		switch {
@@ -57,6 +61,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.msg = msg.msg
 		m.err = msg.err
 		m.reloadWithSelection()
+		if msg.reveal != "" {
+			// Land the cursor on the just-created tree so the viewport scrolls to
+			// it, rather than leaving it pinned to the prior selection off-screen.
+			m.selectRow(row{kind: rowTree, tree: msg.reveal, label: msg.reveal})
+		}
 		return m, tea.Batch(m.refreshDirtyCmd(), m.refreshRunningCmd())
 	case tea.KeyMsg:
 		if m.mode != modeNormal {
@@ -108,14 +117,14 @@ func (m *Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.actionStack = ""
 		m.input.SetValue("")
 		if len(m.stCfg.Stacks) > 1 {
-			// Ambiguous: pick the stack first, then name the tree.
+			// Ambiguous: pick the stack from a list first, then name the tree.
 			m.mode = modeNewTree
-			m.input.Placeholder = stackPlaceholder(m)
+			m.stackCursor = 0
 		} else {
 			m.mode = modeNewTreeName
 			m.input.Placeholder = "name (blank = auto)"
+			m.input.Focus()
 		}
-		m.input.Focus()
 	case "s":
 		if r := m.selected(); r != nil {
 			return m, m.syncTree(r.tree)
@@ -144,7 +153,12 @@ func (m *Model) updateInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	}
 
-	// Text-input modes (new agent / new tree stack / new tree name).
+	// The new-tree stack picker is a selectable list, not a text field.
+	if m.mode == modeNewTree {
+		return m.updateStackPick(msg)
+	}
+
+	// Text-input modes (new agent / new tree name).
 	switch msg.String() {
 	case "esc":
 		m.mode = modeNormal
@@ -161,23 +175,12 @@ func (m *Model) updateInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			return m, m.openAgent(tree, val)
-		case modeNewTree:
-			// Stack is required when >1 is registered; stay on the prompt rather
-			// than deferring an "ambiguous stack" error until after the name step.
-			if val == "" {
-				return m, nil
-			}
-			m.actionStack = val
-			m.mode = modeNewTreeName
-			m.input.SetValue("")
-			m.input.Placeholder = "name (blank = auto)"
-			return m, nil
 		case modeNewTreeName:
 			stack := m.actionStack
 			m.mode = modeNormal
 			m.input.Blur()
 			return m, m.newTree(stack, val)
-		case modeNormal, modeConfirmDelete, modeConfirmQuit:
+		case modeNormal, modeNewTree, modeConfirmDelete, modeConfirmQuit:
 			// Not text-input modes; handled earlier in updateInput.
 		}
 		m.mode = modeNormal
@@ -188,6 +191,31 @@ func (m *Model) updateInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.input, cmd = m.input.Update(msg)
 		return m, cmd
 	}
+}
+
+// updateStackPick drives the inline stack picker shown when more than one stack
+// is registered: j/k (or arrows) move, enter chooses and advances to the name
+// prompt, esc cancels.
+func (m *Model) updateStackPick(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "q":
+		m.mode = modeNormal
+	case "up", "k":
+		if m.stackCursor > 0 {
+			m.stackCursor--
+		}
+	case "down", "j":
+		if m.stackCursor < len(m.stCfg.Stacks)-1 {
+			m.stackCursor++
+		}
+	case "enter":
+		m.actionStack = m.stCfg.Stacks[m.stackCursor].Alias
+		m.mode = modeNewTreeName
+		m.input.SetValue("")
+		m.input.Placeholder = "name (blank = auto)"
+		m.input.Focus()
+	}
+	return m, nil
 }
 
 func (m *Model) moveCursor(delta int) {
@@ -279,7 +307,7 @@ func (m *Model) newTree(stack, name string) tea.Cmd {
 		if err != nil {
 			return actionDoneMsg{err: err}
 		}
-		return actionDoneMsg{msg: "created " + inst.Name}
+		return actionDoneMsg{msg: "created " + inst.Name, reveal: inst.Name}
 	}
 }
 
@@ -323,9 +351,12 @@ func (m *Model) backgroundCmds() []tea.Cmd {
 
 // fetchPRCmd fetches PR status for member branches. When force is false it only
 // fetches entries older than prStaleAge, and it always respects the persisted
-// backoff window — together these keep the restart loop and per-tab sidebars
-// from exhausting the gh rate limit. A rate-limit response arms a cooldown that
-// survives restarts.
+// backoff window. Crucially, the actual gh calls run under a cross-process
+// try-lock (PRCacheLockPath): with one sidebar per Zellij tab all polling
+// independently, only the tab that wins the lock fetches each round while the
+// rest cede and pick up the cache it writes — this, not per-process throttling
+// alone, is what stops a burst of concurrent gh calls from tripping GitHub's
+// rate limit. A rate-limit response arms a cooldown that survives restarts.
 func (m *Model) fetchPRCmd(force bool) tea.Cmd {
 	if m.fetching {
 		return nil
@@ -336,6 +367,9 @@ func (m *Model) fetchPRCmd(force bool) tea.Cmd {
 	// Safe here because the m.fetching guard above rules out an in-flight writer.
 	_ = m.prCache.Load()
 	if m.prCache.InBackoff(time.Now()) {
+		// A peer tab may have armed the backoff; surface the hint here too so every
+		// tab (not just the one that hit the limit) signals that fetches are paused.
+		m.prHint = "gh rate limited"
 		return nil
 	}
 
@@ -358,25 +392,52 @@ func (m *Model) fetchPRCmd(force bool) tea.Cmd {
 	m.fetching = true
 	cache := m.prCache
 	return func() tea.Msg {
-		var lastErr error
-		for _, t := range targets {
-			info, err := github.LookupPR(t.path, t.branch)
-			if err != nil {
-				lastErr = err
-				if github.IsPermanentError(err) {
-					_ = cache.Save()
-					return prMsg{err: err}
-				}
-				if github.IsRateLimited(err) {
-					cache.SetRetryAfter(time.Now().Add(rateLimitCooldown))
-					_ = cache.Save()
-					return prMsg{err: err}
-				}
-				continue
+		// prSkippedMsg unless we win the lock and actually run a fetch below.
+		var result tea.Msg = prSkippedMsg{}
+		lockErr := config.TryFileLock(supatree.PRCacheLockPath(), func() error {
+			// Under the lock, re-read the cache: while we queued to build targets
+			// another tab may have populated statuses or armed a backoff.
+			_ = cache.Load()
+			if cache.InBackoff(time.Now()) {
+				return nil
 			}
-			cache.Set(t.branch, info)
+			var lastErr error
+			for _, t := range targets {
+				// A peer that just held the lock may have refreshed this branch;
+				// don't re-fetch what is already fresh.
+				if !force && !cache.IsStale(t.branch, prStaleAge) {
+					continue
+				}
+				info, err := github.LookupPR(t.path, t.branch)
+				if err != nil {
+					lastErr = err
+					if github.IsPermanentError(err) {
+						_ = cache.Save()
+						result = prMsg{err: err}
+						return nil
+					}
+					if github.IsRateLimited(err) {
+						cache.SetRetryAfter(time.Now().Add(rateLimitCooldown))
+						_ = cache.Save()
+						result = prMsg{err: err}
+						return nil
+					}
+					continue
+				}
+				cache.Set(t.branch, info)
+			}
+			_ = cache.Save()
+			result = prMsg{err: lastErr}
+			return nil
+		})
+		if errors.Is(lockErr, config.ErrLockBusy) {
+			// Another sidebar owns this round; cede and let the next tick pick up
+			// the cache it writes.
+			return prSkippedMsg{}
 		}
-		_ = cache.Save()
-		return prMsg{err: lastErr}
+		if lockErr != nil {
+			return prMsg{err: lockErr}
+		}
+		return result
 	}
 }
