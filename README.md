@@ -352,7 +352,7 @@ supatree rm <name>                              # tear down all member worktrees
 
 `supatree ls` (the sidebar in each supatree tab, and `supatree start`'s pane) is a TUI listing every supatree with its agents and member repos. Keys: `enter`/`o` open the selected agent/member, `space` fold/unfold the supatree (`h`/`l` or `←`/`→` collapse/expand), `a` add an agent, `n` new supatree, `s` sync, `d` delete, `r` refresh, `q` quit. When the list is taller than the pane it scrolls to keep the cursor in view.
 
-Pressing `n` prompts for a **name** (leave it blank to auto-generate a city name). If more than one stack is registered you're first asked which stack, then the name.
+Pressing `n` prompts for a **name** (leave it blank to auto-generate a city name). If more than one stack is registered you first pick which stack from a list (`↑`/`↓` or `j`/`k` to move, `enter` to select, `esc` to cancel), then the name. After creation the cursor lands on the new supatree so it scrolls into view.
 
 Like the workbench sidebar, each supatree tab's sidebar marks the supatree that tab belongs to with a `▸` in the gutter ("you are here"), independent of the cursor. It re-reads live state when the pane regains focus and on its periodic tick, so newly created or removed supatrees appear across tabs without pressing `r`. PR status is fetched via `gh` and cached on disk; refreshes are rate-limited by a staleness window and pause for 15 minutes after a rate-limit response, so a churning or multi-tab sidebar doesn't drain the API quota.
 

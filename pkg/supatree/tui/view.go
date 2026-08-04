@@ -154,7 +154,17 @@ func (m *Model) footer() string {
 	case modeNewAgent:
 		return "new agent: " + m.input.View()
 	case modeNewTree:
-		return "new supatree — stack: " + m.input.View()
+		var b strings.Builder
+		b.WriteString(styleSub.Render("new supatree — pick stack (↑/↓, enter, esc):"))
+		for i, s := range m.stCfg.Stacks {
+			b.WriteString("\n")
+			if i == m.stackCursor {
+				b.WriteString(styleSelected.Render("› " + s.Alias))
+			} else {
+				b.WriteString("  " + styleRow.Render(s.Alias))
+			}
+		}
+		return b.String()
 	case modeNewTreeName:
 		return "new supatree — name: " + m.input.View()
 	case modeConfirmDelete:
@@ -229,11 +239,4 @@ func sel(selected bool, s string) string {
 
 func zellijTabs() (map[string]bool, error) {
 	return zellij.TabNames()
-}
-
-func stackPlaceholder(m *Model) string {
-	if len(m.stCfg.Stacks) == 1 {
-		return m.stCfg.Stacks[0].Alias + " (enter to use)"
-	}
-	return "stack alias"
 }

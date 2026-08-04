@@ -113,8 +113,9 @@ func TestNewTreeMultiStackAsksForStackThenName(t *testing.T) {
 	if m.mode != modeNewTree {
 		t.Fatalf("multi stack: mode = %v, want modeNewTree", m.mode)
 	}
-	// Choose a stack; should advance to the name prompt carrying the choice.
-	m.input.SetValue("b")
+	// The picker lists stacks; move to the second ("b") and select it. This
+	// should advance to the name prompt carrying the choice.
+	m.updateInput(key("j"))
 	m.updateInput(key("enter"))
 	if m.mode != modeNewTreeName {
 		t.Fatalf("after stack: mode = %v, want modeNewTreeName", m.mode)

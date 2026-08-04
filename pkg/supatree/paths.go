@@ -57,6 +57,12 @@ func PRCachePath() string {
 	return filepath.Join(CacheDir(), "pr-status.json")
 }
 
+// PRCacheLockPath serializes gh PR fetches across the independent sidebar
+// processes (one per Zellij tab) so they don't all hit the gh API at once.
+func PRCacheLockPath() string {
+	return PRCachePath() + ".lock"
+}
+
 // LockPath is the advisory lock file serializing registry mutations.
 func LockPath() string {
 	return ConfigPath() + ".lock"

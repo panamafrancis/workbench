@@ -76,6 +76,7 @@ type Model struct {
 	input       textinput.Model
 	actionTree  string // tree targeted by the active input mode
 	actionStack string // stack chosen for a pending new-tree create
+	stackCursor int    // cursor within the modeNewTree stack picker
 	activeTree  string // supatree whose Zellij tab this sidebar belongs to ("you are here")
 	fetching    bool   // a PR fetch is in flight
 	ghAvailable bool   // gh usable; false after a permanent error suppresses tick fetches
@@ -229,7 +230,16 @@ type tickMsg struct{}
 type dirtyMsg struct{ dirty map[string]bool }
 type runningMsg struct{ tabs map[string]bool }
 type prMsg struct{ err error }
+
+// prSkippedMsg is emitted when a fetch round was ceded to another sidebar
+// process (the shared fetch lock was busy); it only clears the in-flight flag,
+// leaving the rate-limit hint and gh availability untouched.
+type prSkippedMsg struct{}
 type actionDoneMsg struct {
 	msg string
 	err error
+	// reveal, when set, is a supatree name to move the cursor onto after the
+	// post-action reload — used so a freshly created tree is scrolled into view
+	// instead of being added off-screen while the cursor stays where it was.
+	reveal string
 }
