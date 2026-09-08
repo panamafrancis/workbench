@@ -35,6 +35,9 @@ type TreeModel struct {
 	// injected via WORKBENCH_WORKTREE_NAME. Empty for the root session sidebar.
 	// It drives a passive "you are here" marker, distinct from the cursor.
 	activeWorktree string
+	scroll         int  // index of the first rendered row (viewport top)
+	viewHeight     int  // rows the viewport last rendered; sizes ctrl+d/ctrl+u and clamps the wheel
+	follow         bool // keep the cursor in view on the next render (cleared while wheel-scrolled away)
 }
 
 func newTree(cfg *config.Config, prCache *github.Cache) TreeModel {
@@ -43,6 +46,7 @@ func newTree(cfg *config.Config, prCache *github.Cache) TreeModel {
 		prCache:   prCache,
 		collapsed: map[string]bool{},
 		dirty:     map[string]bool{},
+		follow:    true,
 	}
 }
 
@@ -63,6 +67,15 @@ func (t *TreeModel) items() []item {
 	return out
 }
 
+// selectable reports whether the cursor may rest on a row. The cursor normally
+// lives on worktrees and skips repo headers — except for a *collapsed* repo,
+// which has no rows of its own. Without that exception, folding a repo would
+// strand the cursor in a different repo, and folding every repo would leave
+// nothing selectable at all.
+func (t *TreeModel) selectable(it item) bool {
+	return !it.isRepo || t.collapsed[it.alias]
+}
+
 func (t *TreeModel) clamp() {
 	items := t.items()
 	if len(items) == 0 {
@@ -75,7 +88,7 @@ func (t *TreeModel) clamp() {
 	if t.cursor < 0 {
 		t.cursor = 0
 	}
-	if items[t.cursor].isRepo {
+	if !t.selectable(items[t.cursor]) {
 		t.skipToNextWorktree(1)
 	}
 }
@@ -83,8 +96,9 @@ func (t *TreeModel) clamp() {
 func (t *TreeModel) moveUp() {
 	items := t.items()
 	for i := t.cursor - 1; i >= 0; i-- {
-		if !items[i].isRepo {
+		if t.selectable(items[i]) {
 			t.cursor = i
+			t.follow = true
 			return
 		}
 	}
@@ -93,9 +107,22 @@ func (t *TreeModel) moveUp() {
 func (t *TreeModel) moveDown() {
 	items := t.items()
 	for i := t.cursor + 1; i < len(items); i++ {
-		if !items[i].isRepo {
+		if t.selectable(items[i]) {
 			t.cursor = i
+			t.follow = true
 			return
+		}
+	}
+}
+
+// moveBy walks delta selectable rows, reusing moveUp/moveDown so the repo-header
+// skipping stays in one place. Used by the half-page keys.
+func (t *TreeModel) moveBy(delta int) {
+	for range max(delta, -delta) {
+		if delta > 0 {
+			t.moveDown()
+		} else {
+			t.moveUp()
 		}
 	}
 }
@@ -104,18 +131,145 @@ func (t *TreeModel) skipToNextWorktree(dir int) {
 	items := t.items()
 	if dir > 0 {
 		for i := t.cursor; i < len(items); i++ {
-			if !items[i].isRepo {
+			if t.selectable(items[i]) {
 				t.cursor = i
 				return
 			}
 		}
 	}
 	for i := t.cursor; i >= 0; i-- {
-		if !items[i].isRepo {
+		if t.selectable(items[i]) {
 			t.cursor = i
 			return
 		}
 	}
+}
+
+// gotoTop / gotoBottom are vim's gg and G. gotoTop pins the scroll to the very
+// top as well: clamp pushes the cursor past the first repo header, and without
+// this the window would open at that worktree and hide the header above it.
+func (t *TreeModel) gotoTop() {
+	t.cursor = 0
+	t.clamp()
+	t.scroll = 0
+	t.follow = true
+}
+
+func (t *TreeModel) gotoBottom() {
+	t.cursor = len(t.items()) - 1
+	t.clamp()
+	t.follow = true
+}
+
+// firstRowOf returns the index of the first selectable row belonging to repoIdx:
+// the repo header when the repo is collapsed, otherwise its first worktree (or
+// its "no worktrees" placeholder).
+func (t *TreeModel) firstRowOf(items []item, repoIdx int) (int, bool) {
+	for i, it := range items {
+		if it.repoIdx == repoIdx && t.selectable(it) {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
+// jumpRepo moves to the next (delta > 0) or previous (delta < 0) repo's first
+// selectable row. Moving backwards from inside a repo lands on that repo's own
+// first row first — "up one level" before "up one repo".
+func (t *TreeModel) jumpRepo(delta int) {
+	items := t.items()
+	if len(items) == 0 || t.cursor >= len(items) {
+		return
+	}
+	cur := items[t.cursor].repoIdx
+	if delta < 0 {
+		if first, ok := t.firstRowOf(items, cur); ok && first < t.cursor {
+			t.cursor = first
+			t.follow = true
+			return
+		}
+	}
+	for ri := cur + delta; ri >= 0 && ri < len(t.cfg.Repos); ri += delta {
+		if first, ok := t.firstRowOf(items, ri); ok {
+			t.cursor = first
+			t.follow = true
+			return
+		}
+	}
+}
+
+// focusRepo parks the cursor on a repo's first selectable row — its header when
+// collapsed, its first worktree (or placeholder) when expanded. Folding and
+// unfolding go through it so the cursor stays in the repo the user acted on
+// instead of being pushed into a neighbouring one when the rows shift.
+func (t *TreeModel) focusRepo(alias string) {
+	for i, it := range t.items() {
+		if it.alias == alias && t.selectable(it) {
+			t.cursor = i
+			t.follow = true
+			return
+		}
+	}
+	t.clamp()
+}
+
+// setAllCollapsed folds or unfolds every repo at once (vim's zM / zR), keeping
+// the cursor in the repo it was already in.
+func (t *TreeModel) setAllCollapsed(collapsed bool) {
+	alias := ""
+	if it := t.selected(); it != nil {
+		alias = it.alias
+	}
+	for _, r := range t.cfg.Repos {
+		t.collapsed[r.Alias] = collapsed
+	}
+	if alias == "" {
+		t.clamp()
+		return
+	}
+	t.focusRepo(alias)
+}
+
+// halfPage is the ctrl+d / ctrl+u distance: half the visible rows, or a fixed
+// fallback before the pane has reported its size.
+func (t *TreeModel) halfPage() int {
+	if t.viewHeight <= 0 {
+		return fallbackPage
+	}
+	return max(t.viewHeight/2, 1)
+}
+
+// scrollBy pans the viewport without moving the cursor (mouse wheel). Clearing
+// follow keeps the view where the user left it instead of snapping back to the
+// cursor on the next render or background tick.
+func (t *TreeModel) scrollBy(delta int) {
+	total := len(t.items())
+	if t.viewHeight <= 0 || total <= t.viewHeight {
+		return
+	}
+	t.follow = false
+	t.scroll = min(max(t.scroll+delta, 0), total-t.viewHeight)
+}
+
+// viewport returns the [start, end) row range to render, recording the visible
+// height for the paging and wheel handlers. While follow is set (any cursor
+// move) it drags the scroll offset along to keep the cursor visible.
+func (t *TreeModel) viewport(total, avail int) (int, int) {
+	t.viewHeight = avail
+	if avail <= 0 || total <= avail {
+		t.scroll = 0
+		return 0, total
+	}
+	if t.follow {
+		if t.cursor < t.scroll {
+			t.scroll = t.cursor
+		}
+		if t.cursor >= t.scroll+avail {
+			t.scroll = t.cursor - avail + 1
+		}
+	}
+	t.scroll = min(max(t.scroll, 0), total-avail)
+	return t.scroll, t.scroll + avail
 }
 
 func (t *TreeModel) toggleCollapse() {
@@ -123,10 +277,9 @@ func (t *TreeModel) toggleCollapse() {
 	if t.cursor >= len(items) {
 		return
 	}
-	cur := items[t.cursor]
-	alias := cur.alias
+	alias := items[t.cursor].alias
 	t.collapsed[alias] = !t.collapsed[alias]
-	t.clamp()
+	t.focusRepo(alias)
 }
 
 func (t *TreeModel) collapseContaining() {
@@ -137,8 +290,8 @@ func (t *TreeModel) collapseContaining() {
 	alias := items[t.cursor].alias
 	if !t.collapsed[alias] {
 		t.collapsed[alias] = true
-		t.clamp()
 	}
+	t.focusRepo(alias)
 }
 
 func (t *TreeModel) expandContaining() {
@@ -149,8 +302,8 @@ func (t *TreeModel) expandContaining() {
 	alias := items[t.cursor].alias
 	if t.collapsed[alias] {
 		t.collapsed[alias] = false
-		t.clamp()
 	}
+	t.focusRepo(alias)
 }
 
 // selectWorktree moves the cursor onto the row for the named worktree, if it
@@ -175,16 +328,22 @@ func (t *TreeModel) selected() *item {
 	return &it
 }
 
-func (t *TreeModel) selectByRow(row int) {
+// selectByRow acts on the row at a viewport-relative offset (a mouse click).
+// Clicking an expanded repo header folds it, mirroring the space key; any other
+// selectable row just takes the cursor.
+func (t *TreeModel) selectByRow(visible int) {
 	items := t.items()
-	if row >= 0 && row < len(items) {
-		if items[row].isRepo {
-			t.collapsed[items[row].alias] = !t.collapsed[items[row].alias]
-			t.clamp()
-		} else {
-			t.cursor = row
-		}
+	row := t.scroll + visible
+	if row < 0 || row >= len(items) {
+		return
 	}
+	if items[row].isRepo && !t.collapsed[items[row].alias] {
+		t.collapsed[items[row].alias] = true
+		t.clamp()
+	} else {
+		t.cursor = row
+	}
+	t.follow = true
 }
 
 func (t *TreeModel) stats() string {
@@ -260,10 +419,12 @@ func refreshDirtyCmd(cfg *config.Config) tea.Cmd {
 	}
 }
 
-func (t *TreeModel) view(width int) string {
+func (t *TreeModel) view(width, avail int) string {
 	items := t.items()
 	var sb strings.Builder
-	for i, it := range items {
+	start, end := t.viewport(len(items), avail)
+	for i := start; i < end; i++ {
+		it := items[i]
 		selected := i == t.cursor
 		switch {
 		case it.isRepo:

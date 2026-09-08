@@ -9,6 +9,11 @@ type KeyMap struct {
 	OpenWith key.Binding
 	New      key.Binding
 	Delete   key.Binding
+	HalfDown key.Binding
+	HalfUp   key.Binding
+	Bottom   key.Binding
+	NextRepo key.Binding
+	PrevRepo key.Binding
 	Toggle   key.Binding
 	Collapse key.Binding
 	Expand   key.Binding
@@ -25,6 +30,11 @@ var DefaultKeyMap = KeyMap{
 	OpenWith: key.NewBinding(key.WithKeys("O"), key.WithHelp("O", "open with model")),
 	New:      key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "new worktree")),
 	Delete:   key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "delete")),
+	HalfDown: key.NewBinding(key.WithKeys("ctrl+d"), key.WithHelp("ctrl+d", "half page down")),
+	HalfUp:   key.NewBinding(key.WithKeys("ctrl+u"), key.WithHelp("ctrl+u", "half page up")),
+	Bottom:   key.NewBinding(key.WithKeys("G"), key.WithHelp("G", "last row")),
+	NextRepo: key.NewBinding(key.WithKeys("}", "]"), key.WithHelp("}", "next repo")),
+	PrevRepo: key.NewBinding(key.WithKeys("{", "["), key.WithHelp("{", "prev repo")),
 	Toggle:   key.NewBinding(key.WithKeys(" ", "tab"), key.WithHelp("space", "fold/unfold")),
 	Collapse: key.NewBinding(key.WithKeys("h", "left"), key.WithHelp("h/←", "collapse")),
 	Expand:   key.NewBinding(key.WithKeys("l", "right"), key.WithHelp("l/→", "expand")),

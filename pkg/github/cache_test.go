@@ -129,3 +129,48 @@ func TestCacheSaveCreatesDir(t *testing.T) {
 		t.Fatalf("cache file not created: %v", err)
 	}
 }
+
+func TestIsStaleTerminalStatusHeldLonger(t *testing.T) {
+	c := NewCache(filepath.Join(t.TempDir(), "pr.json"))
+	old := time.Now().Add(-time.Hour)
+
+	c.Set("merged", &PRInfo{Status: PRMerged, FetchedAt: old})
+	c.Set("closed", &PRInfo{Status: PRClosed, FetchedAt: old})
+	c.Set("open", &PRInfo{Status: PROpen, FetchedAt: old})
+	c.Set("none", &PRInfo{Status: PRNone, FetchedAt: old})
+
+	for _, branch := range []string{"merged", "closed"} {
+		if c.IsStale(branch, 15*time.Minute) {
+			t.Errorf("%s: terminal status should stay fresh past the ordinary maxAge", branch)
+		}
+	}
+	for _, branch := range []string{"open", "none"} {
+		if !c.IsStale(branch, 15*time.Minute) {
+			t.Errorf("%s: non-terminal status should be stale after maxAge", branch)
+		}
+	}
+}
+
+func TestIsStaleTerminalStatusExpires(t *testing.T) {
+	c := NewCache(filepath.Join(t.TempDir(), "pr.json"))
+	c.Set("merged", &PRInfo{Status: PRMerged, FetchedAt: time.Now().Add(-TerminalMaxAge - time.Minute)})
+	if !c.IsStale("merged", 15*time.Minute) {
+		t.Error("terminal status should go stale past TerminalMaxAge")
+	}
+}
+
+func TestKnowsPR(t *testing.T) {
+	c := NewCache(filepath.Join(t.TempDir(), "pr.json"))
+	c.Set("has-pr", &PRInfo{Number: 7, Status: PROpen, FetchedAt: time.Now()})
+	c.Set("no-pr", &PRInfo{Status: PRNone, FetchedAt: time.Now()})
+
+	if !c.KnowsPR("has-pr") {
+		t.Error("branch with a cached PR number should be known")
+	}
+	if c.KnowsPR("no-pr") {
+		t.Error("a cached PRNone entry names no PR")
+	}
+	if c.KnowsPR("never-seen") {
+		t.Error("uncached branch names no PR")
+	}
+}

@@ -102,17 +102,25 @@ Do not use bare `git branch -m` — it desyncs workbench config and the PR cache
 |-----|--------|
 | `j` / `↓` | Move down (skips repo headers) |
 | `k` / `↑` | Move up (skips repo headers) |
+| `Ctrl+d` / `Ctrl+u` | Half-page down/up |
+| `gg` / `G` | Jump to the first / last row |
+| `}` / `{` (or `]` / `[`) | Jump to the next / previous repo |
 | `Enter` / `o` | Open selected worktree |
 | `O` | Open with model picker |
 | `Space` / `Tab` | Collapse/expand repo |
 | `h` / `←` | Collapse containing repo |
 | `l` / `→` | Expand containing repo |
+| `zM` / `zR` | Collapse / expand **every** repo |
 | `n` | New worktree |
 | `d` | Delete worktree |
 | `A` | Add repo |
 | `r` | Refresh dirty status |
 | `?` | Toggle help (includes zellij primer) |
 | `q` / `Esc` | Quit (confirms in sidebar mode) |
+
+The list scrolls when it is taller than the pane. The mouse wheel scrolls it and a click selects a row (clicking an expanded repo header folds it); wheel scrolling pans the view without moving the cursor, and the view returns to the cursor on the next movement key.
+
+The cursor normally skips repo headers, but it does rest on a **collapsed** repo — that row is all there is to select. This is also what keeps folding a repo from pushing the cursor into a neighbouring one, and what keeps `zM` navigable.
 
 The sidebar shows a gamification stats box (cities visited, lifetime counters, streak, latest achievement) and a stats line at the bottom (repo count, worktree count, running/dirty/PR indicators) with context-sensitive key hints. Hide the stats box with `show_stats: false` in config.
 
@@ -124,7 +132,16 @@ The sidebar auto-restarts if it crashes or is accidentally quit — the layout w
 
 The sidebar re-reads the shared on-disk state (`config.yml` + `state.yml`) when its pane gains focus (e.g. switching back from a worktree tab) and periodically on its tick, so the worktree list, gamification stats, and `▶` running indicators stay consistent across tabs without pressing `r`. This local re-sync skips the network PR lookup that a full refresh (`r`) performs, so it's cheap enough to run on every focus change — long-lived sidebars no longer show a stale snapshot that another tab has since changed.
 
-PR status is fetched via the `gh` CLI (GitHub's GraphQL API) and cached on disk. If GitHub rate-limits the account, the sidebar shows a `gh rate limited` hint and pauses all PR fetches for 15 minutes before retrying, so it recovers on its own without draining the quota.
+PR status is fetched via the `gh` CLI (GitHub's GraphQL API) and cached on disk. Because there is one sidebar per Zellij tab, several things keep the shared 5,000/hour GraphQL quota from draining:
+
+- **Only one sidebar fetches per round.** The `gh` calls run under a cross-process try-lock (`~/.workbench/cache/pr-status.json.lock`); the tabs that lose the lock cede the round and pick up the cache the winner writes, so ten open tabs cost the same quota as one.
+- **Every sidebar re-reads the cache before fetching**, so a status another tab just looked up is reused instead of re-queried.
+- **Unpushed branches are never queried.** A branch with no `origin/<branch>` ref cannot have a PR, so no request is made for it. (A branch whose PR is already cached keeps refreshing either way, in case it was pushed from a clone this repo has never fetched.)
+- **Merged and closed PRs are cached for 24 hours.** Those states are final; only open/draft/no-PR branches refresh on the ordinary staleness window.
+
+If GitHub rate-limits the account anyway, the sidebar shows a `gh rate limited` hint and pauses all PR fetches for 15 minutes before retrying. The pause is persisted in the cache, so it survives sidebar restarts and applies to every tab, not just the one that hit the limit.
+
+Note that `gh api rate_limit` reports the **REST** (`core`) bucket, which is usually untouched. `gh pr list` spends the separate **GraphQL** bucket — check that one with `gh api graphql -f query='{rateLimit{used remaining resetAt}}'`.
 
 ### Offline support
 
@@ -350,11 +367,30 @@ supatree rm <name>                              # tear down all member worktrees
 
 ### Sidebar
 
-`supatree ls` (the sidebar in each supatree tab, and `supatree start`'s pane) is a TUI listing every supatree with its agents and member repos. Keys: `enter`/`o` open the selected agent/member, `space` fold/unfold the supatree (`h`/`l` or `←`/`→` collapse/expand), `a` add an agent, `n` new supatree, `s` sync, `d` delete, `r` refresh, `q` quit. When the list is taller than the pane it scrolls to keep the cursor in view.
+`supatree ls` (the sidebar in each supatree tab, and `supatree start`'s pane) is a TUI listing every supatree with its agents and member repos.
+
+| Key | Action |
+| --- | --- |
+| `j` / `k` (or `↓` / `↑`) | Move down/up (skips subheaders) |
+| `Ctrl+d` / `Ctrl+u` | Half-page down/up |
+| `gg` / `G` | Jump to the first / last row |
+| `}` / `{` (or `]` / `[`) | Jump to the next / previous supatree |
+| `Space` | Fold/unfold the selected supatree |
+| `h` / `l` (or `←` / `→`) | Collapse / expand the selected supatree |
+| `zM` / `zR` | Fold / unfold **every** supatree |
+| `Enter` / `o` | Open the selected agent or member repo |
+| `a` | Add an agent to the selected supatree |
+| `n` | New supatree |
+| `s` | Sync the selected supatree |
+| `d` | Delete the selected supatree |
+| `r` | Refresh (forces a PR status fetch) |
+| `q` | Quit (confirms in sidebar mode) |
+
+The mouse works too: the wheel scrolls the list and a click selects a row. Wheel scrolling pans the view without moving the cursor, so you can read further down the list and it stays put — the view snaps back to the cursor as soon as you press a movement key. When the list is taller than the pane it scrolls to keep the cursor in view.
 
 Pressing `n` prompts for a **name** (leave it blank to auto-generate a city name). If more than one stack is registered you first pick which stack from a list (`↑`/`↓` or `j`/`k` to move, `enter` to select, `esc` to cancel), then the name. After creation the cursor lands on the new supatree so it scrolls into view.
 
-Like the workbench sidebar, each supatree tab's sidebar marks the supatree that tab belongs to with a `▸` in the gutter ("you are here"), independent of the cursor. It re-reads live state when the pane regains focus and on its periodic tick, so newly created or removed supatrees appear across tabs without pressing `r`. PR status is fetched via `gh` and cached on disk; refreshes are rate-limited by a staleness window and pause for 15 minutes after a rate-limit response, so a churning or multi-tab sidebar doesn't drain the API quota.
+Like the workbench sidebar, each supatree tab's sidebar marks the supatree that tab belongs to with a `▸` in the gutter ("you are here"), independent of the cursor. It re-reads live state when the pane regains focus and on its periodic tick, so newly created or removed supatrees appear across tabs without pressing `r`. PR status is fetched via `gh` and cached on disk under the same quota discipline as the workbench sidebar (single-fetcher try-lock, cache re-read before fetching, no request for unpushed branches, 24h cache for merged/closed PRs, and a persisted 15-minute pause after a rate-limit response), so a churning or multi-tab sidebar doesn't drain the API quota.
 
 ### Agents
 

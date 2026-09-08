@@ -46,19 +46,25 @@ func (m *Model) View() string {
 	return b.String()
 }
 
-// viewport adjusts the scroll offset so the cursor stays visible and returns the
-// [start, end) row range to render. avail <= 0 (no reported size) or a list that
-// fits shows everything.
+// viewport returns the [start, end) row range to render, recording the visible
+// height for the paging and wheel handlers. While m.follow is set (any cursor
+// movement) it pulls the scroll offset along to keep the cursor visible; the
+// mouse wheel clears the flag so a scrolled-away view stays put across renders
+// and background ticks. avail <= 0 (no reported size) or a list that fits shows
+// everything.
 func (m *Model) viewport(avail int) (int, int) {
+	m.viewHeight = avail
 	if avail <= 0 || len(m.rows) <= avail {
 		m.scroll = 0
 		return 0, len(m.rows)
 	}
-	if m.cursor < m.scroll {
-		m.scroll = m.cursor
-	}
-	if m.cursor >= m.scroll+avail {
-		m.scroll = m.cursor - avail + 1
+	if m.follow {
+		if m.cursor < m.scroll {
+			m.scroll = m.cursor
+		}
+		if m.cursor >= m.scroll+avail {
+			m.scroll = m.cursor - avail + 1
+		}
 	}
 	if maxScroll := len(m.rows) - avail; m.scroll > maxScroll {
 		m.scroll = maxScroll
@@ -176,7 +182,7 @@ func (m *Model) footer() string {
 	if m.err != nil {
 		return stylePRClosed.Render("error: " + m.err.Error())
 	}
-	parts := []string{"enter open", "space fold", "a agent", "n new", "s sync", "d del", "r refresh", "q quit"}
+	parts := []string{"enter open", "space fold", "}/{ tree", "g/G ends", "a agent", "n new", "s sync", "d del", "r refresh", "q quit"}
 	if m.prHint != "" {
 		parts = append(parts, "("+m.prHint+")")
 	}

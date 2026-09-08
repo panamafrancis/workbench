@@ -67,6 +67,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.selectRow(row{kind: rowTree, tree: msg.reveal, label: msg.reveal})
 		}
 		return m, tea.Batch(m.refreshDirtyCmd(), m.refreshRunningCmd())
+	case tea.MouseMsg:
+		return m.updateMouse(msg)
 	case tea.KeyMsg:
 		if m.mode != modeNormal {
 			return m.updateInput(msg)
@@ -76,7 +78,44 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// updateMouse handles wheel scrolling (pans the viewport, leaving the cursor
+// where it is) and click-to-select. Written with ifs rather than a switch on
+// tea.MouseButton so it needn't enumerate every button the linter knows about.
+func (m *Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if m.mode != modeNormal {
+		return m, nil
+	}
+	switch {
+	case msg.Button == tea.MouseButtonWheelUp:
+		m.scrollBy(-wheelStep)
+	case msg.Button == tea.MouseButtonWheelDown:
+		m.scrollBy(wheelStep)
+	case msg.Button == tea.MouseButtonLeft && msg.Action == tea.MouseActionRelease:
+		m.selectByRow(msg.Y - rowsTopOffset)
+	}
+	return m, nil
+}
+
 func (m *Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Two-key vim sequences: gg (top), zM (fold all), zR (unfold all). A pending
+	// prefix consumes exactly one more key; an unrecognized pair cancels the
+	// prefix and the key is handled on its own below.
+	if m.pending != "" {
+		seq := m.pending + msg.String()
+		m.pending = ""
+		switch seq {
+		case "gg":
+			m.gotoTop()
+			return m, nil
+		case "zM":
+			m.setAllCollapsed(true)
+			return m, nil
+		case "zR":
+			m.setAllCollapsed(false)
+			return m, nil
+		}
+	}
+
 	switch msg.String() {
 	case "q", "ctrl+c":
 		if m.isSidebar && msg.String() == "q" {
@@ -88,6 +127,18 @@ func (m *Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.moveCursor(1)
 	case "k", "up":
 		m.moveCursor(-1)
+	case "g", "z":
+		m.pending = msg.String()
+	case "G":
+		m.gotoBottom()
+	case "}", "]":
+		m.jumpTree(1)
+	case "{", "[":
+		m.jumpTree(-1)
+	case "ctrl+d":
+		m.moveCursor(m.halfPage())
+	case "ctrl+u":
+		m.moveCursor(-m.halfPage())
 	case "r":
 		m.reloadWithSelection()
 		return m, tea.Batch(m.refreshDirtyCmd(), m.refreshRunningCmd(), m.fetchPRCmd(true))
@@ -219,6 +270,7 @@ func (m *Model) updateStackPick(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) moveCursor(delta int) {
+	m.follow = true
 	m.cursor += delta
 	for m.cursor >= 0 && m.cursor < len(m.rows) && m.rows[m.cursor].kind == rowSubheader {
 		m.cursor += delta
@@ -380,9 +432,16 @@ func (m *Model) fetchPRCmd(force bool) tea.Cmd {
 			if !mem.Exists {
 				continue
 			}
-			if force || m.prCache.IsStale(mem.Branch, prStaleAge) {
-				targets = append(targets, target{mem.Path, mem.Branch})
+			if !force && !m.prCache.IsStale(mem.Branch, prStaleAge) {
+				continue
 			}
+			// An unpushed branch cannot have a PR, so asking GitHub is a
+			// guaranteed-empty round trip. A branch whose PR is already cached
+			// keeps refreshing regardless.
+			if !m.prCache.KnowsPR(mem.Branch) && !git.HasRemoteBranch(mem.Path, mem.Branch) {
+				continue
+			}
+			targets = append(targets, target{mem.Path, mem.Branch})
 		}
 	}
 	if len(targets) == 0 {

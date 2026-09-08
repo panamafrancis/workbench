@@ -208,11 +208,15 @@ a tree of repos and worktrees with status indicators.
 
   j / ↓         move down (skips repo headers)
   k / ↑         move up (skips repo headers)
+  Ctrl+d/Ctrl+u half page down/up
+  gg / G        jump to the first / last row
+  } / { (]/[)   jump to the next / previous repo
   Enter / o     open selected worktree
   O             open with model picker
   Space / Tab   collapse/expand repo
   h / ←         collapse containing repo
   l / →         expand containing repo
+  zM / zR       collapse/expand every repo
   n             new worktree (in selected repo)
   d             delete worktree (confirms first)
   A             add repo
@@ -220,10 +224,19 @@ a tree of repos and worktrees with status indicators.
   ?             toggle help (includes Zellij primer)
   q / Esc       quit (confirms in sidebar mode)
 
+The cursor normally skips repo headers, but it does rest on a *collapsed*
+repo — that row is all there is to select, and it keeps folding from pushing
+the cursor into a neighbouring repo.
+
 ## Mouse
 
-  Click repo header    collapse/expand
-  Click worktree row   select
+  Wheel                scroll the list (cursor stays put)
+  Click repo header    collapse
+  Click row            select
+
+The list scrolls when it is taller than the pane. Wheel scrolling pans the
+view without moving the cursor; the view returns to the cursor on the next
+movement key.
 
 ## Status indicators
 
