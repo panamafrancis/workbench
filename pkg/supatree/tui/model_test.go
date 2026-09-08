@@ -285,3 +285,204 @@ func TestActiveTreeMarkerInView(t *testing.T) {
 		t.Errorf("active-tree marker missing from view:\n%s", out)
 	}
 }
+
+// Tree names shared by the navigation tests.
+const (
+	berlin = "berlin"
+	cairo  = "cairo"
+	delhi  = "delhi"
+)
+
+// threeTrees builds a model holding three synthetic supatrees, each with two
+// member repos, for the navigation tests.
+func threeTrees(t *testing.T) *Model {
+	t.Helper()
+	t.Setenv("HOME", t.TempDir())
+	m := New(supatree.DefaultConfig(), config.DefaultConfig(), zellij.Workspace{})
+	for _, name := range []string{berlin, cairo, delhi} {
+		m.insts = append(m.insts, &supatree.Instance{
+			Name: name, Slug: name,
+			Members: []supatree.Member{
+				{Alias: "terraform", Branch: "st/" + name + "/terraform"},
+				{Alias: "keystone", Branch: "st/" + name + "/keystone"},
+			},
+		})
+	}
+	m.rebuildRows()
+	return m
+}
+
+func treeAt(m *Model, i int) string {
+	if i < 0 || i >= len(m.rows) {
+		return ""
+	}
+	return m.rows[i].tree
+}
+
+func TestGotoTopAndBottom(t *testing.T) {
+	m := threeTrees(t)
+
+	m.cursor = 5
+	if _, _ = m.Update(key("G")); m.cursor != len(m.rows)-1 {
+		t.Fatalf("G: cursor = %d, want %d", m.cursor, len(m.rows)-1)
+	}
+
+	// gg is a two-key sequence: the first g only arms the prefix.
+	_, _ = m.Update(key("g"))
+	if m.pending != "g" {
+		t.Fatalf("first g did not arm the prefix: pending = %q", m.pending)
+	}
+	if m.cursor == 0 {
+		t.Fatal("a lone g must not move the cursor")
+	}
+	_, _ = m.Update(key("g"))
+	if m.cursor != 0 {
+		t.Fatalf("gg: cursor = %d, want 0", m.cursor)
+	}
+	if m.pending != "" {
+		t.Fatalf("prefix not cleared: %q", m.pending)
+	}
+}
+
+// An unrecognized second key cancels the prefix and is handled on its own, so a
+// mistyped g doesn't swallow the next command.
+func TestPendingPrefixFallsThrough(t *testing.T) {
+	m := threeTrees(t)
+	m.cursor = 0
+	_, _ = m.Update(key("g"))
+	_, _ = m.Update(key("j"))
+	if m.pending != "" {
+		t.Fatalf("prefix not cleared: %q", m.pending)
+	}
+	if m.cursor == 0 {
+		t.Fatal("j after a cancelled g prefix should still move down")
+	}
+}
+
+func TestJumpTreeMovesBetweenSupatrees(t *testing.T) {
+	m := threeTrees(t)
+	m.cursor = 0 // berlin's tree row
+
+	_, _ = m.Update(key("}"))
+	if got := treeAt(m, m.cursor); got != cairo || m.rows[m.cursor].kind != rowTree {
+		t.Fatalf("} from berlin landed on %q (kind %v), want cairo tree row", got, m.rows[m.cursor].kind)
+	}
+	_, _ = m.Update(key("}"))
+	if got := treeAt(m, m.cursor); got != delhi {
+		t.Fatalf("} again landed on %q, want delhi", got)
+	}
+	// Past the last tree the cursor stays put rather than falling off the end.
+	_, _ = m.Update(key("}"))
+	if got := treeAt(m, m.cursor); got != delhi {
+		t.Fatalf("} past the last tree moved to %q", got)
+	}
+	_, _ = m.Update(key("{"))
+	if got := treeAt(m, m.cursor); got != cairo {
+		t.Fatalf("{ landed on %q, want cairo", got)
+	}
+}
+
+// From inside a tree, { goes to that tree's own header first — "up one level"
+// before "up one tree".
+func TestJumpTreeBackwardFromMemberRow(t *testing.T) {
+	m := threeTrees(t)
+	m.selectRow(row{kind: rowMember, tree: cairo, label: "keystone", alias: "keystone"})
+	_, _ = m.Update(key("{"))
+	if got := treeAt(m, m.cursor); got != cairo || m.rows[m.cursor].kind != rowTree {
+		t.Fatalf("{ from a cairo member landed on %q (kind %v), want cairo tree row", got, m.rows[m.cursor].kind)
+	}
+}
+
+func TestFoldAllAndUnfoldAll(t *testing.T) {
+	m := threeTrees(t)
+	full := len(m.rows)
+
+	_, _ = m.Update(key("z"))
+	_, _ = m.Update(key("M"))
+	if len(m.rows) != 3 {
+		t.Fatalf("zM: %d rows, want 3 (one per collapsed tree)", len(m.rows))
+	}
+	for _, name := range []string{berlin, cairo, delhi} {
+		if !m.collapsed[name] {
+			t.Errorf("zM did not collapse %s", name)
+		}
+	}
+
+	_, _ = m.Update(key("z"))
+	_, _ = m.Update(key("R"))
+	if len(m.rows) != full {
+		t.Fatalf("zR: %d rows, want %d", len(m.rows), full)
+	}
+}
+
+// The wheel pans the viewport without moving the cursor, and the view stays
+// where it was left instead of snapping back on the next render.
+func TestWheelScrollsWithoutMovingCursor(t *testing.T) {
+	m := threeTrees(t)
+	m.cursor = 0
+	m.viewport(5) // establish viewHeight
+
+	_, _ = m.Update(tea.MouseMsg{Button: tea.MouseButtonWheelDown, Action: tea.MouseActionPress})
+	if m.cursor != 0 {
+		t.Fatalf("wheel moved the cursor to %d", m.cursor)
+	}
+	if m.scroll != wheelStep {
+		t.Fatalf("scroll = %d, want %d", m.scroll, wheelStep)
+	}
+	if start, _ := m.viewport(5); start != wheelStep {
+		t.Fatalf("render snapped back to the cursor: start = %d", start)
+	}
+
+	// Wheeling up past the top clamps rather than going negative.
+	for range 5 {
+		_, _ = m.Update(tea.MouseMsg{Button: tea.MouseButtonWheelUp, Action: tea.MouseActionPress})
+	}
+	if m.scroll != 0 {
+		t.Fatalf("scroll = %d, want 0", m.scroll)
+	}
+
+	// A cursor move re-arms follow, pulling the window back to the cursor.
+	m.scroll = 10
+	m.follow = false
+	_, _ = m.Update(key("j"))
+	start, end := m.viewport(5)
+	if m.cursor < start || m.cursor >= end {
+		t.Fatalf("cursor %d outside viewport [%d,%d) after a key press", m.cursor, start, end)
+	}
+}
+
+func TestClickSelectsRow(t *testing.T) {
+	m := threeTrees(t)
+	m.cursor = 0
+	m.viewport(50) // everything visible, scroll 0
+
+	// Row index 4 is berlin's first member (tree, agents, main, repositories, ...).
+	_, _ = m.Update(tea.MouseMsg{
+		Button: tea.MouseButtonLeft, Action: tea.MouseActionRelease, Y: 4 + rowsTopOffset,
+	})
+	if m.cursor != 4 {
+		t.Fatalf("click selected row %d, want 4", m.cursor)
+	}
+
+	// Clicking a subheader is ignored — the cursor never rests on one.
+	_, _ = m.Update(tea.MouseMsg{
+		Button: tea.MouseButtonLeft, Action: tea.MouseActionRelease, Y: 1 + rowsTopOffset,
+	})
+	if m.cursor != 4 {
+		t.Fatalf("click on a subheader moved the cursor to %d", m.cursor)
+	}
+}
+
+// A background reload (tick/focus) must not yank a wheel-scrolled view back to
+// the cursor — that would make the sidebar unreadable while scrolling.
+func TestReloadKeepsScrollPosition(t *testing.T) {
+	m := threeTrees(t)
+	m.cursor = 0
+	m.viewport(5)
+	m.scrollBy(wheelStep)
+
+	m.reloadWithSelection()
+	if m.follow {
+		t.Fatal("reload re-armed follow, which would snap the view back to the cursor")
+	}
+}

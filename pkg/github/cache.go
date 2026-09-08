@@ -112,12 +112,38 @@ func (c *Cache) InBackoff(now time.Time) bool {
 	return now.Before(c.retryAfter)
 }
 
+// TerminalMaxAge is the floor on how long a merged or closed PR status is
+// trusted. Those states are final, so re-checking them on the ordinary
+// staleness schedule is pure GitHub-quota burn — most cached branches sit in a
+// terminal state, and each sidebar re-fetched every one of them several times
+// an hour. A forced refresh bypasses IsStale entirely, so the user can still
+// pull a fresh status for a reused branch name.
+const TerminalMaxAge = 24 * time.Hour
+
+func isTerminal(s PRStatus) bool {
+	return s == PRMerged || s == PRClosed
+}
+
+// KnowsPR reports whether the cache holds an entry for branch that names an
+// actual PR. Callers use it to keep refreshing a PR they have already seen even
+// when the local repo has no remote-tracking ref for its branch (e.g. it was
+// pushed from another clone and never fetched here).
+func (c *Cache) KnowsPR(branch string) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	info, ok := c.entries[branch]
+	return ok && info.Number != 0
+}
+
 func (c *Cache) IsStale(branch string, maxAge time.Duration) bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	info, ok := c.entries[branch]
 	if !ok {
 		return true
+	}
+	if isTerminal(info.Status) && maxAge < TerminalMaxAge {
+		maxAge = TerminalMaxAge
 	}
 	return time.Since(info.FetchedAt) > maxAge
 }

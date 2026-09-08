@@ -27,6 +27,14 @@ const (
 	// rateLimitCooldown suppresses all GitHub fetches after a rate-limit
 	// response. Persisted via the cache so it survives sidebar restarts.
 	rateLimitCooldown = 15 * time.Minute
+	// wheelStep is how many rows one mouse-wheel notch scrolls.
+	wheelStep = 3
+	// fallbackPage is the half-page distance used by ctrl+d/ctrl+u before the
+	// pane has reported its size.
+	fallbackPage = 5
+	// rowsTopOffset is the number of lines View renders above the first row (the
+	// "supatree" header). Mouse Y coordinates are translated through it.
+	rowsTopOffset = 1
 )
 
 type mode int
@@ -71,7 +79,10 @@ type Model struct {
 	isSidebar   bool
 	width       int
 	height      int
-	scroll      int // index of the first rendered row (viewport top)
+	scroll      int    // index of the first rendered row (viewport top)
+	viewHeight  int    // rows the viewport last rendered; drives ctrl+d/ctrl+u and wheel clamping
+	follow      bool   // keep the cursor in view on the next render (false while wheel-scrolled away)
+	pending     string // half-typed multi-key sequence ("g" or "z")
 	mode        mode
 	input       textinput.Model
 	actionTree  string // tree targeted by the active input mode
@@ -98,6 +109,7 @@ func New(stCfg *supatree.Config, wbCfg *config.Config, ws zellij.Workspace) *Mod
 		openTabs:    map[string]bool{},
 		collapsed:   map[string]bool{},
 		ghAvailable: true,
+		follow:      true,
 		isSidebar:   os.Getenv("SUPATREE_SIDEBAR") == "1",
 		activeTree:  treeFromTab(os.Getenv("SUPATREE_ACTIVE_TREE")),
 		input:       textinput.New(),
@@ -148,6 +160,91 @@ func (m *Model) setCollapse(tree string, collapsed bool) {
 	m.collapsed[tree] = collapsed
 	m.rebuildRows()
 	m.selectRow(row{kind: rowTree, tree: tree, label: tree})
+	m.follow = true
+}
+
+// setAllCollapsed folds or unfolds every supatree at once (vim's zM / zR),
+// keeping the cursor on the supatree it was already in.
+func (m *Model) setAllCollapsed(collapsed bool) {
+	cur := ""
+	if r := m.selected(); r != nil {
+		cur = r.tree
+	}
+	for _, inst := range m.insts {
+		m.collapsed[inst.Name] = collapsed
+	}
+	m.rebuildRows()
+	if cur != "" {
+		m.selectRow(row{kind: rowTree, tree: cur, label: cur})
+	}
+	m.follow = true
+}
+
+// gotoTop / gotoBottom are vim's gg and G.
+func (m *Model) gotoTop() {
+	m.cursor = 0
+	m.clampCursor()
+	m.follow = true
+}
+
+func (m *Model) gotoBottom() {
+	m.cursor = len(m.rows) - 1
+	m.clampCursor()
+	m.follow = true
+}
+
+// jumpTree moves the cursor to the next (delta > 0) or previous (delta < 0)
+// supatree header row — vim's paragraph motions over the tree blocks. A jump
+// backwards from inside a tree lands on that tree's own header first, which is
+// what "go up one tree" means when the cursor sits on an agent or member row.
+func (m *Model) jumpTree(delta int) {
+	for i := m.cursor + delta; i >= 0 && i < len(m.rows); i += delta {
+		if m.rows[i].kind == rowTree {
+			m.cursor = i
+			m.follow = true
+			return
+		}
+	}
+}
+
+// halfPage is the ctrl+d / ctrl+u distance: half the visible rows, or a fixed
+// fallback before the pane has reported its size.
+func (m *Model) halfPage() int {
+	if m.viewHeight <= 0 {
+		return fallbackPage
+	}
+	if half := m.viewHeight / 2; half > 0 {
+		return half
+	}
+	return 1
+}
+
+// scrollBy pans the viewport without moving the cursor (mouse wheel). It clears
+// the follow flag so the view stays where the user left it instead of snapping
+// back to the cursor on the next render or tick.
+func (m *Model) scrollBy(delta int) {
+	if m.viewHeight <= 0 || len(m.rows) <= m.viewHeight {
+		return
+	}
+	m.follow = false
+	m.scroll += delta
+	if maxScroll := len(m.rows) - m.viewHeight; m.scroll > maxScroll {
+		m.scroll = maxScroll
+	}
+	if m.scroll < 0 {
+		m.scroll = 0
+	}
+}
+
+// selectByRow moves the cursor to the row at a viewport-relative offset (a mouse
+// click). Subheaders are not selectable, so a click on one is ignored.
+func (m *Model) selectByRow(visible int) {
+	i := m.scroll + visible
+	if i < 0 || i >= len(m.rows) || m.rows[i].kind == rowSubheader {
+		return
+	}
+	m.cursor = i
+	m.follow = true
 }
 
 // treeFromTab extracts the supatree name from a Zellij tab identity, which is

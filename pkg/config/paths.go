@@ -30,6 +30,13 @@ func PRCachePath() string {
 	return filepath.Join(CacheDir(), "pr-status.json")
 }
 
+// PRCacheLockPath serializes gh PR fetches across the independent sidebar
+// processes (one per Zellij tab) so only one of them fetches per round instead
+// of all of them hitting the GitHub GraphQL API at once.
+func PRCacheLockPath() string {
+	return PRCachePath() + ".lock"
+}
+
 func StatePath() string {
 	return filepath.Join(ConfigDir(), "state.yml")
 }
