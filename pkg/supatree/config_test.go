@@ -5,6 +5,13 @@ import (
 	"time"
 )
 
+// Member aliases used by the fixtures throughout this package's tests.
+const (
+	aliasAdmin     = "admin"
+	aliasKeystone  = "keystone"
+	aliasTerraform = "terraform"
+)
+
 func TestConfigRoundTrip(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	c := DefaultConfig()
@@ -61,16 +68,16 @@ func TestMetaRoundTrip(t *testing.T) {
 	if got.Name != "berlin" || got.Slug != "berlin" || got.Model != "claude" {
 		t.Errorf("meta round-trip mismatch: %+v", got)
 	}
-	if got.MemberBranch("terraform") != "st/berlin/terraform" {
-		t.Errorf("MemberBranch = %q", got.MemberBranch("terraform"))
+	if got.MemberBranch(aliasTerraform) != "st/berlin/terraform" {
+		t.Errorf("MemberBranch = %q", got.MemberBranch(aliasTerraform))
 	}
 }
 
 func TestSpecOrderedMembers(t *testing.T) {
 	root := t.TempDir()
 	spec := &Spec{
-		Members: []string{"admin", "keystone", "terraform"},
-		Deps:    map[string][]string{"keystone": {"terraform"}, "admin": {"keystone"}},
+		Members: []string{aliasAdmin, aliasKeystone, aliasTerraform},
+		Deps:    map[string][]string{aliasKeystone: {aliasTerraform}, aliasAdmin: {aliasKeystone}},
 	}
 	if err := SaveSpec(root, spec); err != nil {
 		t.Fatal(err)
@@ -83,7 +90,7 @@ func TestSpecOrderedMembers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"terraform", "keystone", "admin"}
+	want := []string{aliasTerraform, aliasKeystone, aliasAdmin}
 	for i := range want {
 		if ordered[i] != want[i] {
 			t.Fatalf("OrderedMembers() = %v, want %v", ordered, want)

@@ -23,11 +23,7 @@ import (
 
 const (
 	tickInterval  = 60 * time.Second
-	activeMaxAge  = 5 * time.Minute
 	visibleMaxAge = 15 * time.Minute
-	// rateLimitCooldown suppresses all GitHub fetches after a rate-limit
-	// error. Persisted in the PR cache so it survives sidebar restarts.
-	rateLimitCooldown = 15 * time.Minute
 	// wheelStep is how many rows one mouse-wheel notch scrolls.
 	wheelStep = 3
 	// fallbackPage is the half-page distance used by ctrl+d/ctrl+u before the
@@ -59,18 +55,17 @@ type runningMsg struct {
 }
 
 type prBatchDoneMsg struct {
-	ghErr error
+	// deferred counts branches the round left unresolved to stay above the
+	// shared rate-limit reserve, so the footer can say why a status is missing
+	// rather than leaving the user to wonder.
+	deferred int
+	ghErr    error
 }
 
 // prSkippedMsg is emitted when a fetch round was ceded to another sidebar
 // process holding the PR-cache lock. It only clears the in-flight flag — the
 // hints stay as they were, since nothing was learned this round.
 type prSkippedMsg struct{}
-
-type fetchTarget struct {
-	repoPath string
-	branch   string
-}
 
 type inputMode int
 
@@ -261,6 +256,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case msg.ghErr == nil:
 			m.ghAvailable = true
 			m.ghHint = ""
+			if msg.deferred > 0 {
+				m.ghHint = "gh quota low"
+			}
 		case github.IsPermanentError(msg.ghErr):
 			m.ghAvailable = false
 			if errors.Is(msg.ghErr, github.ErrGHNotFound) {
@@ -378,7 +376,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch seq {
 			case "gg":
 				m.tree.gotoTop()
-				return m, m.fetchIfUncached()
+				return m, nil
 			case "zM":
 				m.tree.setAllCollapsed(true)
 				return m, nil
@@ -400,27 +398,24 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, tea.Quit
 		case key.Matches(msg, m.keys.Up):
-			prev := m.tree.cursor
 			m.tree.moveUp()
-			if m.tree.cursor != prev {
-				return m, m.fetchIfUncached()
-			}
 		case key.Matches(msg, m.keys.Down):
-			prev := m.tree.cursor
 			m.tree.moveDown()
-			if m.tree.cursor != prev {
-				return m, m.fetchIfUncached()
-			}
 		case key.Matches(msg, m.keys.HalfDown):
-			return m, m.movedCmd(func() { m.tree.moveBy(m.tree.halfPage()) })
+			m.tree.moveBy(m.tree.halfPage())
+			return m, nil
 		case key.Matches(msg, m.keys.HalfUp):
-			return m, m.movedCmd(func() { m.tree.moveBy(-m.tree.halfPage()) })
+			m.tree.moveBy(-m.tree.halfPage())
+			return m, nil
 		case key.Matches(msg, m.keys.Bottom):
-			return m, m.movedCmd(m.tree.gotoBottom)
+			m.tree.gotoBottom()
+			return m, nil
 		case key.Matches(msg, m.keys.NextRepo):
-			return m, m.movedCmd(func() { m.tree.jumpRepo(1) })
+			m.tree.jumpRepo(1)
+			return m, nil
 		case key.Matches(msg, m.keys.PrevRepo):
-			return m, m.movedCmd(func() { m.tree.jumpRepo(-1) })
+			m.tree.jumpRepo(-1)
+			return m, nil
 		case key.Matches(msg, m.keys.Collapse):
 			m.tree.collapseContaining()
 		case key.Matches(msg, m.keys.Expand):
@@ -961,36 +956,26 @@ func (m *Model) helpView() string {
 	return strings.Join(lines, "\n")
 }
 
-// movedCmd runs a cursor movement and, if the cursor actually moved, fetches the
-// newly selected worktree's PR status when it isn't cached yet — the same
-// follow-up the j/k handlers do.
-func (m *Model) movedCmd(move func()) tea.Cmd {
-	prev := m.tree.cursor
-	move()
-	if m.tree.cursor == prev {
-		return nil
-	}
-	return m.fetchIfUncached()
-}
-
 func (m *Model) tickCmd() tea.Cmd {
 	return tea.Tick(tickInterval, func(t time.Time) tea.Msg {
 		return tickMsg(t)
 	})
 }
 
+// fetchVisibleCmd refreshes PR status for the worktrees on screen. The round
+// itself lives in github.Sync — one conditional poll per repo, which costs
+// nothing when the repo has not changed — and runs inside Cache.TryMutate, so
+// only one sidebar per machine fetches per round and its writes merge into
+// whatever peers wrote meanwhile.
 func (m *Model) fetchVisibleCmd(force bool) tea.Cmd {
 	if m.fetching {
 		return nil
 	}
 	// Re-read the on-disk cache first so this long-lived sidebar picks up the
-	// statuses (and backoff) another tab's sidebar persisted — otherwise every
-	// tab independently re-fetches every branch on its own schedule, and the
-	// GitHub GraphQL quota is consumed N times over for N open tabs. Safe here
-	// because the m.fetching guard above rules out an in-flight writer.
+	// statuses (and backoff) another tab's sidebar persisted.
 	if m.prCache != nil {
 		_ = m.prCache.Load()
-		if m.prCache.InBackoff(time.Now()) {
+		if m.prCache.InBackoff(github.ResourceCore, time.Now()) {
 			// A peer tab may have armed the backoff; surface the hint here too so
 			// every tab signals that fetches are paused, not just the one that hit
 			// the limit.
@@ -999,42 +984,17 @@ func (m *Model) fetchVisibleCmd(force bool) tea.Cmd {
 		}
 	}
 
-	maxAge := visibleMaxAge
-	if force {
-		maxAge = 0
-	}
-
-	var targets []fetchTarget
-	sel := m.tree.selected()
+	// Targets are simply what the user can see: which of them actually need a
+	// request is Sync's decision, not the sidebar's.
+	var targets []github.Target
 	for _, r := range m.cfg.Repos {
 		if m.tree.collapsed[r.Alias] {
 			continue
 		}
-		for wi, w := range r.Worktrees {
-			age := maxAge
-			if sel != nil && !sel.isRepo && sel.repoIdx < len(m.cfg.Repos) && sel.worktreeIdx == wi {
-				repo := m.cfg.Repos[sel.repoIdx]
-				if repo.Alias == r.Alias {
-					age = activeMaxAge
-				}
-			}
-			if !force && !m.prCache.IsStale(w.Branch, age) {
-				continue
-			}
-			// An unpushed branch cannot have a PR, so asking GitHub is a
-			// guaranteed-empty round trip. Most worktrees sit in this state. A
-			// branch whose PR is already cached keeps refreshing regardless, in
-			// case it was pushed from a clone this repo has never fetched.
-			if !m.prCache.KnowsPR(w.Branch) && !git.HasRemoteBranch(r.LocalPath, w.Branch) {
-				continue
-			}
-			targets = append(targets, fetchTarget{
-				repoPath: r.LocalPath,
-				branch:   w.Branch,
-			})
+		for _, w := range r.Worktrees {
+			targets = append(targets, github.Target{RepoPath: r.LocalPath, Branch: w.Branch})
 		}
 	}
-
 	if len(targets) == 0 {
 		return nil
 	}
@@ -1042,45 +1002,15 @@ func (m *Model) fetchVisibleCmd(force bool) tea.Cmd {
 	m.fetching = true
 	cache := m.prCache
 	return func() tea.Msg {
-		// prSkippedMsg unless we win the lock and actually run a fetch below.
-		var result tea.Msg = prSkippedMsg{}
-		lockErr := config.TryFileLock(config.PRCacheLockPath(), func() error {
-			// Under the lock, re-read the cache: while we queued to build targets
-			// another tab may have populated statuses or armed a backoff.
-			_ = cache.Load()
-			if cache.InBackoff(time.Now()) {
-				return nil
-			}
-			var lastErr error
-			for _, t := range targets {
-				// A peer that just held the lock may have refreshed this branch;
-				// don't re-fetch what is already fresh.
-				if !force && !cache.IsStale(t.branch, visibleMaxAge) {
-					continue
-				}
-				info, err := github.LookupPR(t.repoPath, t.branch)
-				if err != nil {
-					lastErr = err
-					if github.IsPermanentError(err) {
-						_ = cache.Save()
-						result = prBatchDoneMsg{ghErr: err}
-						return nil
-					}
-					if github.IsRateLimited(err) {
-						cache.SetRetryAfter(time.Now().Add(rateLimitCooldown))
-						_ = cache.Save()
-						result = prBatchDoneMsg{ghErr: err}
-						return nil
-					}
-					continue
-				}
-				cache.Set(t.branch, info)
-			}
-			_ = cache.Save()
-			result = prBatchDoneMsg{ghErr: lastErr}
+		var report github.SyncReport
+		lockErr := cache.TryMutate(func(w *github.Writable) error {
+			report = github.Sync(w, targets, github.SyncOptions{
+				MaxAge: visibleMaxAge,
+				Force:  force,
+			})
 			return nil
 		})
-		if errors.Is(lockErr, config.ErrLockBusy) {
+		if errors.Is(lockErr, github.ErrLockBusy) {
 			// Another sidebar owns this round; cede and let the next tick pick up
 			// the cache it writes.
 			return prSkippedMsg{}
@@ -1088,44 +1018,10 @@ func (m *Model) fetchVisibleCmd(force bool) tea.Cmd {
 		if lockErr != nil {
 			return prBatchDoneMsg{ghErr: lockErr}
 		}
-		return result
+		return prBatchDoneMsg{ghErr: report.Err, deferred: report.Deferred}
 	}
 }
 
 func (m *Model) fetchStaleCmd() tea.Cmd {
 	return m.fetchVisibleCmd(false)
-}
-
-func (m *Model) fetchIfUncached() tea.Cmd {
-	if m.fetching || !m.ghAvailable {
-		return nil
-	}
-	if m.prCache != nil && m.prCache.InBackoff(time.Now()) {
-		return nil
-	}
-	sel := m.tree.selected()
-	if sel == nil || sel.isRepo || sel.isPlaceholder {
-		return nil
-	}
-	w := m.cfg.Repos[sel.repoIdx].Worktrees[sel.worktreeIdx]
-	if m.prCache.Get(w.Branch) != nil {
-		return nil
-	}
-	r := m.cfg.Repos[sel.repoIdx]
-	if !m.prCache.KnowsPR(w.Branch) && !git.HasRemoteBranch(r.LocalPath, w.Branch) {
-		return nil
-	}
-	m.fetching = true
-	cache := m.prCache
-	branch := w.Branch
-	repoPath := r.LocalPath
-	return func() tea.Msg {
-		info, err := github.LookupPR(repoPath, branch)
-		if err != nil {
-			return prBatchDoneMsg{ghErr: err}
-		}
-		cache.Set(branch, info)
-		_ = cache.Save()
-		return prBatchDoneMsg{}
-	}
 }

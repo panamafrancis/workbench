@@ -24,9 +24,6 @@ const (
 	// sidebar's restart loop (and per-tab sidebars) from exhausting the gh
 	// rate limit.
 	prStaleAge = 10 * time.Minute
-	// rateLimitCooldown suppresses all GitHub fetches after a rate-limit
-	// response. Persisted via the cache so it survives sidebar restarts.
-	rateLimitCooldown = 15 * time.Minute
 	// wheelStep is how many rows one mouse-wheel notch scrolls.
 	wheelStep = 3
 	// fallbackPage is the half-page distance used by ctrl+d/ctrl+u before the
@@ -326,7 +323,12 @@ func (m *Model) tickCmd() tea.Cmd {
 type tickMsg struct{}
 type dirtyMsg struct{ dirty map[string]bool }
 type runningMsg struct{ tabs map[string]bool }
-type prMsg struct{ err error }
+type prMsg struct {
+	err error
+	// deferred counts branches held back to stay above the shared rate-limit
+	// reserve; the footer surfaces it so a missing status has a reason.
+	deferred int
+}
 
 // prSkippedMsg is emitted when a fetch round was ceded to another sidebar
 // process (the shared fetch lock was busy); it only clears the in-flight flag,

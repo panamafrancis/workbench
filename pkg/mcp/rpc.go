@@ -13,6 +13,10 @@ import (
 
 const toolTimeout = 120 * time.Second
 
+// jsonRPCVersion is the JSON-RPC version string every request and response
+// carries; MCP pins it to 2.0.
+const jsonRPCVersion = "2.0"
+
 // ToolContext returns a context with the standard per-tool-call timeout. Tool
 // handlers that shell out should derive their exec context from it.
 func ToolContext() (context.Context, context.CancelFunc) {
@@ -116,7 +120,7 @@ func (s *Server) Run() error {
 		var req request
 		if err := json.Unmarshal(line, &req); err != nil {
 			_ = enc.Encode(&response{
-				JSONRPC: "2.0",
+				JSONRPC: jsonRPCVersion,
 				ID:      nil,
 				Error:   &rpcError{Code: -32700, Message: "parse error"},
 			})
@@ -138,7 +142,7 @@ func (s *Server) handle(req request) *response {
 	switch req.Method {
 	case "initialize":
 		return &response{
-			JSONRPC: "2.0",
+			JSONRPC: jsonRPCVersion,
 			ID:      req.ID,
 			Result: map[string]any{
 				"protocolVersion": "2024-11-05",
@@ -154,23 +158,23 @@ func (s *Server) handle(req request) *response {
 		}
 
 	case "ping":
-		return &response{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{}}
+		return &response{JSONRPC: jsonRPCVersion, ID: req.ID, Result: map[string]any{}}
 
 	case "tools/list":
-		return &response{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{"tools": s.toolDescs()}}
+		return &response{JSONRPC: jsonRPCVersion, ID: req.ID, Result: map[string]any{"tools": s.toolDescs()}}
 
 	case "tools/call":
 		return s.handleToolCall(req)
 
 	case "prompts/list":
-		return &response{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{"prompts": s.promptDescs()}}
+		return &response{JSONRPC: jsonRPCVersion, ID: req.ID, Result: map[string]any{"prompts": s.promptDescs()}}
 
 	case "prompts/get":
 		return s.handlePromptGet(req)
 
 	default:
 		return &response{
-			JSONRPC: "2.0",
+			JSONRPC: jsonRPCVersion,
 			ID:      req.ID,
 			Error:   &rpcError{Code: -32601, Message: "method not found: " + req.Method},
 		}
@@ -189,7 +193,7 @@ func (s *Server) handleToolCall(req request) *response {
 	var params toolCallParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		return &response{
-			JSONRPC: "2.0",
+			JSONRPC: jsonRPCVersion,
 			ID:      req.ID,
 			Error:   &rpcError{Code: -32602, Message: "invalid params"},
 		}
@@ -204,7 +208,7 @@ func (s *Server) handleToolCall(req request) *response {
 	}
 	if tool == nil {
 		return &response{
-			JSONRPC: "2.0",
+			JSONRPC: jsonRPCVersion,
 			ID:      req.ID,
 			Error:   &rpcError{Code: -32602, Message: "unknown tool: " + params.Name},
 		}
@@ -232,7 +236,7 @@ func (s *Server) handlePromptGet(req request) *response {
 	var params promptGetParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		return &response{
-			JSONRPC: "2.0",
+			JSONRPC: jsonRPCVersion,
 			ID:      req.ID,
 			Error:   &rpcError{Code: -32602, Message: "invalid params"},
 		}
@@ -241,7 +245,7 @@ func (s *Server) handlePromptGet(req request) *response {
 	for _, p := range s.Prompts {
 		if p.Name == params.Name {
 			return &response{
-				JSONRPC: "2.0",
+				JSONRPC: jsonRPCVersion,
 				ID:      req.ID,
 				Result: map[string]any{
 					"messages": []promptMessage{
@@ -252,7 +256,7 @@ func (s *Server) handlePromptGet(req request) *response {
 		}
 	}
 	return &response{
-		JSONRPC: "2.0",
+		JSONRPC: jsonRPCVersion,
 		ID:      req.ID,
 		Error:   &rpcError{Code: -32602, Message: "unknown prompt: " + params.Name},
 	}
@@ -260,7 +264,7 @@ func (s *Server) handlePromptGet(req request) *response {
 
 func textResult(id json.RawMessage, text string, isError bool) *response {
 	return &response{
-		JSONRPC: "2.0",
+		JSONRPC: jsonRPCVersion,
 		ID:      id,
 		Result: toolResult{
 			Content: []contentBlock{{Type: "text", Text: text}},

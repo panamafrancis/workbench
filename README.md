@@ -132,16 +132,19 @@ The sidebar auto-restarts if it crashes or is accidentally quit — the layout w
 
 The sidebar re-reads the shared on-disk state (`config.yml` + `state.yml`) when its pane gains focus (e.g. switching back from a worktree tab) and periodically on its tick, so the worktree list, gamification stats, and `▶` running indicators stay consistent across tabs without pressing `r`. This local re-sync skips the network PR lookup that a full refresh (`r`) performs, so it's cheap enough to run on every focus change — long-lived sidebars no longer show a stale snapshot that another tab has since changed.
 
-PR status is fetched via the `gh` CLI (GitHub's GraphQL API) and cached on disk. Because there is one sidebar per Zellij tab, several things keep the shared 5,000/hour GraphQL quota from draining:
+PR status is fetched via the `gh` CLI and cached on disk. A round asks each **repo** once — not each branch — with a conditional request, which is what keeps the cost near zero however many worktrees you have:
 
-- **Only one sidebar fetches per round.** The `gh` calls run under a cross-process try-lock (`~/.workbench/cache/pr-status.json.lock`); the tabs that lose the lock cede the round and pick up the cache the winner writes, so ten open tabs cost the same quota as one.
-- **Every sidebar re-reads the cache before fetching**, so a status another tab just looked up is reused instead of re-queried.
-- **Unpushed branches are never queried.** A branch with no `origin/<branch>` ref cannot have a PR, so no request is made for it. (A branch whose PR is already cached keeps refreshing either way, in case it was pushed from a clone this repo has never fetched.)
-- **Merged and closed PRs are cached for 24 hours.** Those states are final; only open/draft/no-PR branches refresh on the ordinary staleness window.
+- **One conditional poll per repo.** `GET /repos/{owner}/{repo}/pulls` is sent with the `ETag` from last time. A repo that hasn't changed answers `304 Not Modified`, which GitHub does not charge against the rate limit at all — so a quiet round costs nothing, and a busy one costs one request per repo that actually changed. Measured on a 14-repo, 67-branch setup: 15 requests to fill a cold cache, then 0 per round.
+- **It spends the REST (`core`) bucket, not GraphQL.** The 5,000/hour GraphQL bucket is the one your agents drain with `gh pr view` / `gh pr checks`; background polling no longer competes with it.
+- **Only one sidebar fetches per round.** The round runs inside the PR cache's cross-process lock (`~/.workbench/cache/pr-status.json.lock`); tabs that lose it cede and pick up what the winner writes, so ten open tabs cost the same as one.
+- **Unpushed branches are never queried.** A branch with no `origin/<branch>` ref cannot have a PR.
+- **Repos the account cannot see are polled once.** A repo that answers `404` (private to another org, renamed, deleted) is remembered and skipped until you press `r`.
 
-If GitHub rate-limits the account anyway, the sidebar shows a `gh rate limited` hint and pauses all PR fetches for 15 minutes before retrying. The pause is persisted in the cache, so it survives sidebar restarts and applies to every tab, not just the one that hit the limit.
+Rate-limit headroom is watched for free — every response, including the 304s, reports it. Background rounds stop making *charged* requests (the per-branch fallbacks) once fewer than 500 requests remain, showing a `gh quota low` hint instead; pressing `r` spends down to 50, because you waiting outranks the background. Creating a PR through the MCP tools caches it immediately, so the badge appears without waiting for the next poll.
 
-Note that `gh api rate_limit` reports the **REST** (`core`) bucket, which is usually untouched. `gh pr list` spends the separate **GraphQL** bucket — check that one with `gh api graphql -f query='{rateLimit{used remaining resetAt}}'`.
+If GitHub rate-limits the account anyway, the sidebar shows a `gh rate limited` hint and pauses **until the reset time the response reported** — both the primary quota (`X-RateLimit-Reset`) and the secondary/burst limit (`Retry-After`) are honoured. Only the exhausted bucket pauses: GitHub's GraphQL quota running out (which agents do routinely with `gh pr view` / `gh pr checks`) does not stop the free REST polling. The pause is persisted in the cache, so it survives sidebar restarts and applies to every tab, not just the one that hit the limit.
+
+Note that `gh api rate_limit` cannot be trusted for the GraphQL bucket: it has been observed reporting `remaining: 5000` while the response headers said `used: 5001`. Check that bucket with `gh api graphql -f query='{rateLimit{used remaining resetAt}}'`, or read `X-RateLimit-*` off any response.
 
 ### Offline support
 
@@ -390,7 +393,7 @@ The mouse works too: the wheel scrolls the list and a click selects a row. Wheel
 
 Pressing `n` prompts for a **name** (leave it blank to auto-generate a city name). If more than one stack is registered you first pick which stack from a list (`↑`/`↓` or `j`/`k` to move, `enter` to select, `esc` to cancel), then the name. After creation the cursor lands on the new supatree so it scrolls into view.
 
-Like the workbench sidebar, each supatree tab's sidebar marks the supatree that tab belongs to with a `▸` in the gutter ("you are here"), independent of the cursor. It re-reads live state when the pane regains focus and on its periodic tick, so newly created or removed supatrees appear across tabs without pressing `r`. PR status is fetched via `gh` and cached on disk under the same quota discipline as the workbench sidebar (single-fetcher try-lock, cache re-read before fetching, no request for unpushed branches, 24h cache for merged/closed PRs, and a persisted 15-minute pause after a rate-limit response), so a churning or multi-tab sidebar doesn't drain the API quota.
+Like the workbench sidebar, each supatree tab's sidebar marks the supatree that tab belongs to with a `▸` in the gutter ("you are here"), independent of the cursor. It re-reads live state when the pane regains focus and on its periodic tick, so newly created or removed supatrees appear across tabs without pressing `r`. PR status is fetched under the same quota discipline as the workbench sidebar — one conditional poll per repo (free when nothing changed), single-fetcher lock, no request for unpushed branches, and a persisted pause until the reset time a rate-limit response reports — so a churning or multi-tab sidebar doesn't drain the API quota. Both sidebars share the same code path (`github.Sync`).
 
 ### Agents
 

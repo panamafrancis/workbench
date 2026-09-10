@@ -29,8 +29,8 @@ func RenameBranchSlug(c *Config, wb *config.Config, name, newSlug string, push b
 		return fmt.Errorf("slug is already %q", newSlug)
 	}
 
-	prCache := github.NewCache(PRCachePath())
-	_ = prCache.Load()
+	type renamed struct{ oldBranch, newBranch string }
+	var renames []renamed
 
 	for _, m := range inst.Members {
 		if !m.Exists {
@@ -41,14 +41,21 @@ func RenameBranchSlug(c *Config, wb *config.Config, name, newSlug string, push b
 		if err := git.RenameBranch(m.Path, newBranch); err != nil {
 			return fmt.Errorf("rename %s: %w", m.Alias, err)
 		}
-		prCache.Rename(oldBranch, newBranch)
+		renames = append(renames, renamed{oldBranch, newBranch})
 		if push {
 			if err := pushBranchAndDeleteOld(m.Path, oldBranch); err != nil {
 				return fmt.Errorf("push %s: %w", m.Alias, err)
 			}
 		}
 	}
-	_ = prCache.Save()
+	// After the pushes, not during: the cache lock must not be held across
+	// network I/O that a sidebar's fetch round is waiting behind.
+	_ = github.NewCache(PRCachePath()).Mutate(func(w *github.Writable) error {
+		for _, r := range renames {
+			w.Rename(r.oldBranch, r.newBranch)
+		}
+		return nil
+	})
 
 	meta.Slug = newSlug
 	if err := meta.Save(inst.Root); err != nil {

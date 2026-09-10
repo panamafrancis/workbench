@@ -6,16 +6,16 @@ import (
 )
 
 func TestTopoSortOrder(t *testing.T) {
-	nodes := []string{"admin", "keystone", "terraform"}
+	nodes := []string{aliasAdmin, aliasKeystone, aliasTerraform}
 	deps := map[string][]string{
-		"keystone": {"terraform"},
-		"admin":    {"keystone"},
+		aliasKeystone: {aliasTerraform},
+		aliasAdmin:    {aliasKeystone},
 	}
 	got, err := TopoSort(nodes, deps)
 	if err != nil {
 		t.Fatalf("TopoSort() error = %v", err)
 	}
-	want := []string{"terraform", "keystone", "admin"}
+	want := []string{aliasTerraform, aliasKeystone, aliasAdmin}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("TopoSort() = %v, want %v", got, want)
 	}

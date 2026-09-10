@@ -7,7 +7,6 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/panamafrancis/workbench/pkg/config"
 	"github.com/panamafrancis/workbench/pkg/git"
 	"github.com/panamafrancis/workbench/pkg/github"
 	"github.com/panamafrancis/workbench/pkg/supatree"
@@ -43,6 +42,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case msg.err == nil:
 			m.ghAvailable = true
 			m.prHint = ""
+			if msg.deferred > 0 {
+				m.prHint = "gh quota low"
+			}
 		case github.IsRateLimited(msg.err):
 			// Leave ghAvailable true: the persisted backoff (InBackoff) gates
 			// retries and lifts on its own.
@@ -403,12 +405,11 @@ func (m *Model) backgroundCmds() []tea.Cmd {
 
 // fetchPRCmd fetches PR status for member branches. When force is false it only
 // fetches entries older than prStaleAge, and it always respects the persisted
-// backoff window. Crucially, the actual gh calls run under a cross-process
-// try-lock (PRCacheLockPath): with one sidebar per Zellij tab all polling
-// independently, only the tab that wins the lock fetches each round while the
-// rest cede and pick up the cache it writes — this, not per-process throttling
-// alone, is what stops a burst of concurrent gh calls from tripping GitHub's
-// rate limit. A rate-limit response arms a cooldown that survives restarts.
+// backoff window. The gh calls run inside Cache.TryMutate: with one sidebar per
+// Zellij tab all polling independently, only the tab that wins the cache lock
+// fetches each round while the rest cede and pick up what it writes — and
+// because the mutation applies to the state as it is on disk, a round can
+// neither lose a peer's statuses nor disarm the cooldown a peer armed.
 func (m *Model) fetchPRCmd(force bool) tea.Cmd {
 	if m.fetching {
 		return nil
@@ -416,32 +417,23 @@ func (m *Model) fetchPRCmd(force bool) tea.Cmd {
 	// Re-read the on-disk cache first so this long-lived sidebar picks up the
 	// backoff (and freshly cached statuses) another tab's sidebar persisted —
 	// otherwise each tab would independently keep hitting a rate-limited API.
-	// Safe here because the m.fetching guard above rules out an in-flight writer.
 	_ = m.prCache.Load()
-	if m.prCache.InBackoff(time.Now()) {
+	if m.prCache.InBackoff(github.ResourceCore, time.Now()) {
 		// A peer tab may have armed the backoff; surface the hint here too so every
 		// tab (not just the one that hit the limit) signals that fetches are paused.
 		m.prHint = "gh rate limited"
 		return nil
 	}
 
-	type target struct{ path, branch string }
-	var targets []target
+	// Targets are every member branch on screen; which of them actually costs a
+	// request is Sync's decision, not the sidebar's.
+	var targets []github.Target
 	for _, inst := range m.insts {
 		for _, mem := range inst.Members {
 			if !mem.Exists {
 				continue
 			}
-			if !force && !m.prCache.IsStale(mem.Branch, prStaleAge) {
-				continue
-			}
-			// An unpushed branch cannot have a PR, so asking GitHub is a
-			// guaranteed-empty round trip. A branch whose PR is already cached
-			// keeps refreshing regardless.
-			if !m.prCache.KnowsPR(mem.Branch) && !git.HasRemoteBranch(mem.Path, mem.Branch) {
-				continue
-			}
-			targets = append(targets, target{mem.Path, mem.Branch})
+			targets = append(targets, github.Target{RepoPath: mem.Path, Branch: mem.Branch})
 		}
 	}
 	if len(targets) == 0 {
@@ -451,45 +443,15 @@ func (m *Model) fetchPRCmd(force bool) tea.Cmd {
 	m.fetching = true
 	cache := m.prCache
 	return func() tea.Msg {
-		// prSkippedMsg unless we win the lock and actually run a fetch below.
-		var result tea.Msg = prSkippedMsg{}
-		lockErr := config.TryFileLock(supatree.PRCacheLockPath(), func() error {
-			// Under the lock, re-read the cache: while we queued to build targets
-			// another tab may have populated statuses or armed a backoff.
-			_ = cache.Load()
-			if cache.InBackoff(time.Now()) {
-				return nil
-			}
-			var lastErr error
-			for _, t := range targets {
-				// A peer that just held the lock may have refreshed this branch;
-				// don't re-fetch what is already fresh.
-				if !force && !cache.IsStale(t.branch, prStaleAge) {
-					continue
-				}
-				info, err := github.LookupPR(t.path, t.branch)
-				if err != nil {
-					lastErr = err
-					if github.IsPermanentError(err) {
-						_ = cache.Save()
-						result = prMsg{err: err}
-						return nil
-					}
-					if github.IsRateLimited(err) {
-						cache.SetRetryAfter(time.Now().Add(rateLimitCooldown))
-						_ = cache.Save()
-						result = prMsg{err: err}
-						return nil
-					}
-					continue
-				}
-				cache.Set(t.branch, info)
-			}
-			_ = cache.Save()
-			result = prMsg{err: lastErr}
+		var report github.SyncReport
+		lockErr := cache.TryMutate(func(w *github.Writable) error {
+			report = github.Sync(w, targets, github.SyncOptions{
+				MaxAge: prStaleAge,
+				Force:  force,
+			})
 			return nil
 		})
-		if errors.Is(lockErr, config.ErrLockBusy) {
+		if errors.Is(lockErr, github.ErrLockBusy) {
 			// Another sidebar owns this round; cede and let the next tick pick up
 			// the cache it writes.
 			return prSkippedMsg{}
@@ -497,6 +459,6 @@ func (m *Model) fetchPRCmd(force bool) tea.Cmd {
 		if lockErr != nil {
 			return prMsg{err: lockErr}
 		}
-		return result
+		return prMsg{err: report.Err, deferred: report.Deferred}
 	}
 }
