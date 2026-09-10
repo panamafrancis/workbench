@@ -41,57 +41,29 @@ func WorkbenchServer(version string) *Server {
 			{
 				Name:        "rename_branch",
 				Description: "Rename the current worktree's branch and update workbench config + PR cache. Use this instead of bare git branch -m. Only works inside a workbench session.",
-				InputSchema: map[string]any{
-					"type": "object",
-					"properties": map[string]any{
-						"new_name": map[string]any{
-							"type":        "string",
-							"description": "New branch name — keep the wt/<alias>/ prefix (e.g. wt/wb/session-launcher). The final segment is lowercase alphanumeric and hyphens, max 40 chars.",
-						},
-						"push": map[string]any{
-							"type":        "boolean",
-							"description": "Push new branch and delete old remote branch",
-						},
-					},
-					"required": []string{"new_name"},
-				},
+				InputSchema: ObjectSchema(map[string]any{
+					"new_name": StringProp("New branch name — keep the wt/<alias>/ prefix (e.g. wt/wb/session-launcher). The final segment is lowercase alphanumeric and hyphens, max 40 chars."),
+					"push":     BoolProp("Push new branch and delete old remote branch"),
+				}, "new_name"),
 				Handler: handleRenameBranch,
 			},
 			{
 				Name:        "create_pr",
 				Description: "Push the current branch and create a pull request via gh. Refuses if the branch still has an auto-generated name — call rename_branch first. Only works inside a workbench session.",
-				InputSchema: map[string]any{
-					"type": "object",
-					"properties": map[string]any{
-						"title": map[string]any{
-							"type":        "string",
-							"description": "PR title (omit to auto-fill from commits)",
-						},
-						"body": map[string]any{
-							"type":        "string",
-							"description": "PR body/description",
-						},
-						"draft": map[string]any{
-							"type":        "boolean",
-							"description": "Create as draft PR",
-						},
-					},
-				},
+				InputSchema: ObjectSchema(map[string]any{
+					"title": StringProp("PR title (omit to auto-fill from commits)"),
+					"body":  StringProp("PR body/description"),
+					"draft": BoolProp("Create as draft PR"),
+				}),
 				Handler: handleCreatePR,
 			},
 			{
 				Name:        "docs",
 				Description: "Look up workbench documentation. Returns reference docs on commands, config, TUI, worktree lifecycle, MCP tools, sandbox, and development.",
-				InputSchema: map[string]any{
-					"type": "object",
-					"properties": map[string]any{
-						"topic": map[string]any{
-							"type":        "string",
-							"description": "Topic to look up: overview, commands, config, tui, worktrees, mcp, sandbox, development. Omit for a list of topics.",
-							"enum":        []string{"overview", "commands", "config", "tui", "worktrees", "mcp", "sandbox", "development", "all"},
-						},
-					},
-				},
+				InputSchema: ObjectSchema(map[string]any{
+					"topic": EnumProp("Topic to look up: overview, commands, config, tui, worktrees, mcp, sandbox, development. Omit for a list of topics.",
+						"overview", "commands", "config", "tui", "worktrees", "mcp", "sandbox", "development", "all"),
+				}),
 				Handler: handleDocs,
 			},
 		},
