@@ -1,5 +1,11 @@
 # GitHub quota: one delta sync, one safe cache
 
+> **Status (2026-09-10): implemented, with one layer dropped.** Layers 0, 1 and 3
+> landed in `d8dc4e7`, `f7c89b7` and `24a9a1f`, along with the budget ledger.
+> **Layer 2 (the batched GraphQL sweep) was dropped on measurement** — see
+> "Layer 2: dropped" below. Measured on the real setup (14 repos / 67 branches):
+> a cold round costs 15 requests, every round after that costs **0**.
+
 Measured on 2026-09-09 against the live API. Every number below is observed, not estimated.
 
 ## What I measured
@@ -282,3 +288,48 @@ the first round repopulate.
   it is still armed afterwards — the exact failure happening now.
 - Set `remaining` low in the ledger and confirm sidebars keep rendering, show the reserve
   hint, and still allow a forced refresh down to the hard floor.
+
+## Layer 2: dropped
+
+The batched aliased GraphQL query was meant to answer "which of my branches have
+*no* PR" cheaply — 1 point for ~50 branches, against one point *per branch* for
+`gh pr list`. Two things learned while building Layer 1 removed its reason to
+exist:
+
+1. **Absence is usually free already.** A repo whose listing is not truncated
+   proves absence for every branch in it as a side effect of the poll, at no
+   cost. Only truncated repos need to ask about a specific branch.
+2. **The per-branch fallback moved to REST.** `LookupBranchPR`
+   (`GET /pulls?head=owner:branch`) answers definitively for one core point, and
+   in the real setup a cold round needed **2 of them** — most branches were
+   either covered by the listing or unpushed, and an unpushed branch is never
+   asked about at all.
+
+So Layer 2 would spend the *contended* GraphQL bucket — the one that is
+routinely exhausted while core sits at 5,000 — to save a couple of requests from
+the bucket we have in abundance. That is the wrong trade, and it is worth
+recording that the measurement, not the design, decided it.
+
+If a cold start ever does need to resolve hundreds of branches at once, the
+cheaper move is to page the repo listing to completion (core bucket, ETag-able)
+rather than to reach for GraphQL.
+
+## What the implementation added beyond the plan
+
+Things the design did not anticipate, each found by measuring or by a test:
+
+- **Group by repo, not by checkout.** Supatree gives every tree its own checkout
+  of the same repo, so the first implementation polled `admin-frontend` six
+  times a round: 61 requests instead of 13, and 50-second rounds. The extra ones
+  were 304s and cost no quota, but they were still round trips.
+- **A 304 says "unchanged", not "complete".** `RepoState.Truncated` has to
+  persist across rounds, or a not-modified poll reads as proof that a branch has
+  no PR.
+- **`gh api -i` exits non-zero on 304 and 404.** The status has to be classified
+  from stdout, with the exit code only as a fallback (`errNoResponse`).
+  Otherwise every free 304 becomes a re-fetch — the exact opposite of the point.
+- **Secondary rate limits look nothing like primary ones.** They arrive with
+  `Retry-After` and a message, no quota headers, and thousands of quota left.
+- **Repos the account cannot see.** `PiwikPRO/fraud0_api_contract` 404s for this
+  token; it now gets recorded `Unavailable` and skipped instead of costing a
+  request and painting an error every round.
