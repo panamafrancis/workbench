@@ -42,8 +42,7 @@ func Remove(c *Config, wb *config.Config, name string, opts RemoveOptions) (*Rem
 	stack := c.FindStack(inst.Stack)
 
 	// Members, reverse dependency order.
-	prCache := github.NewCache(PRCachePath())
-	_ = prCache.Load()
+	var removed []string
 	for i := len(inst.Members) - 1; i >= 0; i-- {
 		m := inst.Members[i]
 		if repo, _ := wb.FindRepo(m.Alias); repo != nil && m.Exists {
@@ -53,9 +52,16 @@ func Remove(c *Config, wb *config.Config, name string, opts RemoveOptions) (*Rem
 		}
 		removeMember(inst.Root, m.Alias, wb, &SyncReport{Warnings: res.Warnings})
 		_ = sandbox.ClearSessionCache(m.Path)
-		prCache.Delete(m.Branch)
+		removed = append(removed, m.Branch)
 	}
-	_ = prCache.Save()
+	// One mutation once the slow work is done: holding the cache lock across
+	// cleanup scripts and worktree removal would stall every sidebar's round.
+	_ = github.NewCache(PRCachePath()).Mutate(func(w *github.Writable) error {
+		for _, branch := range removed {
+			w.Delete(branch)
+		}
+		return nil
+	})
 
 	// Stack meta-worktree.
 	if opts.Push {

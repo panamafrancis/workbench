@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/panamafrancis/workbench/pkg/config"
 	"github.com/panamafrancis/workbench/pkg/git"
@@ -32,58 +33,58 @@ func MCPServer(version string) *mcp.Server {
 			{
 				Name:        "supatree_info",
 				Description: "Show the current supatree: member repos, branches, dependency edges, and merge order.",
-				InputSchema: emptyObject(),
+				InputSchema: mcp.EmptyObject(),
 				Handler:     handleInfo,
 			},
 			{
 				Name:        "sync",
 				Description: "Reconcile member worktrees with supatree.yml after editing it (creates missing members). Set prune to also remove members no longer listed.",
-				InputSchema: objectSchema(map[string]any{
-					"prune": boolProp("Also remove member worktrees no longer listed in supatree.yml"),
-				}, nil),
+				InputSchema: mcp.ObjectSchema(map[string]any{
+					"prune": mcp.BoolProp("Also remove member worktrees no longer listed in supatree.yml"),
+				}),
 				Handler: handleSync,
 			},
 			{
 				Name:        "rename_branches",
 				Description: "Rename every member branch from st/<slug>/<alias> to st/<new_slug>/<alias>. Do this before creating PRs so branches have a meaningful name.",
-				InputSchema: objectSchema(map[string]any{
-					"new_slug": stringProp("New branch slug (lowercase alphanumeric and hyphens, max 40 chars)"),
-					"push":     boolProp("Push the new branches and delete the old remote branches"),
-				}, []string{"new_slug"}),
+				InputSchema: mcp.ObjectSchema(map[string]any{
+					"new_slug": mcp.StringProp("New branch slug (lowercase alphanumeric and hyphens, max 40 chars)"),
+					"push":     mcp.BoolProp("Push the new branches and delete the old remote branches"),
+				}, "new_slug"),
 				Handler: handleRenameBranches,
 			},
 			{
 				Name:        "create_pr",
 				Description: "Push one member repo's branch and open a PR via gh. Refuses if the slug is still an auto-generated name (call rename_branches first) or if the repo's dependencies have no PRs yet (override with force).",
-				InputSchema: objectSchema(map[string]any{
-					"repo":  stringProp("Member repo alias"),
-					"title": stringProp("PR title (omit to auto-fill from commits)"),
-					"body":  stringProp("PR body"),
-					"draft": boolProp("Create as draft"),
-					"force": boolProp("Create even if dependencies have no PRs yet"),
-				}, []string{"repo"}),
+				InputSchema: mcp.ObjectSchema(map[string]any{
+					"repo":  mcp.StringProp("Member repo alias"),
+					"title": mcp.StringProp("PR title (omit to auto-fill from commits)"),
+					"body":  mcp.StringProp("PR body"),
+					"draft": mcp.BoolProp("Create as draft"),
+					"force": mcp.BoolProp("Create even if dependencies have no PRs yet"),
+				}, "repo"),
 				Handler: handleCreatePR,
 			},
 			{
 				Name:        "create_prs",
 				Description: "Open PRs for every member with commits, in dependency order, cross-linking the sibling PRs. Refuses if the slug is still auto-generated.",
-				InputSchema: objectSchema(map[string]any{
-					"title": stringProp("PR title applied to every repo (omit to auto-fill)"),
-					"body":  stringProp("PR body prepended to every repo's cross-link section"),
-					"draft": boolProp("Create all as drafts"),
-				}, nil),
+				InputSchema: mcp.ObjectSchema(map[string]any{
+					"title": mcp.StringProp("PR title applied to every repo (omit to auto-fill)"),
+					"body":  mcp.StringProp("PR body prepended to every repo's cross-link section"),
+					"draft": mcp.BoolProp("Create all as drafts"),
+				}),
 				Handler: handleCreatePRs,
 			},
 			{
 				Name:        "pr_status",
 				Description: "Look up the PR status of every member branch and return an aggregate.",
-				InputSchema: emptyObject(),
+				InputSchema: mcp.EmptyObject(),
 				Handler:     handlePRStatus,
 			},
 			{
 				Name:        "docs",
 				Description: "Supatree usage documentation.",
-				InputSchema: emptyObject(),
+				InputSchema: mcp.EmptyObject(),
 				Handler:     func(map[string]any) (string, bool) { return supatreeDocs, false },
 			},
 		},
@@ -188,7 +189,11 @@ func handleCreatePR(args map[string]any) (string, bool) {
 	}
 	force, _ := args["force"].(bool)
 	if !force {
-		if missing := depsWithoutPRs(inst, m); len(missing) > 0 {
+		missing, depErr := depsWithoutPRs(inst, m)
+		if depErr != nil {
+			return fmt.Sprintf("could not verify dependency PRs: %v (pass force=true to skip the check)", depErr), true
+		}
+		if len(missing) > 0 {
 			return fmt.Sprintf("dependencies without PRs yet: %s (pass force=true to override)", strings.Join(missing, ", ")), true
 		}
 	}
@@ -230,6 +235,19 @@ func handleCreatePRs(args map[string]any) (string, bool) {
 	return b.String(), false
 }
 
+const (
+	// prStatusMaxAge bounds how stale a cached status may be before an explicit
+	// pr_status call re-fetches it. Short, because the tool is interactive — but
+	// non-zero, so an agent calling it repeatedly in one turn (or right after
+	// create_prs) reads the cache the sidebars already filled instead of
+	// re-asking GitHub for every member.
+	prStatusMaxAge = 2 * time.Minute
+	// prStatusCooldown pauses GitHub fetches after a rate-limit response. The
+	// sidebars observe the same persisted window, so arming it here stands the
+	// whole machine down rather than only this tool call.
+	prStatusCooldown = 15 * time.Minute
+)
+
 func handlePRStatus(map[string]any) (string, bool) {
 	_, _, inst, err := currentInstance()
 	if err != nil {
@@ -237,42 +255,122 @@ func handlePRStatus(map[string]any) (string, bool) {
 	}
 	cache := github.NewCache(PRCachePath())
 	_ = cache.Load()
+
+	// Spend quota only on stale entries, and none at all while a cooldown
+	// another process armed is still running: this tool used to fetch every
+	// member unconditionally and then write the whole cache back from its own
+	// snapshot, which reverted the sidebars' statuses and disarmed their
+	// cooldown — exactly what kept the quota drained.
+	paused := cache.InBackoff(time.Now())
+	fetched := map[string]*github.PRInfo{}
+	var fetchErr error
+	for _, m := range inst.Members {
+		if !m.Exists {
+			continue
+		}
+		if paused {
+			break
+		}
+		if !cache.IsStale(m.Branch, prStatusMaxAge) {
+			continue
+		}
+		info, lookupErr := github.LookupPR(m.Path, m.Branch)
+		if lookupErr != nil {
+			// One failure means the rest will fail the same way (auth, quota,
+			// network); don't spend N more calls proving it.
+			fetchErr = lookupErr
+			break
+		}
+		fetched[m.Branch] = info
+	}
+	if len(fetched) > 0 || github.IsRateLimited(fetchErr) {
+		_ = cache.Mutate(func(w *github.Writable) error {
+			for branch, info := range fetched {
+				w.Set(branch, info)
+			}
+			if github.IsRateLimited(fetchErr) {
+				w.SetRetryAfter(time.Now().Add(prStatusCooldown))
+			}
+			return nil
+		})
+	}
+
 	var b strings.Builder
 	counts := map[github.PRStatus]int{}
 	for _, m := range inst.Members {
-		info, err := github.LookupPR(m.Path, m.Branch)
-		if err != nil {
-			fmt.Fprintf(&b, "%s: (lookup failed: %v)\n", m.Alias, err)
-			continue
-		}
-		cache.Set(m.Branch, info)
-		counts[info.Status]++
-		if info.Status == github.PRNone {
+		info := cache.Get(m.Branch)
+		switch {
+		case info == nil:
+			// Absence of an entry is not absence of a PR — say so rather than
+			// reporting a state we never established.
+			fmt.Fprintf(&b, "%s: unknown (not fetched yet)\n", m.Alias)
+		case info.Status == github.PRNone:
+			counts[info.Status]++
 			fmt.Fprintf(&b, "%s: no PR\n", m.Alias)
-		} else {
+		default:
+			counts[info.Status]++
 			fmt.Fprintf(&b, "%s: %s #%d\n", m.Alias, info.Status, info.Number)
 		}
 	}
-	_ = cache.Save()
 	fmt.Fprintf(&b, "\nopen=%d draft=%d merged=%d", counts[github.PROpen], counts[github.PRDraft], counts[github.PRMerged])
+	switch {
+	case paused:
+		fmt.Fprintf(&b, "\n(cached values: gh fetches paused until %s)", cache.RetryAfter().Format(time.Kitchen))
+	case fetchErr != nil:
+		fmt.Fprintf(&b, "\n(some values may be stale: %v)", fetchErr)
+	}
 	return b.String(), false
 }
 
+// memberStatus returns the cached PR status for a member branch, fetching and
+// caching it when the entry is missing or stale. A rate-limit response arms the
+// shared cooldown before the error is returned.
+func memberStatus(cache *github.Cache, path, branch string) (*github.PRInfo, error) {
+	if info := cache.Get(branch); info != nil && !cache.IsStale(branch, prStatusMaxAge) {
+		return info, nil
+	}
+	info, err := github.LookupPR(path, branch)
+	if err != nil {
+		if github.IsRateLimited(err) {
+			_ = cache.Mutate(func(w *github.Writable) error {
+				w.SetRetryAfter(time.Now().Add(prStatusCooldown))
+				return nil
+			})
+		}
+		return nil, err
+	}
+	if mutErr := cache.Mutate(func(w *github.Writable) error {
+		w.Set(branch, info)
+		return nil
+	}); mutErr != nil {
+		return nil, mutErr
+	}
+	return info, nil
+}
+
 // depsWithoutPRs returns dependency aliases of m that have no open/merged PR.
-func depsWithoutPRs(inst *Instance, m *Member) []string {
+// A failed lookup is reported as an error rather than folded into the missing
+// list: treating a rate-limited or unauthenticated gh as "this dependency has
+// no PR" blocks stacking on a fact that was never established.
+func depsWithoutPRs(inst *Instance, m *Member) ([]string, error) {
+	cache := github.NewCache(PRCachePath())
+	_ = cache.Load()
 	var missing []string
 	for _, dep := range m.DependsOn {
 		dm := inst.FindMember(dep)
 		if dm == nil {
 			continue
 		}
-		info, err := github.LookupPR(dm.Path, dm.Branch)
-		if err != nil || info == nil || info.Status == github.PRNone {
+		info, err := memberStatus(cache, dm.Path, dm.Branch)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", dep, err)
+		}
+		if info.Status == github.PRNone {
 			missing = append(missing, dep)
 		}
 	}
 	sort.Strings(missing)
-	return missing
+	return missing, nil
 }
 
 // createOnePR pushes HEAD and runs gh pr create in worktreePath.
@@ -307,25 +405,6 @@ func createOnePR(worktreePath string, args map[string]any) (string, error) {
 }
 
 // --- small JSON-schema helpers ---
-
-func emptyObject() map[string]any {
-	return map[string]any{"type": "object", "properties": map[string]any{}}
-}
-
-func objectSchema(props map[string]any, required []string) map[string]any {
-	s := map[string]any{"type": "object", "properties": props}
-	if len(required) > 0 {
-		s["required"] = required
-	}
-	return s
-}
-
-func stringProp(desc string) map[string]any {
-	return map[string]any{"type": "string", "description": desc}
-}
-func boolProp(desc string) map[string]any {
-	return map[string]any{"type": "boolean", "description": desc}
-}
 
 const supatreeDocs = `Supatree — multi-repo worktrees for one issue.
 

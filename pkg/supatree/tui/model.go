@@ -24,9 +24,6 @@ const (
 	// sidebar's restart loop (and per-tab sidebars) from exhausting the gh
 	// rate limit.
 	prStaleAge = 10 * time.Minute
-	// rateLimitCooldown suppresses all GitHub fetches after a rate-limit
-	// response. Persisted via the cache so it survives sidebar restarts.
-	rateLimitCooldown = 15 * time.Minute
 	// wheelStep is how many rows one mouse-wheel notch scrolls.
 	wheelStep = 3
 	// fallbackPage is the half-page distance used by ctrl+d/ctrl+u before the

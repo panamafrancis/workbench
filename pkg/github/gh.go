@@ -42,8 +42,17 @@ type ghPR struct {
 	UpdatedAt time.Time `json:"updatedAt"`
 }
 
+// lookupTimeout bounds a single gh invocation. The sidebar fetch round holds
+// the PR cache lock across its gh calls, so an unbounded call would not just
+// hang this sidebar — it would block every other tab's round behind the lock
+// until the process died. Mirrors the timeout pkg/zellij puts on its own CLI
+// calls for the same reason.
+const lookupTimeout = 20 * time.Second
+
 func LookupPR(repoPath, branch string) (*PRInfo, error) {
-	cmd := exec.CommandContext(context.Background(), "gh", "pr", "list",
+	ctx, cancel := context.WithTimeout(context.Background(), lookupTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "gh", "pr", "list",
 		"--head", branch,
 		"--state", "all",
 		"--json", "number,state,title,url,isDraft,updatedAt",

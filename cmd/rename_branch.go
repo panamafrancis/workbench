@@ -96,9 +96,10 @@ var renameBranchCmd = &cobra.Command{
 		}
 
 		prCache := github.NewCache(config.PRCachePath())
-		_ = prCache.Load()
-		prCache.Rename(oldBranch, newBranch)
-		_ = prCache.Save()
+		_ = prCache.Mutate(func(w *github.Writable) error {
+			w.Rename(oldBranch, newBranch)
+			return nil
+		})
 
 		if renameWorktree && zellij.IsInZellij() {
 			_ = zellij.RenameTab(oldWtName, newWtName)
