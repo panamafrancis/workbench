@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -27,10 +28,21 @@ import (
 // what changed recently. Callers establish absence with a targeted lookup
 // instead, and re-poll on the ordinary schedule.
 
-// resourceCore is what GitHub calls the REST bucket in its rate-limit headers.
-// Background polling lives here deliberately, leaving the GraphQL bucket to the
-// agents' own gh calls.
-const resourceCore = "core"
+// Rate-limit buckets, as GitHub names them in X-RateLimit-Resource. They are
+// tracked separately because they run out separately: background polling lives
+// on core deliberately, leaving graphql to the agents' own gh calls, and an
+// exhausted graphql bucket must not pause the core work that costs nothing.
+const (
+	ResourceCore    = "core"
+	ResourceGraphQL = "graphql"
+	// ResourceAll keys limits that apply to every request regardless of bucket:
+	// the secondary/burst limit, and any rate limit whose resource we could not
+	// determine.
+	ResourceAll = ""
+	// resourceSecondary labels the burst limit, which is not a bucket at all:
+	// it applies to every request, so it maps to ResourceAll when armed.
+	resourceSecondary = "secondary"
+)
 
 // pollPageSize is the page size for a poll. One page is enough to carry every
 // PR that changed between two rounds; Truncated reports when it might not be.
@@ -121,6 +133,98 @@ func budgetFrom(header http.Header, now time.Time) Budget {
 		ResetAt:    headerReset(header.Get("X-Ratelimit-Reset")),
 		ObservedAt: now,
 	}
+}
+
+// splitRemoteURL pulls the host and the owner/name out of any common git remote
+// form, without judging whether the host is GitHub.
+func splitRemoteURL(raw string) (host string, ref RepoRef, ok bool) {
+	s := strings.TrimSpace(raw)
+	switch {
+	case strings.HasPrefix(s, "ssh://"):
+		s = strings.TrimPrefix(s, "ssh://")
+		s = strings.TrimPrefix(s, "git@")
+		host, s, ok = strings.Cut(s, "/")
+	case strings.HasPrefix(s, "https://"), strings.HasPrefix(s, "http://"):
+		_, s, _ = strings.Cut(s, "://")
+		host, s, ok = strings.Cut(s, "/")
+	case strings.Contains(s, ":") && !strings.Contains(s, "://"):
+		// scp-style: [user@]host:owner/name
+		s = strings.TrimPrefix(s, "git@")
+		host, s, ok = strings.Cut(s, ":")
+	default:
+		return "", RepoRef{}, false
+	}
+	if !ok || host == "" {
+		return "", RepoRef{}, false
+	}
+	s = strings.TrimSuffix(strings.TrimSuffix(s, "/"), ".git")
+	owner, name, ok := strings.Cut(s, "/")
+	if !ok || owner == "" || name == "" || strings.Contains(name, "/") {
+		return "", RepoRef{}, false
+	}
+	return host, RepoRef{Owner: owner, Name: name}, true
+}
+
+// sshResolveTimeout bounds the local ssh config lookup. It parses files, it
+// does not connect, so this only guards against a pathological config.
+const sshResolveTimeout = 5 * time.Second
+
+// sshResolve is swappable for tests.
+var sshResolve = sshHostname
+
+var (
+	sshHostMu    sync.Mutex
+	sshHostCache = map[string]string{}
+)
+
+// sshHostname resolves a remote's host through ssh's own config, so an alias
+// like `git@github-work:owner/repo.git` is recognised as github.com. Reading
+// ~/.ssh/config by hand would miss Include directives, wildcards and Match
+// blocks; `ssh -G` is the parser ssh itself uses, runs locally, and costs
+// nothing. Results are memoised per host — the config does not change often,
+// and this runs once per repo per round.
+func sshHostname(host string) string {
+	sshHostMu.Lock()
+	if resolved, ok := sshHostCache[host]; ok {
+		sshHostMu.Unlock()
+		return resolved
+	}
+	sshHostMu.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), sshResolveTimeout)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "ssh", "-G", host).Output()
+	resolved := ""
+	if err == nil {
+		for _, line := range strings.Split(string(out), "\n") {
+			if name, ok := strings.CutPrefix(strings.TrimSpace(line), "hostname "); ok {
+				resolved = strings.TrimSpace(name)
+				break
+			}
+		}
+	}
+	sshHostMu.Lock()
+	sshHostCache[host] = resolved
+	sshHostMu.Unlock()
+	return resolved
+}
+
+// RepoRefFromRemote determines the GitHub repo a remote URL names, resolving
+// ssh config aliases. Without this, a perfectly ordinary `git@github-work:...`
+// remote falls through to the per-branch GraphQL path — the expensive one this
+// package exists to avoid — with nothing to show that it happened.
+func RepoRefFromRemote(raw string) (RepoRef, bool) {
+	if ref, ok := ParseRemoteURL(raw); ok {
+		return ref, true
+	}
+	host, ref, ok := splitRemoteURL(raw)
+	if !ok {
+		return RepoRef{}, false
+	}
+	if !strings.EqualFold(sshResolve(host), "github.com") {
+		return RepoRef{}, false
+	}
+	return ref, true
 }
 
 // PollPR is one pull request as returned by a repo poll, carrying the head
@@ -379,10 +483,10 @@ func rateLimitFrom(header http.Header, body []byte, now time.Time) *RateLimitedE
 	}
 	secondary := mentionsSecondaryLimit(body)
 	if after := retryAfter(header.Get("Retry-After")); after > 0 && secondary {
-		return &RateLimitedError{Resource: "secondary", ResetAt: now.Add(after)}
+		return &RateLimitedError{Resource: resourceSecondary, ResetAt: now.Add(after)}
 	}
 	if secondary {
-		return &RateLimitedError{Resource: "secondary", ResetAt: now.Add(defaultSecondaryPause)}
+		return &RateLimitedError{Resource: resourceSecondary, ResetAt: now.Add(defaultSecondaryPause)}
 	}
 	return nil
 }

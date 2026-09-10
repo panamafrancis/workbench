@@ -113,7 +113,7 @@ func TestMutateCannotDisarmAnotherProcessesCooldown(t *testing.T) {
 
 	peer := NewCache(path)
 	mustMutate(t, peer, func(w *Writable) {
-		w.SetRetryAfter(now.Add(15 * time.Minute))
+		w.SetRetryAfter(ResourceCore, now.Add(15*time.Minute))
 	})
 
 	mustMutate(t, stale, func(w *Writable) {
@@ -124,7 +124,7 @@ func TestMutateCannotDisarmAnotherProcessesCooldown(t *testing.T) {
 	if err := final.Load(); err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	if !final.InBackoff(now) {
+	if !final.InBackoff(ResourceCore, now) {
 		t.Error("cooldown armed by the peer was disarmed by a stale writer")
 	}
 }
@@ -133,15 +133,15 @@ func TestSetRetryAfterOnlyMovesLater(t *testing.T) {
 	c := newTestCache(t)
 	now := time.Now()
 
-	mustMutate(t, c, func(w *Writable) { w.SetRetryAfter(now.Add(15 * time.Minute)) })
-	mustMutate(t, c, func(w *Writable) { w.SetRetryAfter(now.Add(time.Minute)) })
+	mustMutate(t, c, func(w *Writable) { w.SetRetryAfter(ResourceCore, now.Add(15*time.Minute)) })
+	mustMutate(t, c, func(w *Writable) { w.SetRetryAfter(ResourceCore, now.Add(time.Minute)) })
 
-	if !c.InBackoff(now.Add(10 * time.Minute)) {
+	if !c.InBackoff(ResourceCore, now.Add(10*time.Minute)) {
 		t.Error("a shorter cooldown must not shorten the armed window")
 	}
 
-	mustMutate(t, c, func(w *Writable) { w.SetRetryAfter(now.Add(30 * time.Minute)) })
-	if !c.InBackoff(now.Add(20 * time.Minute)) {
+	mustMutate(t, c, func(w *Writable) { w.SetRetryAfter(ResourceCore, now.Add(30*time.Minute)) })
+	if !c.InBackoff(ResourceCore, now.Add(20*time.Minute)) {
 		t.Error("a longer cooldown should extend the armed window")
 	}
 }
@@ -258,18 +258,18 @@ func TestCacheLoadMissingFile(t *testing.T) {
 func TestCacheBackoff(t *testing.T) {
 	now := time.Now()
 	c := newTestCache(t)
-	if c.InBackoff(now) {
+	if c.InBackoff(ResourceCore, now) {
 		t.Error("fresh cache should not be in backoff")
 	}
 
-	mustMutate(t, c, func(w *Writable) { w.SetRetryAfter(now.Add(15 * time.Minute)) })
-	if !c.InBackoff(now) {
+	mustMutate(t, c, func(w *Writable) { w.SetRetryAfter(ResourceCore, now.Add(15*time.Minute)) })
+	if !c.InBackoff(ResourceCore, now) {
 		t.Error("should be in backoff before retry_after")
 	}
-	if c.InBackoff(now.Add(16 * time.Minute)) {
+	if c.InBackoff(ResourceCore, now.Add(16*time.Minute)) {
 		t.Error("should not be in backoff after retry_after")
 	}
-	if got := c.RetryAfter(); !got.Equal(now.Add(15 * time.Minute)) {
+	if got := c.RetryAfter(ResourceCore); !got.Equal(now.Add(15 * time.Minute)) {
 		t.Errorf("RetryAfter() = %v, want the armed deadline", got)
 	}
 }
@@ -279,16 +279,16 @@ func TestCacheBackoffPersists(t *testing.T) {
 	retryAfter := time.Date(2026, 7, 9, 12, 44, 0, 0, time.UTC)
 
 	c := NewCache(path)
-	mustMutate(t, c, func(w *Writable) { w.SetRetryAfter(retryAfter) })
+	mustMutate(t, c, func(w *Writable) { w.SetRetryAfter(ResourceCore, retryAfter) })
 
 	c2 := NewCache(path)
 	if err := c2.Load(); err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	if !c2.InBackoff(retryAfter.Add(-time.Second)) {
+	if !c2.InBackoff(ResourceCore, retryAfter.Add(-time.Second)) {
 		t.Error("backoff should survive reload")
 	}
-	if c2.InBackoff(retryAfter.Add(time.Second)) {
+	if c2.InBackoff(ResourceCore, retryAfter.Add(time.Second)) {
 		t.Error("backoff should have expired after retry_after")
 	}
 }

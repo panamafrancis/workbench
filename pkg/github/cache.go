@@ -18,8 +18,14 @@ type cacheFile struct {
 	Repos map[string]RepoState `json:"repos,omitempty"`
 	// Budget is the most recent rate-limit observation any process made, shared
 	// so every sidebar throttles against one picture rather than its own.
-	Budget     Budget    `json:"budget,omitzero"`
-	RetryAfter time.Time `json:"retry_after,omitzero"`
+	Budget Budget `json:"budget,omitzero"`
+	// RetryAfter holds one cooldown deadline per rate-limit bucket. It is keyed
+	// because the buckets run out independently: an exhausted graphql bucket
+	// must not pause the conditional core-bucket polls, which cost nothing and
+	// are the main way status stays current. The key is deliberately a new field
+	// name — an older cache's scalar retry_after is simply ignored, and a
+	// forgotten cooldown of at most a few minutes is harmless.
+	RetryAfter map[string]time.Time `json:"retry_after_by_resource,omitempty"`
 }
 
 // Cache is a process-local snapshot of the on-disk PR status cache, used by the
@@ -56,7 +62,7 @@ type Cache struct {
 	entries    map[string]*PRInfo
 	repos      map[string]RepoState
 	budget     Budget
-	retryAfter time.Time
+	retryAfter map[string]time.Time
 	mu         sync.RWMutex
 }
 
@@ -66,9 +72,10 @@ var ErrLockBusy = config.ErrLockBusy
 
 func NewCache(path string) *Cache {
 	return &Cache{
-		path:    path,
-		entries: make(map[string]*PRInfo),
-		repos:   make(map[string]RepoState),
+		path:       path,
+		entries:    make(map[string]*PRInfo),
+		repos:      make(map[string]RepoState),
+		retryAfter: make(map[string]time.Time),
 	}
 }
 
@@ -99,7 +106,7 @@ type Writable struct {
 	entries    map[string]*PRInfo
 	repos      map[string]RepoState
 	budget     Budget
-	retryAfter time.Time
+	retryAfter map[string]time.Time
 }
 
 // Mutate runs fn against the current on-disk cache while holding the cache
@@ -154,8 +161,9 @@ func readCacheFile(path string) (cacheFile, error) {
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
 		return cacheFile{
-			Entries: make(map[string]*PRInfo),
-			Repos:   make(map[string]RepoState),
+			Entries:    make(map[string]*PRInfo),
+			Repos:      make(map[string]RepoState),
+			RetryAfter: make(map[string]time.Time),
 		}, nil
 	}
 	if err != nil {
@@ -170,6 +178,9 @@ func readCacheFile(path string) (cacheFile, error) {
 	}
 	if f.Repos == nil {
 		f.Repos = make(map[string]RepoState)
+	}
+	if f.RetryAfter == nil {
+		f.RetryAfter = make(map[string]time.Time)
 	}
 	return f, nil
 }
@@ -255,33 +266,46 @@ func (w *Writable) Rename(oldBranch, newBranch string) {
 	}
 }
 
-// SetRetryAfter records a timestamp before which no GitHub fetches should be
-// attempted, so a rate-limit response pauses every process rather than just the
-// one that hit it. It only ever moves the deadline later: a mutation that
-// started before a peer armed a longer cooldown must not shorten it, and there
-// is no way to clear one early — the window simply expires.
-func (w *Writable) SetRetryAfter(t time.Time) {
-	if t.After(w.retryAfter) {
-		w.retryAfter = t
+// SetRetryAfter records a deadline before which no request against resource
+// should be attempted, so a rate-limit response pauses every process rather
+// than just the one that hit it. Pass ResourceAll for a limit that applies to
+// every request (the secondary/burst limit).
+//
+// It only ever moves a deadline later: a mutation that started before a peer
+// armed a longer cooldown must not shorten it, and there is no way to clear one
+// early — the window simply expires.
+func (w *Writable) SetRetryAfter(resource string, t time.Time) {
+	if t.After(w.retryAfter[resource]) {
+		w.retryAfter[resource] = t
 	}
 }
 
-// InBackoff reports whether the fetch backoff window (set by SetRetryAfter) is
-// still active as of now.
-func (c *Cache) InBackoff(now time.Time) bool {
+// InBackoff reports whether requests against resource are currently paused,
+// either by that bucket's own cooldown or by an account-wide one.
+func (c *Cache) InBackoff(resource string, now time.Time) bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return now.Before(c.retryAfter)
+	return inBackoff(c.retryAfter, resource, now)
 }
 
-func (w *Writable) InBackoff(now time.Time) bool { return now.Before(w.retryAfter) }
+func (w *Writable) InBackoff(resource string, now time.Time) bool {
+	return inBackoff(w.retryAfter, resource, now)
+}
 
-// RetryAfter is the currently armed backoff deadline, zero when none is armed.
-// Callers use it to report when fetches resume.
-func (c *Cache) RetryAfter() time.Time {
+func inBackoff(deadlines map[string]time.Time, resource string, now time.Time) bool {
+	return now.Before(deadlines[resource]) || now.Before(deadlines[ResourceAll])
+}
+
+// RetryAfter is the deadline that currently pauses resource, zero when nothing
+// does. Callers use it to report when fetches resume.
+func (c *Cache) RetryAfter(resource string) time.Time {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return c.retryAfter
+	deadline := c.retryAfter[resource]
+	if all := c.retryAfter[ResourceAll]; all.After(deadline) {
+		return all
+	}
+	return deadline
 }
 
 // TerminalMaxAge is the floor on how long a merged or closed PR status is

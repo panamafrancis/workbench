@@ -70,7 +70,7 @@ const pollBody = `[
 func TestParsePollResponseOK(t *testing.T) {
 	raw := rawResponse("200 OK", map[string]string{
 		"Etag":                  `W/"abc123"`,
-		"X-Ratelimit-Resource":  resourceCore,
+		"X-Ratelimit-Resource":  ResourceCore,
 		"X-Ratelimit-Remaining": "4999",
 		"Content-Type":          "application/json",
 	}, pollBody)
@@ -116,7 +116,7 @@ func TestParsePollResponseOK(t *testing.T) {
 // the cheapest possible round into the most expensive one.
 func TestParsePollResponseNotModified(t *testing.T) {
 	raw := rawResponse("304 Not Modified", map[string]string{
-		"X-Ratelimit-Resource":  resourceCore,
+		"X-Ratelimit-Resource":  ResourceCore,
 		"X-Ratelimit-Remaining": "4999",
 	}, "")
 
@@ -161,7 +161,7 @@ func TestParsePollResponseTruncated(t *testing.T) {
 func TestParsePollResponseRateLimited(t *testing.T) {
 	reset := time.Now().Add(12 * time.Minute).Truncate(time.Second)
 	raw := rawResponse("403 Forbidden", map[string]string{
-		"X-Ratelimit-Resource":  resourceCore,
+		"X-Ratelimit-Resource":  ResourceCore,
 		"X-Ratelimit-Remaining": "0",
 		"X-Ratelimit-Reset":     strconv.FormatInt(reset.Unix(), 10),
 	}, `{"message":"API rate limit exceeded"}`)
@@ -177,7 +177,7 @@ func TestParsePollResponseRateLimited(t *testing.T) {
 	if !limited.ResetAt.Equal(reset) {
 		t.Errorf("ResetAt = %v, want %v (from the header, not a guess)", limited.ResetAt, reset)
 	}
-	if limited.Resource != resourceCore {
+	if limited.Resource != ResourceCore {
 		t.Errorf("Resource = %q, want the core bucket", limited.Resource)
 	}
 }
@@ -246,5 +246,48 @@ func TestParsePollResponseSecondaryWithoutRetryAfter(t *testing.T) {
 	}
 	if time.Until(limited.ResetAt) <= 0 {
 		t.Error("want a pause in the future")
+	}
+}
+
+// A remote that goes through an ssh config alias is still GitHub, and must not
+// be pushed onto the expensive per-branch GraphQL path. Four of the twenty
+// repos in the setup this was written for use this form, including the repo
+// itself.
+func TestRepoRefFromRemoteResolvesSSHAliases(t *testing.T) {
+	orig := sshResolve
+	t.Cleanup(func() { sshResolve = orig })
+	sshResolve = func(host string) string {
+		switch host {
+		case "github-panamafrancis", "gh-work":
+			return "github.com"
+		case "git.internal":
+			return "git.internal"
+		}
+		return ""
+	}
+
+	tests := []struct {
+		raw  string
+		want string // "" means "not a GitHub repo we can address"
+	}{
+		{"git@github-panamafrancis:panamafrancis/workbench.git", "panamafrancis/workbench"},
+		{"ssh://git@gh-work/acme/widgets.git", "acme/widgets"},
+		{"git@github.com:fraud-zero/docs.git", "fraud-zero/docs"},
+		{"https://github.com/acme/widgets", "acme/widgets"},
+		{"git@git.internal:team/thing.git", ""},
+		{"git@unknown-alias:team/thing.git", ""},
+		{"/local/path", ""},
+	}
+	for _, tc := range tests {
+		ref, ok := RepoRefFromRemote(tc.raw)
+		if tc.want == "" {
+			if ok {
+				t.Errorf("RepoRefFromRemote(%q) = %v, want unresolvable", tc.raw, ref)
+			}
+			continue
+		}
+		if !ok || ref.String() != tc.want {
+			t.Errorf("RepoRefFromRemote(%q) = %v/%v, want %q", tc.raw, ref, ok, tc.want)
+		}
 	}
 }

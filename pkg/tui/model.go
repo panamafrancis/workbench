@@ -975,7 +975,7 @@ func (m *Model) fetchVisibleCmd(force bool) tea.Cmd {
 	// statuses (and backoff) another tab's sidebar persisted.
 	if m.prCache != nil {
 		_ = m.prCache.Load()
-		if m.prCache.InBackoff(time.Now()) {
+		if m.prCache.InBackoff(github.ResourceCore, time.Now()) {
 			// A peer tab may have armed the backoff; surface the hint here too so
 			// every tab signals that fetches are paused, not just the one that hit
 			// the limit.

@@ -227,7 +227,7 @@ func TestSyncNotModifiedDoesNotFabricateAbsence(t *testing.T) {
 
 func TestSyncRateLimitArmsExactCooldown(t *testing.T) {
 	reset := time.Now().Add(9 * time.Minute).Truncate(time.Second)
-	f := &fakeGH{pollErr: &RateLimitedError{Resource: resourceCore, ResetAt: reset}}
+	f := &fakeGH{pollErr: &RateLimitedError{Resource: ResourceCore, ResetAt: reset}}
 	f.install(t, testRemote, true)
 
 	c := syncCache(t)
@@ -239,10 +239,10 @@ func TestSyncRateLimitArmsExactCooldown(t *testing.T) {
 	if !errors.Is(report.Err, ErrGHRateLimited) {
 		t.Errorf("report.Err = %v, want a rate limit", report.Err)
 	}
-	if !c.InBackoff(reset.Add(-time.Second)) {
+	if !c.InBackoff(ResourceCore, reset.Add(-time.Second)) {
 		t.Error("cooldown should be armed until the reported reset")
 	}
-	if c.InBackoff(reset.Add(time.Second)) {
+	if c.InBackoff(ResourceCore, reset.Add(time.Second)) {
 		t.Error("cooldown should end exactly at the reported reset, not later")
 	}
 	if f.lookupN != 0 {
@@ -253,7 +253,7 @@ func TestSyncRateLimitArmsExactCooldown(t *testing.T) {
 func TestSyncPausedWhileInBackoff(t *testing.T) {
 	c := syncCache(t)
 	if err := c.Mutate(func(w *Writable) error {
-		w.SetRetryAfter(time.Now().Add(10 * time.Minute))
+		w.SetRetryAfter(ResourceCore, time.Now().Add(10*time.Minute))
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -461,7 +461,7 @@ func TestSyncRateLimitDuringFallbackStops(t *testing.T) {
 	reset := time.Now().Add(4 * time.Minute).Truncate(time.Second)
 	f := &fakeGH{
 		polls:     []RepoPoll{{ETag: testPollETag, Truncated: true, Oldest: time.Now()}},
-		lookupErr: &RateLimitedError{Resource: resourceCore, ResetAt: reset},
+		lookupErr: &RateLimitedError{Resource: ResourceCore, ResetAt: reset},
 	}
 	f.install(t, testRemote, true)
 
@@ -478,7 +478,7 @@ func TestSyncRateLimitDuringFallbackStops(t *testing.T) {
 	if !errors.Is(report.Err, ErrGHRateLimited) {
 		t.Errorf("Err = %v, want the rate limit reported", report.Err)
 	}
-	if !c.InBackoff(reset.Add(-time.Second)) {
+	if !c.InBackoff(ResourceCore, reset.Add(-time.Second)) {
 		t.Error("cooldown should be armed from the fallback path too")
 	}
 }
@@ -508,7 +508,7 @@ func TestBudgetAllows(t *testing.T) {
 }
 
 func TestSyncRecordsBudgetFromPoll(t *testing.T) {
-	observed := Budget{Resource: resourceCore, Limit: 5000, Remaining: 4321,
+	observed := Budget{Resource: ResourceCore, Limit: 5000, Remaining: 4321,
 		ResetAt: time.Now().Add(time.Hour), ObservedAt: time.Now()}
 	f := &fakeGH{polls: []RepoPoll{{ETag: testPollETag, Budget: observed}}}
 	f.install(t, testRemote, true)
@@ -517,7 +517,7 @@ func TestSyncRecordsBudgetFromPoll(t *testing.T) {
 	runSync(t, c, []Target{{RepoPath: testRepo, Branch: testBranch}}, SyncOptions{MaxAge: time.Minute})
 
 	got := c.Budget()
-	if got.Remaining != 4321 || got.Resource != resourceCore {
+	if got.Remaining != 4321 || got.Resource != ResourceCore {
 		t.Errorf("budget = %+v, want the observation the poll carried", got)
 	}
 }
@@ -526,7 +526,7 @@ func TestSyncRecordsBudgetFromPoll(t *testing.T) {
 // charged — so a round stops spending before it eats the headroom the user's
 // own gh calls need.
 func TestSyncDefersLookupsBelowReserve(t *testing.T) {
-	low := Budget{Resource: resourceCore, Limit: 5000, Remaining: 10,
+	low := Budget{Resource: ResourceCore, Limit: 5000, Remaining: 10,
 		ResetAt: time.Now().Add(time.Hour), ObservedAt: time.Now()}
 	f := &fakeGH{polls: []RepoPoll{{ETag: testPollETag, Truncated: true, Oldest: time.Now(), Budget: low}}}
 	f.install(t, testRemote, true)
@@ -547,7 +547,7 @@ func TestSyncDefersLookupsBelowReserve(t *testing.T) {
 
 // The person waiting on a manual refresh outranks the background reserve.
 func TestSyncForcedRefreshSpendsIntoTheReserve(t *testing.T) {
-	low := Budget{Resource: resourceCore, Limit: 5000, Remaining: 200,
+	low := Budget{Resource: ResourceCore, Limit: 5000, Remaining: 200,
 		ResetAt: time.Now().Add(time.Hour), ObservedAt: time.Now()}
 	f := &fakeGH{polls: []RepoPoll{{ETag: testPollETag, Truncated: true, Oldest: time.Now(), Budget: low}}}
 	f.install(t, testRemote, true)
@@ -558,5 +558,116 @@ func TestSyncForcedRefreshSpendsIntoTheReserve(t *testing.T) {
 
 	if f.lookupN != 1 {
 		t.Errorf("lookups = %d, want a forced refresh to proceed above the hard floor", f.lookupN)
+	}
+}
+
+// The buckets run out independently. An exhausted graphql bucket used to arm
+// one global cooldown, which paused the conditional core-bucket polls too —
+// pausing work that costs nothing because unrelated work had run out.
+func TestSyncGraphQLCooldownDoesNotPausePolls(t *testing.T) {
+	c := syncCache(t)
+	if err := c.Mutate(func(w *Writable) error {
+		w.SetRetryAfter(ResourceGraphQL, time.Now().Add(30*time.Minute))
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	f := &fakeGH{polls: []RepoPoll{{ETag: testPollETag, PRs: []PollPR{
+		{HeadRef: testBranch, Info: &PRInfo{Number: 5, Status: PROpen, FetchedAt: time.Now()}},
+	}}}}
+	f.install(t, testRemote, true)
+
+	report := runSync(t, c, []Target{{RepoPath: testRepo, Branch: testBranch}}, SyncOptions{MaxAge: time.Minute})
+
+	if report.Paused {
+		t.Error("a graphql cooldown must not pause the core-bucket polls")
+	}
+	if f.pollN != 1 {
+		t.Errorf("polls = %d, want the round to proceed", f.pollN)
+	}
+	if c.Get(testBranch) == nil {
+		t.Error("the poll's result should have been applied")
+	}
+}
+
+// ...but it does stop the lookups that need that bucket.
+func TestSyncGraphQLCooldownStopsGraphQLLookups(t *testing.T) {
+	c := syncCache(t)
+	if err := c.Mutate(func(w *Writable) error {
+		w.SetRetryAfter(ResourceGraphQL, time.Now().Add(30*time.Minute))
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	f := &fakeGH{}
+	f.install(t, "git@gitlab.com:team/thing.git", true) // non-GitHub → gh pr list
+
+	report := runSync(t, c, []Target{{RepoPath: testRepo, Branch: testBranch}}, SyncOptions{MaxAge: time.Minute})
+
+	if f.graphqlLookupN != 0 {
+		t.Error("a graphql lookup must not run while that bucket is paused")
+	}
+	if report.Deferred != 1 {
+		t.Errorf("Deferred = %d, want the branch left for later", report.Deferred)
+	}
+}
+
+func TestArmCooldownTargetsTheFailingBucket(t *testing.T) {
+	now := time.Now()
+	reset := now.Add(10 * time.Minute)
+
+	tests := []struct {
+		name        string
+		err         error
+		fallback    string
+		coreBlocked bool
+		gqlBlocked  bool
+	}{
+		{
+			name:       "graphql exhaustion pauses graphql only",
+			err:        &RateLimitedError{Resource: ResourceGraphQL, ResetAt: reset},
+			fallback:   ResourceCore,
+			gqlBlocked: true,
+		},
+		{
+			name:        "core exhaustion pauses core only",
+			err:         &RateLimitedError{Resource: ResourceCore, ResetAt: reset},
+			fallback:    ResourceCore,
+			coreBlocked: true,
+		},
+		{
+			name:        "the burst limit applies to everything",
+			err:         &RateLimitedError{Resource: resourceSecondary, ResetAt: reset},
+			fallback:    ResourceCore,
+			coreBlocked: true,
+			gqlBlocked:  true,
+		},
+		{
+			name:       "an unlabelled limit pauses the bucket the call spends",
+			err:        ErrGHRateLimited,
+			fallback:   ResourceGraphQL,
+			gqlBlocked: true,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			c := syncCache(t)
+			if err := c.Mutate(func(w *Writable) error {
+				if !armCooldown(w, tc.err, now, tc.fallback) {
+					t.Error("expected a cooldown to be armed")
+				}
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if got := c.InBackoff(ResourceCore, now); got != tc.coreBlocked {
+				t.Errorf("core blocked = %v, want %v", got, tc.coreBlocked)
+			}
+			if got := c.InBackoff(ResourceGraphQL, now); got != tc.gqlBlocked {
+				t.Errorf("graphql blocked = %v, want %v", got, tc.gqlBlocked)
+			}
+		})
 	}
 }

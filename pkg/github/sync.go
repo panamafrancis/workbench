@@ -81,7 +81,9 @@ const defaultMaxLookups = 10
 func Sync(w *Writable, targets []Target, opts SyncOptions) SyncReport {
 	now := time.Now()
 	report := SyncReport{}
-	if w.InBackoff(now) {
+	// Only the core bucket gates the round: that is what the polls spend, and
+	// an exhausted graphql bucket must not stop work that costs nothing.
+	if w.InBackoff(ResourceCore, now) {
 		report.Paused = true
 		return report
 	}
@@ -102,7 +104,7 @@ func Sync(w *Writable, targets []Target, opts SyncOptions) SyncReport {
 			report.Err = err
 			// A rate limit or a broken gh applies to every repo, not just this
 			// one: stop the round rather than proving it repo by repo.
-			if armCooldown(w, err, now) || IsPermanentError(err) {
+			if armCooldown(w, err, now, ResourceCore) || IsPermanentError(err) {
 				return report
 			}
 			continue
@@ -118,10 +120,20 @@ func Sync(w *Writable, targets []Target, opts SyncOptions) SyncReport {
 		if report.Lookups >= opts.MaxLookups {
 			break
 		}
+		// A lookup's bucket depends on how it has to be made: REST for a repo we
+		// can address by owner/name, gh's own GraphQL resolution otherwise.
+		resource := ResourceCore
+		if !u.ref.Valid() {
+			resource = ResourceGraphQL
+		}
+		if w.InBackoff(resource, now) {
+			report.Deferred++
+			continue
+		}
 		// Unlike a conditional poll, a lookup is always charged. Stop before
 		// eating into the headroom the user's own gh calls need; the branch
 		// stays unresolved and the next round picks it up.
-		if !w.Budget().Allows(opts.Reserve, now) {
+		if resource == ResourceCore && !w.Budget().Allows(opts.Reserve, now) {
 			report.Deferred++
 			continue
 		}
@@ -137,7 +149,12 @@ func Sync(w *Writable, targets []Target, opts SyncOptions) SyncReport {
 		info, err := lookupOne(u)
 		if err != nil {
 			report.Err = err
-			if armCooldown(w, err, now) || IsPermanentError(err) {
+			if armCooldown(w, err, now, resource) {
+				// The bucket this lookup needed is gone; the others may still be
+				// usable, so keep going rather than abandoning the round.
+				continue
+			}
+			if IsPermanentError(err) {
 				return report
 			}
 			continue
@@ -257,19 +274,33 @@ func syncRepo(w *Writable, group repoGroup, opts SyncOptions, now time.Time, rep
 	return unresolved, nil
 }
 
-// armCooldown pauses every process when the error says the quota is gone,
-// using the reset the response reported rather than a guess. It reports whether
-// the round should stop.
-func armCooldown(w *Writable, err error, now time.Time) bool {
+// armCooldown pauses every process when the error says a quota is gone, using
+// the reset the response reported rather than a guess, and against the bucket
+// that actually ran out. fallback names the bucket the failing call spends,
+// for errors that do not say. It reports whether a cooldown was armed.
+func armCooldown(w *Writable, err error, now time.Time, fallback string) bool {
 	if !IsRateLimited(err) {
 		return false
 	}
+	resource := fallback
+	deadline := now.Add(FallbackCooldown)
+
 	var limited *RateLimitedError
-	if errors.As(err, &limited) && !limited.ResetAt.IsZero() {
-		w.SetRetryAfter(limited.ResetAt)
-		return true
+	if errors.As(err, &limited) {
+		switch limited.Resource {
+		case "":
+			// Keep the caller's bucket.
+		case resourceSecondary:
+			// The burst limit is not a bucket — it applies to everything.
+			resource = ResourceAll
+		default:
+			resource = limited.Resource
+		}
+		if !limited.ResetAt.IsZero() {
+			deadline = limited.ResetAt
+		}
 	}
-	w.SetRetryAfter(now.Add(FallbackCooldown))
+	w.SetRetryAfter(resource, deadline)
 	return true
 }
 
@@ -309,7 +340,7 @@ func groupByRepo(targets []Target) []repoGroup {
 	for _, t := range targets {
 		ref, ok := refs[t.RepoPath]
 		if !ok {
-			ref, _ = ParseRemoteURL(originURL(t.RepoPath))
+			ref, _ = RepoRefFromRemote(originURL(t.RepoPath))
 			refs[t.RepoPath] = ref
 		}
 		// A repo we can address by owner/name is one group however many

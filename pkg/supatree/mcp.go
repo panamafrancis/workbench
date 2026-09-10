@@ -308,7 +308,7 @@ func handlePRStatus(map[string]any) (string, bool) {
 	fmt.Fprintf(&b, "\nopen=%d draft=%d merged=%d", counts[github.PROpen], counts[github.PRDraft], counts[github.PRMerged])
 	switch {
 	case report.Paused:
-		fmt.Fprintf(&b, "\n(cached values: gh fetches paused until %s)", cache.RetryAfter().Format(time.Kitchen))
+		fmt.Fprintf(&b, "\n(cached values: gh fetches paused until %s)", cache.RetryAfter(github.ResourceCore).Format(time.Kitchen))
 	case report.Err != nil:
 		fmt.Fprintf(&b, "\n(some values may be stale: %v)", report.Err)
 	}
@@ -338,7 +338,7 @@ func depsWithoutPRs(inst *Instance, m *Member) ([]string, error) {
 	}
 	if report.Paused {
 		return nil, fmt.Errorf("gh fetches are paused until %s after a rate limit",
-			cache.RetryAfter().Format(time.Kitchen))
+			cache.RetryAfter(github.ResourceCore).Format(time.Kitchen))
 	}
 
 	var missing []string

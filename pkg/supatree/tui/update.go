@@ -418,7 +418,7 @@ func (m *Model) fetchPRCmd(force bool) tea.Cmd {
 	// backoff (and freshly cached statuses) another tab's sidebar persisted —
 	// otherwise each tab would independently keep hitting a rate-limited API.
 	_ = m.prCache.Load()
-	if m.prCache.InBackoff(time.Now()) {
+	if m.prCache.InBackoff(github.ResourceCore, time.Now()) {
 		// A peer tab may have armed the backoff; surface the hint here too so every
 		// tab (not just the one that hit the limit) signals that fetches are paused.
 		m.prHint = "gh rate limited"
