@@ -197,7 +197,7 @@ func handleCreatePR(args map[string]any) (string, bool) {
 			return fmt.Sprintf("dependencies without PRs yet: %s (pass force=true to override)", strings.Join(missing, ", ")), true
 		}
 	}
-	out, err := createOnePR(m.Path, args)
+	out, err := createOnePR(m.Path, m.Branch, args)
 	if err != nil {
 		return out, true
 	}
@@ -223,7 +223,7 @@ func handleCreatePRs(args map[string]any) (string, bool) {
 			fmt.Fprintf(&b, "%s: skipped (no commits ahead)\n", m.Alias)
 			continue
 		}
-		out, err := createOnePR(m.Path, args)
+		out, err := createOnePR(m.Path, m.Branch, args)
 		if err != nil {
 			fmt.Fprintf(&b, "%s: ERROR %s\n", m.Alias, strings.TrimSpace(out))
 			continue
@@ -242,11 +242,34 @@ const (
 	// create_prs) reads the cache the sidebars already filled instead of
 	// re-asking GitHub for every member.
 	prStatusMaxAge = 2 * time.Minute
-	// prStatusCooldown pauses GitHub fetches after a rate-limit response. The
-	// sidebars observe the same persisted window, so arming it here stands the
-	// whole machine down rather than only this tool call.
-	prStatusCooldown = 15 * time.Minute
 )
+
+// syncMembers brings the cache up to date for the given member branches using
+// the same path the sidebars use: one conditional poll per repo, free when
+// nothing changed, with a per-branch REST lookup only for what a poll cannot
+// settle. Going through github.Sync is what keeps an agent's tool call from
+// costing a GraphQL request per member — and what makes it observe (and arm)
+// the same shared cooldown every sidebar observes.
+func syncMembers(cache *github.Cache, members []*Member) (github.SyncReport, error) {
+	targets := make([]github.Target, 0, len(members))
+	for _, m := range members {
+		if m.Exists {
+			targets = append(targets, github.Target{RepoPath: m.Path, Branch: m.Branch})
+		}
+	}
+	var report github.SyncReport
+	if len(targets) == 0 {
+		return report, nil
+	}
+	err := cache.Mutate(func(w *github.Writable) error {
+		report = github.Sync(w, targets, github.SyncOptions{
+			MaxAge:     prStatusMaxAge,
+			MaxLookups: len(targets),
+		})
+		return nil
+	})
+	return report, err
+}
 
 func handlePRStatus(map[string]any) (string, bool) {
 	_, _, inst, err := currentInstance()
@@ -256,43 +279,13 @@ func handlePRStatus(map[string]any) (string, bool) {
 	cache := github.NewCache(PRCachePath())
 	_ = cache.Load()
 
-	// Spend quota only on stale entries, and none at all while a cooldown
-	// another process armed is still running: this tool used to fetch every
-	// member unconditionally and then write the whole cache back from its own
-	// snapshot, which reverted the sidebars' statuses and disarmed their
-	// cooldown — exactly what kept the quota drained.
-	paused := cache.InBackoff(time.Now())
-	fetched := map[string]*github.PRInfo{}
-	var fetchErr error
-	for _, m := range inst.Members {
-		if !m.Exists {
-			continue
-		}
-		if paused {
-			break
-		}
-		if !cache.IsStale(m.Branch, prStatusMaxAge) {
-			continue
-		}
-		info, lookupErr := github.LookupPR(m.Path, m.Branch)
-		if lookupErr != nil {
-			// One failure means the rest will fail the same way (auth, quota,
-			// network); don't spend N more calls proving it.
-			fetchErr = lookupErr
-			break
-		}
-		fetched[m.Branch] = info
+	members := make([]*Member, 0, len(inst.Members))
+	for i := range inst.Members {
+		members = append(members, &inst.Members[i])
 	}
-	if len(fetched) > 0 || github.IsRateLimited(fetchErr) {
-		_ = cache.Mutate(func(w *github.Writable) error {
-			for branch, info := range fetched {
-				w.Set(branch, info)
-			}
-			if github.IsRateLimited(fetchErr) {
-				w.SetRetryAfter(time.Now().Add(prStatusCooldown))
-			}
-			return nil
-		})
+	report, syncErr := syncMembers(cache, members)
+	if syncErr != nil {
+		return syncErr.Error(), true
 	}
 
 	var b strings.Builder
@@ -314,38 +307,12 @@ func handlePRStatus(map[string]any) (string, bool) {
 	}
 	fmt.Fprintf(&b, "\nopen=%d draft=%d merged=%d", counts[github.PROpen], counts[github.PRDraft], counts[github.PRMerged])
 	switch {
-	case paused:
+	case report.Paused:
 		fmt.Fprintf(&b, "\n(cached values: gh fetches paused until %s)", cache.RetryAfter().Format(time.Kitchen))
-	case fetchErr != nil:
-		fmt.Fprintf(&b, "\n(some values may be stale: %v)", fetchErr)
+	case report.Err != nil:
+		fmt.Fprintf(&b, "\n(some values may be stale: %v)", report.Err)
 	}
 	return b.String(), false
-}
-
-// memberStatus returns the cached PR status for a member branch, fetching and
-// caching it when the entry is missing or stale. A rate-limit response arms the
-// shared cooldown before the error is returned.
-func memberStatus(cache *github.Cache, path, branch string) (*github.PRInfo, error) {
-	if info := cache.Get(branch); info != nil && !cache.IsStale(branch, prStatusMaxAge) {
-		return info, nil
-	}
-	info, err := github.LookupPR(path, branch)
-	if err != nil {
-		if github.IsRateLimited(err) {
-			_ = cache.Mutate(func(w *github.Writable) error {
-				w.SetRetryAfter(time.Now().Add(prStatusCooldown))
-				return nil
-			})
-		}
-		return nil, err
-	}
-	if mutErr := cache.Mutate(func(w *github.Writable) error {
-		w.Set(branch, info)
-		return nil
-	}); mutErr != nil {
-		return nil, mutErr
-	}
-	return info, nil
 }
 
 // depsWithoutPRs returns dependency aliases of m that have no open/merged PR.
@@ -353,28 +320,49 @@ func memberStatus(cache *github.Cache, path, branch string) (*github.PRInfo, err
 // list: treating a rate-limited or unauthenticated gh as "this dependency has
 // no PR" blocks stacking on a fact that was never established.
 func depsWithoutPRs(inst *Instance, m *Member) ([]string, error) {
+	deps := make([]*Member, 0, len(m.DependsOn))
+	for _, alias := range m.DependsOn {
+		if dm := inst.FindMember(alias); dm != nil {
+			deps = append(deps, dm)
+		}
+	}
+	if len(deps) == 0 {
+		return nil, nil
+	}
+
 	cache := github.NewCache(PRCachePath())
 	_ = cache.Load()
+	report, err := syncMembers(cache, deps)
+	if err != nil {
+		return nil, err
+	}
+	if report.Paused {
+		return nil, fmt.Errorf("gh fetches are paused until %s after a rate limit",
+			cache.RetryAfter().Format(time.Kitchen))
+	}
+
 	var missing []string
-	for _, dep := range m.DependsOn {
-		dm := inst.FindMember(dep)
-		if dm == nil {
-			continue
-		}
-		info, err := memberStatus(cache, dm.Path, dm.Branch)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", dep, err)
+	for _, dm := range deps {
+		info := cache.Get(dm.Branch)
+		if info == nil {
+			// No answer at all — say so rather than calling it "no PR". Sync's
+			// own error, if it had one, explains why.
+			if report.Err != nil {
+				return nil, fmt.Errorf("%s: %w", dm.Alias, report.Err)
+			}
+			return nil, fmt.Errorf("%s: could not determine PR status", dm.Alias)
 		}
 		if info.Status == github.PRNone {
-			missing = append(missing, dep)
+			missing = append(missing, dm.Alias)
 		}
 	}
 	sort.Strings(missing)
 	return missing, nil
 }
 
-// createOnePR pushes HEAD and runs gh pr create in worktreePath.
-func createOnePR(worktreePath string, args map[string]any) (string, error) {
+// createOnePR pushes HEAD and runs gh pr create in worktreePath, caching the
+// PR it just created for branch.
+func createOnePR(worktreePath, branch string, args map[string]any) (string, error) {
 	pushCtx, pushCancel := mcp.ToolContext()
 	defer pushCancel()
 	if out, err := exec.CommandContext(pushCtx, "git", "-C", worktreePath, "push", "-u", "origin", "HEAD").CombinedOutput(); err != nil {
@@ -401,7 +389,12 @@ func createOnePR(worktreePath string, args map[string]any) (string, error) {
 	if err != nil {
 		return fmt.Sprintf("gh pr create failed: %s", strings.TrimSpace(string(out))), err
 	}
-	return strings.TrimSpace(string(out)), nil
+	text := strings.TrimSpace(string(out))
+	// We know this PR exists without asking anyone: cache it now so the sidebar
+	// shows it immediately instead of on the next poll.
+	draft, _ := args["draft"].(bool)
+	github.RecordCreatedPR(PRCachePath(), branch, text, draft)
+	return text, nil
 }
 
 // --- small JSON-schema helpers ---

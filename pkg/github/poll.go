@@ -75,6 +75,54 @@ func ParseRemoteURL(raw string) (RepoRef, bool) {
 	return RepoRef{Owner: owner, Name: name}, true
 }
 
+// Budget is the rate-limit state a response reported. GitHub sends these
+// headers on every reply, including the free 304s, so the picture stays current
+// without spending anything to ask — which matters because `gh api rate_limit`
+// cannot be trusted (it has reported remaining: 5000 against headers saying
+// used: 5001).
+type Budget struct {
+	Resource   string    `json:"resource,omitempty"`
+	Limit      int       `json:"limit,omitempty"`
+	Remaining  int       `json:"remaining,omitempty"`
+	ResetAt    time.Time `json:"reset_at,omitzero"`
+	ObservedAt time.Time `json:"observed_at,omitzero"`
+}
+
+// Known reports whether this is a real observation rather than a zero value.
+func (b Budget) Known() bool { return !b.ObservedAt.IsZero() }
+
+// Expired reports whether the observation predates the window it described, in
+// which case the quota has since refilled.
+func (b Budget) Expired(now time.Time) bool {
+	return b.Known() && !b.ResetAt.IsZero() && now.After(b.ResetAt)
+}
+
+// Allows reports whether spending a charged request now still leaves reserve
+// headroom for everyone else. An unknown or expired observation allows it: the
+// point is to back off from a bucket we have watched run down, not to refuse to
+// start.
+func (b Budget) Allows(reserve int, now time.Time) bool {
+	if !b.Known() || b.Expired(now) {
+		return true
+	}
+	return b.Remaining > reserve
+}
+
+func budgetFrom(header http.Header, now time.Time) Budget {
+	limit, errLimit := strconv.Atoi(header.Get("X-Ratelimit-Limit"))
+	remaining, errRemaining := strconv.Atoi(header.Get("X-Ratelimit-Remaining"))
+	if errLimit != nil || errRemaining != nil {
+		return Budget{}
+	}
+	return Budget{
+		Resource:   header.Get("X-Ratelimit-Resource"),
+		Limit:      limit,
+		Remaining:  remaining,
+		ResetAt:    headerReset(header.Get("X-Ratelimit-Reset")),
+		ObservedAt: now,
+	}
+}
+
 // PollPR is one pull request as returned by a repo poll, carrying the head
 // branch so callers can match it against the branches they track.
 type PollPR struct {
@@ -97,6 +145,9 @@ type RepoPoll struct {
 	Truncated bool
 	// Oldest is the update time of the last PR on the page.
 	Oldest time.Time
+	// Budget is the rate-limit state this response reported, zero when the
+	// headers were absent or unparsable.
+	Budget Budget
 }
 
 // Complete reports whether this page carries every change since since.
@@ -239,9 +290,10 @@ func parsePollResponse(raw []byte, prevETag string) (RepoPoll, error) {
 	}
 	defer func() { _ = resp.Body.Close() }()
 
+	now := time.Now()
 	if resp.StatusCode == http.StatusNotModified {
 		// Nothing changed, and GitHub charged nothing for saying so.
-		return RepoPoll{NotModified: true, ETag: prevETag}, nil
+		return RepoPoll{NotModified: true, ETag: prevETag, Budget: budgetFrom(resp.Header, now)}, nil
 	}
 	if resp.StatusCode == http.StatusUnauthorized {
 		return RepoPoll{}, ErrGHAuth
@@ -269,9 +321,9 @@ func parsePollResponse(raw []byte, prevETag string) (RepoPoll, error) {
 		return RepoPoll{}, fmt.Errorf("parse pr list: %w", err)
 	}
 
-	now := time.Now()
 	poll := RepoPoll{
 		ETag:      resp.Header.Get("ETag"),
+		Budget:    budgetFrom(resp.Header, now),
 		Truncated: hasNextPage(resp.Header.Get("Link")),
 		PRs:       make([]PollPR, 0, len(prs)),
 	}

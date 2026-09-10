@@ -140,6 +140,8 @@ PR status is fetched via the `gh` CLI and cached on disk. A round asks each **re
 - **Unpushed branches are never queried.** A branch with no `origin/<branch>` ref cannot have a PR.
 - **Repos the account cannot see are polled once.** A repo that answers `404` (private to another org, renamed, deleted) is remembered and skipped until you press `r`.
 
+Rate-limit headroom is watched for free — every response, including the 304s, reports it. Background rounds stop making *charged* requests (the per-branch fallbacks) once fewer than 500 requests remain, showing a `gh quota low` hint instead; pressing `r` spends down to 50, because you waiting outranks the background. Creating a PR through the MCP tools caches it immediately, so the badge appears without waiting for the next poll.
+
 If GitHub rate-limits the account anyway, the sidebar shows a `gh rate limited` hint and pauses all fetches **until the reset time the response reported** — both the primary quota (`X-RateLimit-Reset`) and the secondary/burst limit (`Retry-After`) are honoured. The pause is persisted in the cache, so it survives sidebar restarts and applies to every tab, not just the one that hit the limit.
 
 Note that `gh api rate_limit` cannot be trusted for the GraphQL bucket: it has been observed reporting `remaining: 5000` while the response headers said `used: 5001`. Check that bucket with `gh api graphql -f query='{rateLimit{used remaining resetAt}}'`, or read `X-RateLimit-*` off any response.

@@ -482,3 +482,81 @@ func TestSyncRateLimitDuringFallbackStops(t *testing.T) {
 		t.Error("cooldown should be armed from the fallback path too")
 	}
 }
+
+func TestBudgetAllows(t *testing.T) {
+	now := time.Now()
+	tests := []struct {
+		name   string
+		budget Budget
+		want   bool
+	}{
+		{"unknown observation allows", Budget{}, true},
+		{"plenty left", Budget{Remaining: 4000, ObservedAt: now}, true},
+		{"below the reserve", Budget{Remaining: 100, ObservedAt: now}, false},
+		{"exactly the reserve", Budget{Remaining: 500, ObservedAt: now}, false},
+		{
+			name:   "expired observation allows — the window has refilled",
+			budget: Budget{Remaining: 0, ResetAt: now.Add(-time.Minute), ObservedAt: now.Add(-time.Hour)},
+			want:   true,
+		},
+	}
+	for _, tc := range tests {
+		if got := tc.budget.Allows(DefaultReserve, now); got != tc.want {
+			t.Errorf("%s: Allows = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestSyncRecordsBudgetFromPoll(t *testing.T) {
+	observed := Budget{Resource: resourceCore, Limit: 5000, Remaining: 4321,
+		ResetAt: time.Now().Add(time.Hour), ObservedAt: time.Now()}
+	f := &fakeGH{polls: []RepoPoll{{ETag: testPollETag, Budget: observed}}}
+	f.install(t, testRemote, true)
+
+	c := syncCache(t)
+	runSync(t, c, []Target{{RepoPath: testRepo, Branch: testBranch}}, SyncOptions{MaxAge: time.Minute})
+
+	got := c.Budget()
+	if got.Remaining != 4321 || got.Resource != resourceCore {
+		t.Errorf("budget = %+v, want the observation the poll carried", got)
+	}
+}
+
+// Polls are conditional and usually free, but a fallback lookup is always
+// charged — so a round stops spending before it eats the headroom the user's
+// own gh calls need.
+func TestSyncDefersLookupsBelowReserve(t *testing.T) {
+	low := Budget{Resource: resourceCore, Limit: 5000, Remaining: 10,
+		ResetAt: time.Now().Add(time.Hour), ObservedAt: time.Now()}
+	f := &fakeGH{polls: []RepoPoll{{ETag: testPollETag, Truncated: true, Oldest: time.Now(), Budget: low}}}
+	f.install(t, testRemote, true)
+
+	c := syncCache(t)
+	report := runSync(t, c, []Target{{RepoPath: testRepo, Branch: "wt/a/unknown"}}, SyncOptions{MaxAge: time.Minute})
+
+	if f.lookupN != 0 {
+		t.Errorf("lookups = %d, want none below the reserve", f.lookupN)
+	}
+	if report.Deferred != 1 {
+		t.Errorf("Deferred = %d, want the branch left for a later round", report.Deferred)
+	}
+	if f.pollN != 1 {
+		t.Error("the poll itself is conditional and should still run")
+	}
+}
+
+// The person waiting on a manual refresh outranks the background reserve.
+func TestSyncForcedRefreshSpendsIntoTheReserve(t *testing.T) {
+	low := Budget{Resource: resourceCore, Limit: 5000, Remaining: 200,
+		ResetAt: time.Now().Add(time.Hour), ObservedAt: time.Now()}
+	f := &fakeGH{polls: []RepoPoll{{ETag: testPollETag, Truncated: true, Oldest: time.Now(), Budget: low}}}
+	f.install(t, testRemote, true)
+
+	c := syncCache(t)
+	runSync(t, c, []Target{{RepoPath: testRepo, Branch: "wt/a/unknown"}},
+		SyncOptions{MaxAge: time.Minute, Force: true})
+
+	if f.lookupN != 1 {
+		t.Errorf("lookups = %d, want a forced refresh to proceed above the hard floor", f.lookupN)
+	}
+}

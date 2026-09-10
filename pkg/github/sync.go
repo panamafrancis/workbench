@@ -35,7 +35,21 @@ type SyncOptions struct {
 	// cache with many unresolved branches spends a bounded amount of quota and
 	// finishes over several rounds instead of in one burst.
 	MaxLookups int
+	// Reserve is the rate-limit headroom this round must leave for everyone
+	// else. Background rounds keep it; a user-forced refresh passes a smaller
+	// one, because the person waiting for it outranks the background. Zero
+	// means DefaultReserve.
+	Reserve int
 }
+
+// Reserve floors. Background polling is nearly free, but the fallback lookups
+// are real requests, and this cache is shared with whatever else on the machine
+// is spending the same bucket — so a round stops short rather than taking the
+// last of it.
+const (
+	DefaultReserve = 500
+	ForcedReserve  = 50
+)
 
 // SyncReport describes what a round did, for the status line and for tests.
 type SyncReport struct {
@@ -45,6 +59,7 @@ type SyncReport struct {
 	Confirmed   int // entries a poll proved unchanged
 	Lookups     int // per-branch fallback lookups spent
 	Skipped     int // repos skipped as unavailable to this account
+	Deferred    int // branches left unresolved to stay above the reserve
 	Paused      bool
 	Err         error
 }
@@ -73,6 +88,12 @@ func Sync(w *Writable, targets []Target, opts SyncOptions) SyncReport {
 	if opts.MaxLookups == 0 {
 		opts.MaxLookups = defaultMaxLookups
 	}
+	if opts.Reserve == 0 {
+		opts.Reserve = DefaultReserve
+		if opts.Force {
+			opts.Reserve = ForcedReserve
+		}
+	}
 
 	var unresolved []unresolvedTarget
 	for _, group := range groupByRepo(targets) {
@@ -96,6 +117,13 @@ func Sync(w *Writable, targets []Target, opts SyncOptions) SyncReport {
 		t := u.target
 		if report.Lookups >= opts.MaxLookups {
 			break
+		}
+		// Unlike a conditional poll, a lookup is always charged. Stop before
+		// eating into the headroom the user's own gh calls need; the branch
+		// stays unresolved and the next round picks it up.
+		if !w.Budget().Allows(opts.Reserve, now) {
+			report.Deferred++
+			continue
 		}
 		if !opts.Force && !w.IsStale(t.Branch, opts.MaxAge) {
 			continue
@@ -165,6 +193,7 @@ func syncRepo(w *Writable, group repoGroup, opts SyncOptions, now time.Time, rep
 	}
 
 	poll, err := pollRepo(group.path, group.ref, etag)
+	w.SetBudget(poll.Budget)
 	if errors.Is(err, ErrRepoNotFound) {
 		// Not a failure of the round — a fact about this repo. Record it and
 		// carry on with the others.

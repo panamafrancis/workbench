@@ -42,6 +42,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case msg.err == nil:
 			m.ghAvailable = true
 			m.prHint = ""
+			if msg.deferred > 0 {
+				m.prHint = "gh quota low"
+			}
 		case github.IsRateLimited(msg.err):
 			// Leave ghAvailable true: the persisted backoff (InBackoff) gates
 			// retries and lifts on its own.
@@ -456,6 +459,6 @@ func (m *Model) fetchPRCmd(force bool) tea.Cmd {
 		if lockErr != nil {
 			return prMsg{err: lockErr}
 		}
-		return prMsg{err: report.Err}
+		return prMsg{err: report.Err, deferred: report.Deferred}
 	}
 }

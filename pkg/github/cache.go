@@ -15,8 +15,11 @@ type cacheFile struct {
 	Entries map[string]*PRInfo `json:"entries"`
 	// Repos keys a repo ("owner/name") to what we remember about its last
 	// PR-list poll.
-	Repos      map[string]RepoState `json:"repos,omitempty"`
-	RetryAfter time.Time            `json:"retry_after,omitzero"`
+	Repos map[string]RepoState `json:"repos,omitempty"`
+	// Budget is the most recent rate-limit observation any process made, shared
+	// so every sidebar throttles against one picture rather than its own.
+	Budget     Budget    `json:"budget,omitzero"`
+	RetryAfter time.Time `json:"retry_after,omitzero"`
 }
 
 // Cache is a process-local snapshot of the on-disk PR status cache, used by the
@@ -52,6 +55,7 @@ type Cache struct {
 	path       string
 	entries    map[string]*PRInfo
 	repos      map[string]RepoState
+	budget     Budget
 	retryAfter time.Time
 	mu         sync.RWMutex
 }
@@ -82,6 +86,7 @@ func (c *Cache) Load() error {
 	defer c.mu.Unlock()
 	c.entries = f.Entries
 	c.repos = f.Repos
+	c.budget = f.Budget
 	c.retryAfter = f.RetryAfter
 	return nil
 }
@@ -93,6 +98,7 @@ func (c *Cache) Load() error {
 type Writable struct {
 	entries    map[string]*PRInfo
 	repos      map[string]RepoState
+	budget     Budget
 	retryAfter time.Time
 }
 
@@ -122,17 +128,23 @@ func (c *Cache) mutate(lock func(string, func() error) error, fn func(*Writable)
 		if err != nil {
 			return err
 		}
-		w := &Writable{entries: f.Entries, repos: f.Repos, retryAfter: f.RetryAfter}
+		w := &Writable{entries: f.Entries, repos: f.Repos, budget: f.Budget, retryAfter: f.RetryAfter}
 		if err := fn(w); err != nil {
 			return err
 		}
-		if err := writeCacheFile(c.path, cacheFile{Entries: w.entries, Repos: w.repos, RetryAfter: w.retryAfter}); err != nil {
+		if err := writeCacheFile(c.path, cacheFile{
+			Entries:    w.entries,
+			Repos:      w.repos,
+			Budget:     w.budget,
+			RetryAfter: w.retryAfter,
+		}); err != nil {
 			return err
 		}
 		c.mu.Lock()
 		defer c.mu.Unlock()
 		c.entries = w.entries
 		c.repos = w.repos
+		c.budget = w.budget
 		c.retryAfter = w.retryAfter
 		return nil
 	})
@@ -188,6 +200,28 @@ func (c *Cache) RepoState(repo string) RepoState {
 func (w *Writable) RepoState(repo string) RepoState { return w.repos[repo] }
 
 func (w *Writable) SetRepoState(repo string, state RepoState) { w.repos[repo] = state }
+
+// Budget is the most recent rate-limit observation, zero when none was made.
+func (c *Cache) Budget() Budget {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.budget
+}
+
+func (w *Writable) Budget() Budget { return w.budget }
+
+// SetBudget records a rate-limit observation, keeping the newest one. Ordering
+// by observation time rather than by arrival matters because rounds overlap:
+// a slow request must not overwrite a fresher reading with its stale one.
+func (w *Writable) SetBudget(b Budget) {
+	if !b.Known() {
+		return
+	}
+	if w.budget.Known() && w.budget.ObservedAt.After(b.ObservedAt) {
+		return
+	}
+	w.budget = b
+}
 
 // Touch marks an entry as confirmed current as of at, without changing what it
 // says. A repo poll that comes back without a given branch has established that

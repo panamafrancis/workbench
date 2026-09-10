@@ -55,7 +55,11 @@ type runningMsg struct {
 }
 
 type prBatchDoneMsg struct {
-	ghErr error
+	// deferred counts branches the round left unresolved to stay above the
+	// shared rate-limit reserve, so the footer can say why a status is missing
+	// rather than leaving the user to wonder.
+	deferred int
+	ghErr    error
 }
 
 // prSkippedMsg is emitted when a fetch round was ceded to another sidebar
@@ -252,6 +256,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case msg.ghErr == nil:
 			m.ghAvailable = true
 			m.ghHint = ""
+			if msg.deferred > 0 {
+				m.ghHint = "gh quota low"
+			}
 		case github.IsPermanentError(msg.ghErr):
 			m.ghAvailable = false
 			if errors.Is(msg.ghErr, github.ErrGHNotFound) {
@@ -1011,7 +1018,7 @@ func (m *Model) fetchVisibleCmd(force bool) tea.Cmd {
 		if lockErr != nil {
 			return prBatchDoneMsg{ghErr: lockErr}
 		}
-		return prBatchDoneMsg{ghErr: report.Err}
+		return prBatchDoneMsg{ghErr: report.Err, deferred: report.Deferred}
 	}
 }
 
