@@ -62,6 +62,16 @@ grep -q "terraform → keystone" "$ROOT/.supatree/info.md" || fail "merge order 
 echo "--- supatree ls ---"
 supatree ls | grep -q berlin || fail "berlin missing from ls"
 
+# 4b. status: derived activity state, plain and JSON. No PRs exist here, so the
+# members are freshly checked out and idle and the tree reads as "new".
+echo "--- supatree status ---"
+supatree status | grep -q berlin || fail "berlin missing from status"
+supatree status | grep -q "new" || fail "fresh supatree should read as new"
+supatree status --json | grep -q '"state": "new"' || fail "status --json missing tree state"
+supatree status --json | grep -q '"has_remote"' || fail "status --json missing local git state"
+# dash falls back to status when stdout is not a terminal.
+supatree dash | grep -q berlin || fail "dash fallback did not print status"
+
 # 5. Add a third repo by editing supatree.yml + sync.
 echo "--- edit supatree.yml + sync ---"
 cat > "$ROOT/supatree.yml" <<'YML'
