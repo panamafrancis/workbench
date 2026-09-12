@@ -136,3 +136,44 @@ func (w Workspace) CleanupStaleLayouts(validNames map[string]bool) {
 		}
 	}
 }
+
+// WriteCommandTabLayout writes a single-pane layout that runs argv in its own
+// tab. The pane closes when the command exits — unlike the sidebar, an
+// auxiliary view (the supatree dashboard) is something the user quits on
+// purpose, so a restart loop would fight them.
+func (w Workspace) WriteCommandTabLayout(name string, argv []string) (string, error) {
+	// name is spliced into a KDL pane/tab identity and used as the layout
+	// filename, so hold it to the same validated charset as a worktree name.
+	if err := git.ValidateName(name, nil); err != nil {
+		return "", fmt.Errorf("refusing to write layout for invalid tab name %q: %w", name, err)
+	}
+	if len(argv) == 0 {
+		return "", fmt.Errorf("no command for tab %q", name)
+	}
+	if err := os.MkdirAll(w.LayoutsDir, 0755); err != nil {
+		return "", fmt.Errorf("create layouts dir: %w", err)
+	}
+
+	args := ""
+	if len(argv) > 1 {
+		quoted := make([]string, 0, len(argv)-1)
+		for _, a := range argv[1:] {
+			quoted = append(quoted, quoteKDL(a))
+		}
+		args = "\n            args " + strings.Join(quoted, " ")
+	}
+	kdl := fmt.Sprintf(`layout {
+    tab name=%s focus=true {
+        pane name=%s focus=true close_on_exit=true {
+            command %s%s
+        }
+    }
+}
+`, quoteKDL(name), quoteKDL(name), quoteKDL(argv[0]), args)
+
+	path := filepath.Join(w.LayoutsDir, name+".kdl")
+	if err := os.WriteFile(path, []byte(kdl), 0644); err != nil {
+		return "", fmt.Errorf("write layout: %w", err)
+	}
+	return path, nil
+}
