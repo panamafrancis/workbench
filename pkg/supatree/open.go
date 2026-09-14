@@ -60,16 +60,26 @@ func OpenRootAgent(inst *Instance, wb *config.Config, ws zellij.Workspace, sideb
 	return tabCreated, nil
 }
 
+// requireMember resolves a member alias to a worktree that actually exists on
+// disk — the shared precondition of every "open this member" entry point.
+func requireMember(inst *Instance, alias string) (*Member, error) {
+	m := inst.FindMember(alias)
+	if m == nil {
+		return nil, fmt.Errorf("repo %q is not a member of supatree %q", alias, inst.Name)
+	}
+	if !m.Exists {
+		return nil, fmt.Errorf("member %q not created yet — run: supatree sync %s", alias, inst.Name)
+	}
+	return m, nil
+}
+
 // OpenMemberAgent opens an agent scoped to a single member repo (nono --allow
 // just that repo). Member worktrees have unique paths, so directory-based
 // resume works without session IDs.
 func OpenMemberAgent(inst *Instance, wb *config.Config, ws zellij.Workspace, sidebarWidth, alias, modelOverride string) (bool, error) {
-	m := inst.FindMember(alias)
-	if m == nil {
-		return false, fmt.Errorf("repo %q is not a member of supatree %q", alias, inst.Name)
-	}
-	if !m.Exists {
-		return false, fmt.Errorf("member %q not created yet — run: supatree sync %s", alias, inst.Name)
+	m, err := requireMember(inst, alias)
+	if err != nil {
+		return false, err
 	}
 	model := inst.Model
 	if modelOverride != "" {
@@ -90,12 +100,9 @@ func OpenMemberAgent(inst *Instance, wb *config.Config, ws zellij.Workspace, sid
 // sidebar report state (branch, dirty, PR), so the obvious thing to do with one
 // is stand in it.
 func OpenMemberShell(inst *Instance, alias string) error {
-	m := inst.FindMember(alias)
-	if m == nil {
-		return fmt.Errorf("repo %q is not a member of supatree %q", alias, inst.Name)
-	}
-	if !m.Exists {
-		return fmt.Errorf("member %q not created yet — run: supatree sync %s", alias, inst.Name)
+	m, err := requireMember(inst, alias)
+	if err != nil {
+		return err
 	}
 	if !zellij.IsInZellij() {
 		return fmt.Errorf("not inside zellij — cd %s", m.Path)
