@@ -385,8 +385,8 @@ supatree rm <name>                              # tear down all member worktrees
 | `Space` | Fold/unfold the selected supatree |
 | `h` / `l` (or `←` / `→`) | Collapse / expand the selected supatree |
 | `zM` / `zR` | Fold / unfold **every** supatree |
-| `Enter` / `o` | Open the selected agent or member repo |
-| `a` | Add an agent to the selected supatree |
+| `Enter` / `o` | Open the selected agent, or a shell in the selected member repo |
+| `a` | Add an agent to the selected supatree — on a member row, open that repo's agent |
 | `n` | New supatree |
 | `s` | Sync the selected supatree |
 | `d` | Delete the selected supatree |
@@ -399,6 +399,8 @@ The mouse works too: the wheel scrolls the list and a click selects a row. Wheel
 Pressing `n` prompts for a **name** (leave it blank to auto-generate a city name). If more than one stack is registered you first pick which stack from a list (`↑`/`↓` or `j`/`k` to move, `enter` to select, `esc` to cancel), then the name. After creation the cursor lands on the new supatree so it scrolls into view.
 
 Member rows show the repo's PR state and number (`◉ open #871`) once a PR exists; the supatree row carries an `open/total PRs` badge.
+
+The two sections answer different questions, so `enter` does different things in them. Agent rows are processes (the `●`/`○` dot is liveness), and `enter` opens or focuses that agent's tab. Member rows are places reporting state (branch, dirty mark, PR), so `enter` stands in one: a shell pane in the current tab, rooted at `repos/<alias>/`. That shell is your own — it is **not** inside the nono sandbox, unlike every agent workbench and supatree launch — and it is disposable, closing when you exit it. To get an agent scoped to a single member repo instead (nono allows only that repo, not the whole tree), press `a` on the member row; `a` on a supatree or agent row still prompts for a new root agent's name. The footer hint tracks the cursor (`enter shell` vs `enter open`) so you can see which you'll get. A member that isn't checked out yet says so and points at `supatree sync`.
 
 Like the workbench sidebar, each supatree tab's sidebar marks the supatree that tab belongs to with a `▸` in the gutter ("you are here"), independent of the cursor. It re-reads live state when the pane regains focus and on its periodic tick, so newly created or removed supatrees appear across tabs without pressing `r`. PR status is fetched via `gh` and cached on disk under the same quota discipline as the workbench sidebar (single-fetcher try-lock, cache re-read before fetching, no request for unpushed branches, 24h cache for merged/closed PRs, and a persisted 15-minute pause after a rate-limit response), so a churning or multi-tab sidebar doesn't drain the API quota.
 
@@ -427,7 +429,7 @@ Press `D` in the supatree sidebar to open or focus the dashboard in a `supatree-
 
 Opening a root agent also marks the tree root as a trusted folder in `~/.claude.json`, so Claude does not ask "Do you trust the files in this folder?" on every launch. It has to be seeded rather than simply answered once: several agents share the tree root, each rewrites that file wholesale from what it read at startup, and an agent that started before you accepted puts the unaccepted answer back. Only the `hasTrustDialogAccepted` flag for the tree root is touched, only when it is not already set.
 
-All agents run at the supatree root under a nono sandbox that allows the whole tree. Multiple named agents (`--agent`) share the directory but resume independently via cached session IDs. `--repo <alias>` opens an agent scoped to a single member repo instead.
+All agents run at the supatree root under a nono sandbox that allows the whole tree. Multiple named agents (`--agent`) share the directory but resume independently via cached session IDs. `--repo <alias>` opens an agent scoped to a single member repo instead (the same thing `a` does on a member row in the sidebar).
 
 ### MCP tools
 

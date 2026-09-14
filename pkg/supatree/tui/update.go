@@ -157,6 +157,12 @@ func (m *Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.openSelected()
 	case "a":
 		if r := m.selected(); r != nil {
+			// `a` reads the same everywhere — "give me an agent here" — so on a
+			// member row it opens that repo's scoped agent (nono allows only that
+			// repo) instead of prompting for a name at the tree root.
+			if r.kind == rowMember {
+				return m, m.openMember(r.tree, r.alias)
+			}
 			m.mode = modeNewAgent
 			m.actionTree = r.tree
 			m.input.SetValue("")
@@ -295,7 +301,9 @@ func (m *Model) openSelected() tea.Cmd {
 	}
 	switch r.kind {
 	case rowMember:
-		return m.openMember(r.tree, r.alias)
+		// A member row is a place, not a process: enter stands in it. The
+		// repo-scoped agent lives on `a`, alongside the tree-level one.
+		return m.shellMember(r.tree, r.alias)
 	case rowAgent:
 		return m.openAgent(r.tree, r.label)
 	case rowTree, rowSubheader:
@@ -323,6 +331,19 @@ func (m *Model) openMember(tree, alias string) tea.Cmd {
 		}
 		_, err := supatree.OpenMemberAgent(inst, m.wbCfg, m.ws, m.stCfg.ResolveSidebarWidth(), alias, "")
 		return actionDoneMsg{msg: "opened " + supatree.TabName(tree, alias), err: err}
+	}
+}
+
+func (m *Model) shellMember(tree, alias string) tea.Cmd {
+	return func() tea.Msg {
+		inst := m.instance(tree)
+		if inst == nil {
+			return actionDoneMsg{err: fmt.Errorf("supatree %q gone", tree)}
+		}
+		if err := supatree.OpenMemberShell(inst, alias); err != nil {
+			return actionDoneMsg{err: err}
+		}
+		return actionDoneMsg{msg: "shell " + tree + "/" + alias}
 	}
 }
 

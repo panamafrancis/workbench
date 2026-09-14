@@ -83,3 +83,24 @@ func OpenMemberAgent(inst *Instance, wb *config.Config, ws zellij.Workspace, sid
 	env["SUPATREE_MEMBER"] = alias
 	return ws.OpenOrFocusTab(TabName(inst.Name, alias), m.Path, sidebarWidth, nonoArgs, env)
 }
+
+// OpenMemberShell opens a plain shell pane in the caller's current tab, rooted
+// at a member repo's worktree. It is the "take me there" counterpart to
+// OpenMemberAgent: no sandbox, no session, no tab — the member rows in the
+// sidebar report state (branch, dirty, PR), so the obvious thing to do with one
+// is stand in it.
+func OpenMemberShell(inst *Instance, alias string) error {
+	m := inst.FindMember(alias)
+	if m == nil {
+		return fmt.Errorf("repo %q is not a member of supatree %q", alias, inst.Name)
+	}
+	if !m.Exists {
+		return fmt.Errorf("member %q not created yet — run: supatree sync %s", alias, inst.Name)
+	}
+	if !zellij.IsInZellij() {
+		return fmt.Errorf("not inside zellij — cd %s", m.Path)
+	}
+	// Named for the location, matching the agent panes' "{repo}/{worktree}"
+	// display-name convention.
+	return zellij.NewPane(inst.Name+"/"+alias, m.Path)
+}

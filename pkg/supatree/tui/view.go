@@ -187,7 +187,13 @@ func (m *Model) footer() string {
 	if m.err != nil {
 		return stylePRClosed.Render("error: " + m.err.Error())
 	}
-	parts := []string{"enter open", "space fold", "}/{ tree", "g/G ends", "a agent", "n new", "s sync", "d del", "D dash", "r refresh", "q quit"}
+	// Enter is contextual (a member row is a place, an agent row is a process),
+	// so the hint says which one the cursor is on rather than a generic "open".
+	openHint := "enter open"
+	if r := m.selected(); r != nil && r.kind == rowMember {
+		openHint = "enter shell"
+	}
+	parts := []string{openHint, "space fold", "}/{ tree", "g/G ends", "a agent", "n new", "s sync", "d del", "D dash", "r refresh", "q quit"}
 	if m.prHint != "" {
 		parts = append(parts, "("+m.prHint+")")
 	}

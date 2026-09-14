@@ -486,3 +486,94 @@ func TestReloadKeepsScrollPosition(t *testing.T) {
 		t.Fatal("reload re-armed follow, which would snap the view back to the cursor")
 	}
 }
+
+// rowIndex returns the index of the first row of the given kind.
+func rowIndex(m *Model, k rowKind) int {
+	for i, r := range m.rows {
+		if r.kind == k {
+			return i
+		}
+	}
+	return -1
+}
+
+// memberModel builds a one-supatree model whose single member is checked out on
+// disk, so the open paths get past their existence check.
+func memberModel(t *testing.T) (*Model, string) {
+	t.Helper()
+	t.Setenv("HOME", t.TempDir())
+	path := t.TempDir()
+	m := New(supatree.DefaultConfig(), config.DefaultConfig(), zellij.Workspace{})
+	m.insts = []*supatree.Instance{{
+		Name: berlin, Slug: berlin,
+		Members: []supatree.Member{
+			{Alias: "terraform", Path: path, Branch: "st/berlin/terraform", Exists: true},
+		},
+	}}
+	m.rebuildRows()
+	return m, path
+}
+
+// Enter on a member row stands in the repo (a shell pane); it must not launch
+// the repo-scoped agent, which is what `a` is for.
+func TestEnterOnMemberRowOpensShell(t *testing.T) {
+	m, path := memberModel(t)
+	t.Setenv("ZELLIJ", "")
+
+	m.cursor = rowIndex(m, rowMember)
+	_, cmd := m.updateNormal(key("enter"))
+	if cmd == nil {
+		t.Fatal("enter on a member row returned no command")
+	}
+	done, ok := cmd().(actionDoneMsg)
+	if !ok {
+		t.Fatalf("enter produced %T, want actionDoneMsg", cmd())
+	}
+	// Outside zellij there is no pane to open, and the shell path says so while
+	// naming the directory. The agent path would have failed on the sandbox
+	// instead, so this is what distinguishes the two.
+	if done.err == nil || !strings.Contains(done.err.Error(), "not inside zellij") {
+		t.Fatalf("err = %v, want the shell path's not-inside-zellij error", done.err)
+	}
+	if !strings.Contains(done.err.Error(), path) {
+		t.Errorf("err = %v, want it to name the member path %q", done.err, path)
+	}
+}
+
+// `a` means "give me an agent here" on every row: a name prompt at the tree
+// level, the repo-scoped agent on a member row.
+func TestAgentKeyIsContextual(t *testing.T) {
+	m, _ := memberModel(t)
+
+	m.cursor = rowIndex(m, rowMember)
+	if _, cmd := m.updateNormal(key("a")); cmd == nil {
+		t.Error("a on a member row returned no command")
+	}
+	if m.mode != modeNormal {
+		t.Errorf("a on a member row: mode = %v, want modeNormal (no name prompt)", m.mode)
+	}
+
+	m.cursor = rowIndex(m, rowTree)
+	m.updateNormal(key("a"))
+	if m.mode != modeNewAgent {
+		t.Fatalf("a on a tree row: mode = %v, want modeNewAgent", m.mode)
+	}
+	if m.actionTree != berlin {
+		t.Errorf("actionTree = %q, want %q", m.actionTree, berlin)
+	}
+}
+
+// The footer names whatever enter does on the row under the cursor, so the
+// split between "stand in it" and "open it" is discoverable without the docs.
+func TestFooterHintFollowsRowKind(t *testing.T) {
+	m, _ := memberModel(t)
+
+	m.cursor = rowIndex(m, rowMember)
+	if got := m.footer(); !strings.Contains(got, "enter shell") {
+		t.Errorf("member row footer = %q, want it to hint a shell", got)
+	}
+	m.cursor = rowIndex(m, rowAgent)
+	if got := m.footer(); !strings.Contains(got, "enter open") {
+		t.Errorf("agent row footer = %q, want it to hint open", got)
+	}
+}
