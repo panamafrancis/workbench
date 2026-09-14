@@ -307,3 +307,24 @@ func (w Workspace) OpenOrFocusCommandTab(name string, argv []string) error {
 	}
 	return nil
 }
+
+// NewPane opens a shell pane in the caller's current tab, rooted at cwd. It
+// deliberately runs no command: the pane gets the user's own shell, outside the
+// nono sandbox that wraps every agent this tool launches, because it is theirs
+// rather than an agent's. A pane rather than a tab because such a shell is
+// disposable — it closes when the shell exits — and so needs no identity in the
+// tab namespace that OpenOrFocusTab keys agents on.
+func NewPane(name, cwd string) error {
+	args := []string{"new-pane", "--cwd", cwd}
+	if name != "" {
+		args = append(args, "--name", name)
+	}
+	_, stderr, err := runZellij(args...)
+	if err != nil {
+		if s := strings.TrimSpace(stderr); s != "" {
+			return fmt.Errorf("zellij: %s", s)
+		}
+		return fmt.Errorf("zellij: %w", err)
+	}
+	return nil
+}
