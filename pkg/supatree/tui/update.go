@@ -1,16 +1,15 @@
 package tui
 
 import (
-	"errors"
 	"fmt"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/panamafrancis/workbench/pkg/config"
 	"github.com/panamafrancis/workbench/pkg/git"
 	"github.com/panamafrancis/workbench/pkg/github"
 	"github.com/panamafrancis/workbench/pkg/supatree"
+	"github.com/panamafrancis/workbench/pkg/zellij"
 )
 
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -180,6 +179,8 @@ func (m *Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if r := m.selected(); r != nil {
 			return m, m.syncTree(r.tree)
 		}
+	case "D":
+		return m, m.openDashboard()
 	case "d":
 		if r := m.selected(); r != nil {
 			m.mode = modeConfirmDelete
@@ -353,6 +354,22 @@ func (m *Model) removeTree(tree string) tea.Cmd {
 	}
 }
 
+// openDashboard opens (or focuses) the dashboard tab. It lives in its own tab
+// rather than a pane under the sidebar so it costs no rows in every supatree
+// tab and can be quit when it is not wanted.
+func (m *Model) openDashboard() tea.Cmd {
+	ws := m.ws
+	return func() tea.Msg {
+		if !zellij.IsInZellij() {
+			return actionDoneMsg{msg: "not inside zellij — run: supatree dash"}
+		}
+		if err := ws.OpenOrFocusCommandTab(supatree.DashTab, []string{"supatree", "dash"}); err != nil {
+			return actionDoneMsg{err: err}
+		}
+		return actionDoneMsg{msg: "dashboard"}
+	}
+}
+
 func (m *Model) newTree(stack, name string) tea.Cmd {
 	return func() tea.Msg {
 		inst, _, err := supatree.New(m.stCfg, m.wbCfg, supatree.CreateOptions{Stack: stack, Name: name})
@@ -403,100 +420,40 @@ func (m *Model) backgroundCmds() []tea.Cmd {
 
 // fetchPRCmd fetches PR status for member branches. When force is false it only
 // fetches entries older than prStaleAge, and it always respects the persisted
-// backoff window. Crucially, the actual gh calls run under a cross-process
-// try-lock (PRCacheLockPath): with one sidebar per Zellij tab all polling
-// independently, only the tab that wins the lock fetches each round while the
-// rest cede and pick up the cache it writes — this, not per-process throttling
-// alone, is what stops a burst of concurrent gh calls from tripping GitHub's
-// rate limit. A rate-limit response arms a cooldown that survives restarts.
+// backoff window. Target selection and the locked gh calls live in
+// supatree.FetchTargets/FetchPRs so the sidebar and the dashboard share one
+// implementation of the quota discipline — see the comments there.
+//
+// All of it runs inside the returned command: selecting targets asks git
+// whether each member branch has been pushed (one process per member), which
+// would otherwise stall the sidebar on every tick.
 func (m *Model) fetchPRCmd(force bool) tea.Cmd {
 	if m.fetching {
 		return nil
 	}
-	// Re-read the on-disk cache first so this long-lived sidebar picks up the
-	// backoff (and freshly cached statuses) another tab's sidebar persisted —
-	// otherwise each tab would independently keep hitting a rate-limited API.
-	// Safe here because the m.fetching guard above rules out an in-flight writer.
-	_ = m.prCache.Load()
-	if m.prCache.InBackoff(time.Now()) {
-		// A peer tab may have armed the backoff; surface the hint here too so every
-		// tab (not just the one that hit the limit) signals that fetches are paused.
-		m.prHint = "gh rate limited"
-		return nil
-	}
-
-	type target struct{ path, branch string }
-	var targets []target
-	for _, inst := range m.insts {
-		for _, mem := range inst.Members {
-			if !mem.Exists {
-				continue
-			}
-			if !force && !m.prCache.IsStale(mem.Branch, prStaleAge) {
-				continue
-			}
-			// An unpushed branch cannot have a PR, so asking GitHub is a
-			// guaranteed-empty round trip. A branch whose PR is already cached
-			// keeps refreshing regardless.
-			if !m.prCache.KnowsPR(mem.Branch) && !git.HasRemoteBranch(mem.Path, mem.Branch) {
-				continue
-			}
-			targets = append(targets, target{mem.Path, mem.Branch})
-		}
-	}
-	if len(targets) == 0 {
-		return nil
-	}
-
 	m.fetching = true
-	cache := m.prCache
+	insts, cache := m.insts, m.prCache
 	return func() tea.Msg {
-		// prSkippedMsg unless we win the lock and actually run a fetch below.
-		var result tea.Msg = prSkippedMsg{}
-		lockErr := config.TryFileLock(supatree.PRCacheLockPath(), func() error {
-			// Under the lock, re-read the cache: while we queued to build targets
-			// another tab may have populated statuses or armed a backoff.
-			_ = cache.Load()
-			if cache.InBackoff(time.Now()) {
-				return nil
-			}
-			var lastErr error
-			for _, t := range targets {
-				// A peer that just held the lock may have refreshed this branch;
-				// don't re-fetch what is already fresh.
-				if !force && !cache.IsStale(t.branch, prStaleAge) {
-					continue
-				}
-				info, err := github.LookupPR(t.path, t.branch)
-				if err != nil {
-					lastErr = err
-					if github.IsPermanentError(err) {
-						_ = cache.Save()
-						result = prMsg{err: err}
-						return nil
-					}
-					if github.IsRateLimited(err) {
-						cache.SetRetryAfter(time.Now().Add(rateLimitCooldown))
-						_ = cache.Save()
-						result = prMsg{err: err}
-						return nil
-					}
-					continue
-				}
-				cache.Set(t.branch, info)
-			}
-			_ = cache.Save()
-			result = prMsg{err: lastErr}
-			return nil
-		})
-		if errors.Is(lockErr, config.ErrLockBusy) {
-			// Another sidebar owns this round; cede and let the next tick pick up
-			// the cache it writes.
+		// Re-read the on-disk cache first so this long-lived sidebar picks up the
+		// backoff (and freshly cached statuses) another tab's sidebar persisted —
+		// otherwise each tab would independently keep hitting a rate-limited API.
+		// Safe here because the m.fetching guard above rules out an in-flight
+		// writer.
+		_ = cache.Load()
+		if cache.InBackoff(time.Now()) {
+			// A peer tab may have armed the backoff; report it here too so every
+			// tab (not just the one that hit the limit) signals that fetches are
+			// paused.
+			return prMsg{err: github.ErrGHRateLimited}
+		}
+		targets := supatree.FetchTargets(insts, cache, force, prStaleAge)
+		if len(targets) == 0 {
 			return prSkippedMsg{}
 		}
-		if lockErr != nil {
-			return prMsg{err: lockErr}
+		out := supatree.FetchPRs(targets, cache, force, prStaleAge)
+		if out.Skipped {
+			return prSkippedMsg{}
 		}
-		return result
+		return prMsg{err: out.Err}
 	}
 }

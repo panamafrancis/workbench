@@ -201,3 +201,35 @@ func logFailure(args []string, stdout, stderr string, err error) {
 	}
 	_, _ = fmt.Fprintln(f)
 }
+
+// OpenOrFocusCommandTab focuses the tab named name if it is alive, and
+// otherwise opens a new one running argv. It is the auxiliary-view counterpart
+// to OpenOrFocusTab (which opens a worktree's sidebar+agent pair).
+func (w Workspace) OpenOrFocusCommandTab(name string, argv []string) error {
+	tabs, err := TabNames()
+	if err != nil && !errors.Is(err, ErrCircuitOpen) {
+		tabs = nil
+	} else if err != nil {
+		return err
+	}
+	if tabs[name] {
+		if tabHasCommandPane(name) {
+			return GoToTab(name)
+		}
+		// The tab outlived its command (the user quit the dashboard); replace it
+		// rather than focusing an empty shell.
+		closeTab(name)
+	}
+	layoutPath, err := w.WriteCommandTabLayout(name, argv)
+	if err != nil {
+		return err
+	}
+	_, stderr, err := runZellij("new-tab", "--name", name, "--layout", layoutPath)
+	if err != nil {
+		if s := strings.TrimSpace(stderr); s != "" {
+			return fmt.Errorf("zellij: %s", s)
+		}
+		return fmt.Errorf("zellij: %w", err)
+	}
+	return nil
+}

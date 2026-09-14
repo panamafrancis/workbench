@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/panamafrancis/workbench/pkg/config"
 	"github.com/panamafrancis/workbench/pkg/git"
@@ -237,24 +238,41 @@ func handlePRStatus(map[string]any) (string, bool) {
 	}
 	cache := github.NewCache(PRCachePath())
 	_ = cache.Load()
-	var b strings.Builder
-	counts := map[github.PRStatus]int{}
-	for _, m := range inst.Members {
-		info, err := github.LookupPR(m.Path, m.Branch)
-		if err != nil {
-			fmt.Fprintf(&b, "%s: (lookup failed: %v)\n", m.Alias, err)
-			continue
-		}
-		cache.Set(m.Branch, info)
-		counts[info.Status]++
-		if info.Status == github.PRNone {
-			fmt.Fprintf(&b, "%s: no PR\n", m.Alias)
-		} else {
-			fmt.Fprintf(&b, "%s: %s #%d\n", m.Alias, info.Status, info.Number)
-		}
+	insts := []*Instance{inst}
+
+	// An agent asking for status wants a current answer, so force past the
+	// staleness gate — but still go through the shared locked fetch, which skips
+	// unpushed branches and honors a rate-limit backoff.
+	note := ""
+	if cache.InBackoff(time.Now()) {
+		note = "\n(GitHub fetches are paused after a rate limit — this is cached status.)"
+	} else if out := FetchPRs(FetchTargets(insts, cache, true, PRStaleAge), cache, true, PRStaleAge); out.Err != nil {
+		note = fmt.Sprintf("\n(PR fetch incomplete: %v — some entries may be cached.)", out.Err)
 	}
-	_ = cache.Save()
-	fmt.Fprintf(&b, "\nopen=%d draft=%d merged=%d", counts[github.PROpen], counts[github.PRDraft], counts[github.PRMerged])
+
+	sum := Status(insts, cache, StatusOptions{})
+	if len(sum.Trees) == 0 {
+		return "no members", false
+	}
+	t := sum.Trees[0]
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "Supatree %s (slug st/%s) — %s\n", t.Name, t.Slug, t.State)
+	for _, m := range t.Members {
+		fmt.Fprintf(&b, "  %-20s %-10s", m.Alias, m.State)
+		if m.PR != nil && m.PR.Number > 0 {
+			fmt.Fprintf(&b, " #%d", m.PR.Number)
+			if m.PR.Checks != github.CheckNone {
+				fmt.Fprintf(&b, " checks:%s", m.PR.Checks)
+			}
+		}
+		fmt.Fprintf(&b, " %s\n", m.Branch)
+	}
+	fmt.Fprintf(&b, "\nopen=%d approved=%d merged=%d total_prs=%d", t.OpenPRs, t.ApprovedPRs, t.MergedPRs, t.TotalPRs)
+	if t.Blocked {
+		b.WriteString("\nblocked: a PR has changes requested or failing checks")
+	}
+	b.WriteString(note)
 	return b.String(), false
 }
 

@@ -104,3 +104,8 @@ const ReposDirName = "repos"
 func MemberPath(root, alias string) string {
 	return filepath.Join(root, ReposDirName, alias)
 }
+
+// DashTab is the Zellij tab name the dashboard opens into. It is deliberately
+// not a plausible supatree name, since tab names key tab lookups and a
+// collision would focus the wrong tab.
+const DashTab = "supatree-dash"

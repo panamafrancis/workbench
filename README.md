@@ -360,6 +360,8 @@ supatree new --stack=fraud                      # create a city-named supatree
 supatree open <name>                            # open the root agent (sees all repos)
 supatree open <name> --agent=reviewer           # a second, independently-resumable agent
 supatree ls                                     # list supatrees + member PR status
+supatree status                                 # activity of every supatree (open/pushed/approved/stale/done)
+supatree dash                                   # full-screen dashboard of the same
 supatree sync <name>                            # reconcile after editing supatree.yml
 supatree rename-branch <slug> <name>            # rename all member branches (slug: max 40 chars)
 supatree rm <name>                              # tear down all member worktrees
@@ -383,6 +385,7 @@ supatree rm <name>                              # tear down all member worktrees
 | `n` | New supatree |
 | `s` | Sync the selected supatree |
 | `d` | Delete the selected supatree |
+| `D` | Open (or focus) the dashboard tab |
 | `r` | Refresh (forces a PR status fetch) |
 | `q` | Quit (confirms in sidebar mode) |
 
@@ -390,7 +393,30 @@ The mouse works too: the wheel scrolls the list and a click selects a row. Wheel
 
 Pressing `n` prompts for a **name** (leave it blank to auto-generate a city name). If more than one stack is registered you first pick which stack from a list (`↑`/`↓` or `j`/`k` to move, `enter` to select, `esc` to cancel), then the name. After creation the cursor lands on the new supatree so it scrolls into view.
 
+Member rows show the repo's PR state and number (`◉ open #871`) once a PR exists; the supatree row carries an `open/total PRs` badge.
+
 Like the workbench sidebar, each supatree tab's sidebar marks the supatree that tab belongs to with a `▸` in the gutter ("you are here"), independent of the cursor. It re-reads live state when the pane regains focus and on its periodic tick, so newly created or removed supatrees appear across tabs without pressing `r`. PR status is fetched via `gh` and cached on disk under the same quota discipline as the workbench sidebar (single-fetcher try-lock, cache re-read before fetching, no request for unpushed branches, 24h cache for merged/closed PRs, and a persisted 15-minute pause after a rate-limit response), so a churning or multi-tab sidebar doesn't drain the API quota.
+
+### Status and dashboard
+
+`supatree status` answers "where is everything?" across all supatrees at once. It derives each member repo's place in the ship lifecycle from local git plus the cached PR status:
+
+```
+absent → idle → wip → pushed → draft → open → changes | approved → merged | closed
+```
+
+and rolls that up per supatree — `setup` (a member worktree is missing), `new`, `wip`, `pushed`, `review`, `approved` (every open PR approved, ready to merge), or `done` (everything merged or closed, so the tree is only occupying disk — the cue to `supatree rm` it). Alongside the state it flags supatrees that are **blocked** (a PR has changes requested or failing checks), **dirty** (uncommitted work), and **stale** (no commit in any member for `--stale-after`, default 7 days).
+
+```sh
+supatree status              # human-readable, cache only — costs no GitHub quota
+supatree status --refresh    # fetch PR status from GitHub first
+supatree status --json       # the whole summary, for scripts and watch loops
+supatree status --all        # include the members of finished supatrees
+```
+
+`supatree dash` is the same data as a full-screen TUI, meant to live in its own window or Zellij tab: one row per supatree with its state, open/total PRs, review verdicts (`2✓ 1✗ 3·` — approved, changes requested, waiting), time since the last commit, and what needs attention. `space` expands a supatree to its member repos with PR numbers and per-repo state; `enter` focuses that supatree's Zellij tab. The most actionable supatrees sort first (blocked, then ready to merge, then in review) and finished ones sink to the bottom.
+
+Press `D` in the supatree sidebar to open or focus the dashboard in a `supatree-dash` tab, or run `supatree dash` in any terminal. Both the dashboard and the sidebar read the same on-disk PR cache and fetch under the same staleness gate, cross-process lock and rate-limit backoff, so running a dashboard alongside a screenful of sidebars adds no extra GitHub API load. Non-interactive (piped) output falls back to `supatree status`.
 
 ### Agents
 

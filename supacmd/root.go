@@ -72,6 +72,8 @@ func init() {
 	rootCmd.AddCommand(newCmd)
 	rootCmd.AddCommand(syncCmd)
 	rootCmd.AddCommand(lsCmd)
+	rootCmd.AddCommand(statusCmd)
+	rootCmd.AddCommand(dashCmd)
 	rootCmd.AddCommand(openCmd)
 	rootCmd.AddCommand(rmCmd)
 	rootCmd.AddCommand(startCmd)

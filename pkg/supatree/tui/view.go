@@ -130,7 +130,12 @@ func (m *Model) renderMember(r row) string {
 	}
 	pr := ""
 	if info := m.prCache.Get(branch); info != nil {
-		pr = "  " + prIcon(info.Status)
+		if icon := prIcon(info.Status); icon != "" {
+			pr = "  " + icon
+			if info.Number > 0 {
+				pr += styleMuted.Render(fmt.Sprintf(" #%d", info.Number))
+			}
+		}
 	}
 	return fmt.Sprintf("      %s %-18s%s", dirtyMark, r.alias, pr)
 }
@@ -182,7 +187,7 @@ func (m *Model) footer() string {
 	if m.err != nil {
 		return stylePRClosed.Render("error: " + m.err.Error())
 	}
-	parts := []string{"enter open", "space fold", "}/{ tree", "g/G ends", "a agent", "n new", "s sync", "d del", "r refresh", "q quit"}
+	parts := []string{"enter open", "space fold", "}/{ tree", "g/G ends", "a agent", "n new", "s sync", "d del", "D dash", "r refresh", "q quit"}
 	if m.prHint != "" {
 		parts = append(parts, "("+m.prHint+")")
 	}
