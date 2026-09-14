@@ -96,6 +96,8 @@ workbench rename-branch wt/wb/session-launcher --push  # also pushes and deletes
 
 Do not use bare `git branch -m` — it desyncs workbench config and the PR cache.
 
+A PR only follows the rename if it is still open when the new branch is pushed. One that merged or closed first keeps the old head ref on GitHub forever; workbench tracks it by PR number from then on, so it still reports `merged`.
+
 ### TUI key bindings
 
 | Key | Action |
@@ -138,6 +140,7 @@ PR status is fetched via the `gh` CLI (GitHub's GraphQL API) and cached on disk.
 - **Every sidebar re-reads the cache before fetching**, so a status another tab just looked up is reused instead of re-queried.
 - **Unpushed branches are never queried.** A branch with no `origin/<branch>` ref cannot have a PR, so no request is made for it. (A branch whose PR is already cached keeps refreshing either way, in case it was pushed from a clone this repo has never fetched.)
 - **Merged and closed PRs are cached for 24 hours.** Those states are final; only open/draft/no-PR branches refresh on the ordinary staleness window.
+- **A renamed branch is re-verified once.** `rename-branch` moves the cached entry to the new branch name but marks it unverified, so the next round asks GitHub instead of trusting a status recorded under a name GitHub has never seen. If the branch then names no PR — because the PR merged or closed before the rename, which freezes its head ref on the old name — the cached PR *number* resolves it (`gh pr view <n>`), so the worktree keeps showing `merged #485` instead of silently dropping to no-PR.
 
 If GitHub rate-limits the account anyway, the sidebar shows a `gh rate limited` hint and pauses all PR fetches for 15 minutes before retrying. The pause is persisted in the cache, so it survives sidebar restarts and applies to every tab, not just the one that hit the limit.
 
@@ -366,6 +369,8 @@ supatree sync <name>                            # reconcile after editing supatr
 supatree rename-branch <slug> <name>            # rename all member branches (slug: max 40 chars)
 supatree rm <name>                              # tear down all member worktrees
 ```
+
+`rename-branch` renames every member or none: if a member fails, the renames already made are rolled back, so the tree's recorded slug never points at a name only some members are on. With `--push` the pushes run after every local rename has landed, and a push failure is reported per repo without undoing the rename.
 
 ### Sidebar
 

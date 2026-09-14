@@ -55,8 +55,8 @@ pkg/
     names.go            # GenerateName (city names), ValidateName, ExtractBaseCity, IsCityName
     status.go           # IsDirty, BranchName
   github/
-    gh.go               # LookupPR via gh CLI (status, review decision, check rollup)
-    cache.go            # PR status cache — Get/Set/Rename/Delete/IsStale
+    gh.go               # LookupPR (by head) / LookupPRByNumber / ResolvePR via gh CLI
+    cache.go            # PR status cache — Get/Set/Rename/Delete/IsStale/PRNumber
   sandbox/
     nono.go             # BuildNonoArgs(path, modelKey, cfg) → []string
   setup/
@@ -108,6 +108,8 @@ All state lives under `~/.workbench/`:
 **Refresh reloads from disk** — `refreshMsg` calls `config.Load()` and replaces both `m.cfg` and `m.tree.cfg`. Don't just call `refreshDirty()` alone.
 
 **GitHub quota discipline** — the sidebar runs once per Zellij tab, so a naive per-process poll multiplies GitHub's 5,000/hour **GraphQL** quota (the bucket `gh pr list` spends — not the `core` bucket `gh api rate_limit` reports) by the tab count. `fetchVisibleCmd` therefore: re-reads the on-disk cache before building targets; skips branches with no `origin/<branch>` ref (`git.HasRemoteBranch` — an unpushed branch cannot have a PR); trusts merged/closed statuses for `github.TerminalMaxAge` (24h, enforced inside `Cache.IsStale`, bypassed by a forced refresh); and runs the actual `gh` calls under `config.TryFileLock(config.PRCacheLockPath())` so only one tab fetches per round while the rest emit `prSkippedMsg` and pick up the cache it writes. A rate-limit response arms a persisted `SetRetryAfter` cooldown that every tab observes. `pkg/supatree/tui` mirrors this exactly — keep the two in step.
+
+**A PR is identified by number, not by branch.** `gh pr list --head <branch>` only finds a PR whose head ref is *currently* that branch, and a rename retargets the head only for a PR still open when the new branch is pushed — one that merged or closed first is frozen on the old name, as is one whose push failed or never ran. So `Cache.Rename` carries the entry's `Number` but zeroes `FetchedAt` (a status verified under the old key must not be trusted, nor held for `TerminalMaxAge`), and every fetcher goes through `github.ResolvePR(path, branch, cache.PRNumber(branch))`: head lookup first — a branch may have picked up a *new* PR — then `gh pr view <n>` when that comes back empty and a number is known. Never call `LookupPR` directly from a fetch path.
 
 **Local re-sync on focus/tick** — `reloadLocalState()` re-reads `config.yml` + `state.yml` and swaps `m.cfg`/`m.tree.cfg`/`m.state` on `tea.FocusMsg` and every `tickMsg`, so sidebars in different tabs stay consistent without a manual `r`. It deliberately skips the network PR fetch (that's what the full `refreshMsg` is for). It's a no-op while `m.mode != modeNormal` or a create is in flight (`m.creating`), because reloading would either shift the `pendingRepoIdx`/`pendingWorktreeIdx` slice indices under an open confirm/input mode or drop an optimistic worktree that isn't persisted yet.
 
@@ -170,7 +172,9 @@ Layout/session writing hangs off a `zellij.Workspace` (`pkg/zellij/workspace.go`
 
 **MCP tools** (`supatree mcp`, gated by `SUPATREE=1` except `docs`/`supatree_info`): `supatree_info`, `sync`, `rename_branches`, `create_pr`, `create_prs`, `pr_status`, `docs`. `pr_status` reports the `Status` rollup and refreshes through `FetchPRs` (forced past the staleness gate — an agent asking wants a current answer — but still under the lock and backoff). `create_pr`/`create_prs` refuse a still-city-name slug and (unless `force`) a repo whose dependencies have no PRs yet. Only `supatree init` registers this server (`claude mcp add supatree -s user`); skip it and a supatree session sees only workbench's tools. The **workbench** MCP tools (`create_pr`/`rename_branch`, gated by `WORKBENCH=1`) detect `SUPATREE=1` and redirect to these instead of dead-ending on the missing `WORKBENCH` env var. Branch slugs (`rename_branches`) share `git.ValidateName` — max 40 chars.
 
-**Conventions.** Reuse workbench packages — never fork them. `git.CreateWorktree`/`RemoveWorktree`/`RenameBranch`/`CommitsAhead`, `repo.RunCopyFiles`/`RunStartup`/`RunCleanup`, `github.LookupPR`/`Cache`, `sandbox.BuildNonoArgs`/`BuildAgentNonoArgs`, `config.WithFileLock`. `make ci` + both e2e scripts must stay green.
+**Rename (`rename.go`).** `RenameBranchSlug` is phased so the tree is never half-renamed: every local `git branch -m` runs first and a failure part-way rolls the earlier ones back (`meta.Slug` derives `Member.Branch`, so a member left on the other slug falls outside its own tree and loses its PR and status); only then are meta + info written; only then does `--push` run, collecting per-member failures rather than aborting, since the rename has already been committed to meta.
+
+**Conventions.** Reuse workbench packages — never fork them. `git.CreateWorktree`/`RemoveWorktree`/`RenameBranch`/`CommitsAhead`, `repo.RunCopyFiles`/`RunStartup`/`RunCleanup`, `github.ResolvePR`/`Cache`, `sandbox.BuildNonoArgs`/`BuildAgentNonoArgs`, `config.WithFileLock`. `make ci` + both e2e scripts must stay green.
 
 ## Before pushing / creating a PR
 

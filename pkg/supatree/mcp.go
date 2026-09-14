@@ -278,13 +278,18 @@ func handlePRStatus(map[string]any) (string, bool) {
 
 // depsWithoutPRs returns dependency aliases of m that have no open/merged PR.
 func depsWithoutPRs(inst *Instance, m *Member) []string {
+	// The cache supplies known PR numbers so a dependency whose PR merged under
+	// a previous branch slug still resolves (see github.ResolvePR) instead of
+	// reading as "no PR yet" and blocking the create.
+	cache := github.NewCache(PRCachePath())
+	_ = cache.Load()
 	var missing []string
 	for _, dep := range m.DependsOn {
 		dm := inst.FindMember(dep)
 		if dm == nil {
 			continue
 		}
-		info, err := github.LookupPR(dm.Path, dm.Branch)
+		info, err := github.ResolvePR(dm.Path, dm.Branch, cache.PRNumber(dm.Branch))
 		if err != nil || info == nil || info.Status == github.PRNone {
 			missing = append(missing, dep)
 		}

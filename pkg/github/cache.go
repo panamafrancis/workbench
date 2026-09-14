@@ -80,13 +80,27 @@ func (c *Cache) Set(branch string, info *PRInfo) {
 	c.entries[branch] = info
 }
 
+// Rename moves a cached entry to a new branch key after a local branch rename.
+// The PR itself does not necessarily move: GitHub keys a PR on its head ref,
+// and that ref only follows a rename for a PR still open when the new branch is
+// pushed. A PR that merged or closed first keeps the old head forever, as does
+// one whose push failed or was never made (--push=false).
+//
+// So the entry keeps its Number — the identity that survives a rename, and what
+// ResolvePR uses to find the PR again — but its FetchedAt is zeroed. That
+// status was verified against a different key and must not be trusted (or held
+// for TerminalMaxAge) until the next round re-verifies it under the new one.
 func (c *Cache) Rename(oldBranch, newBranch string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if info, ok := c.entries[oldBranch]; ok {
-		c.entries[newBranch] = info
-		delete(c.entries, oldBranch)
+	info, ok := c.entries[oldBranch]
+	if !ok {
+		return
 	}
+	moved := *info
+	moved.FetchedAt = time.Time{}
+	c.entries[newBranch] = &moved
+	delete(c.entries, oldBranch)
 }
 
 func (c *Cache) Delete(branch string) {
@@ -129,10 +143,19 @@ func isTerminal(s PRStatus) bool {
 // when the local repo has no remote-tracking ref for its branch (e.g. it was
 // pushed from another clone and never fetched here).
 func (c *Cache) KnowsPR(branch string) bool {
+	return c.PRNumber(branch) != 0
+}
+
+// PRNumber returns the PR number cached for branch, or 0 if none is known.
+// Fetchers pass it to github.ResolvePR so a PR whose head ref has moved away
+// from branch can still be resolved by its stable number.
+func (c *Cache) PRNumber(branch string) int {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	info, ok := c.entries[branch]
-	return ok && info.Number != 0
+	if info, ok := c.entries[branch]; ok {
+		return info.Number
+	}
+	return 0
 }
 
 func (c *Cache) IsStale(branch string, maxAge time.Duration) bool {
