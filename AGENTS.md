@@ -141,7 +141,7 @@ Layout/session writing hangs off a `zellij.Workspace` (`pkg/zellij/workspace.go`
 
 - **New inline TUI action**: add key to `keys.go`, add `inputMode` constants if needed, handle in `model.go` `Update` and `updateInput`.
 - **New CLI command**: add file under `cmd/`, wire into `rootCmd` in `cmd/root.go` via `rootCmd.AddCommand(...)` in `init()`.
-- **New MCP tool**: `pkg/mcp` is a reusable framework — `rpc.go` has the JSON-RPC `Server{Name,Version,Tools,Prompts,Gate}` + stdio loop; `workbench.go` builds the workbench tool set. Add workbench tools there; supatree tools live in `pkg/supatree/mcp.go`. Tool handlers have signature `func(args map[string]any) (text string, isError bool)`.
+- **New MCP tool**: `pkg/mcp` is a reusable framework — `rpc.go` has the JSON-RPC `Server{Name,Version,Tools,Prompts,Gate}` + stdio loop; `workbench.go` builds the workbench tool set. Add workbench tools there; supatree tools live in `pkg/supatree/mcp.go`. Input schemas are built with the shared helpers in `schema.go` (`ObjectSchema`/`StringProp`/`BoolProp`/`EnumProp`/`EmptyObject`) — both tool sets use them, so don't hand-roll the map literals. Tool handlers have signature `func(args map[string]any) (text string, isError bool)`.
 - **New config field**: add to structs in `pkg/config/config.go`, update `DefaultConfig()` if it needs a default.
 - **Worktree creation hooks**: `copy_files` runs first (copies gitignored files from repo), then `startup_script`.
 - **Change what opens in a new tab**: edit the KDL template in `pkg/zellij/layout.go`.

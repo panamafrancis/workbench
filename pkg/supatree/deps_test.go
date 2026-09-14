@@ -5,17 +5,25 @@ import (
 	"testing"
 )
 
+// Member aliases the dependency and spec fixtures are built from. They recur
+// often enough across these tests to name once.
+const (
+	aliasAdmin     = "admin"
+	aliasKeystone  = "keystone"
+	aliasTerraform = "terraform"
+)
+
 func TestTopoSortOrder(t *testing.T) {
-	nodes := []string{"admin", "keystone", "terraform"}
+	nodes := []string{aliasAdmin, aliasKeystone, aliasTerraform}
 	deps := map[string][]string{
-		"keystone": {"terraform"},
-		"admin":    {"keystone"},
+		aliasKeystone: {aliasTerraform},
+		aliasAdmin:    {aliasKeystone},
 	}
 	got, err := TopoSort(nodes, deps)
 	if err != nil {
 		t.Fatalf("TopoSort() error = %v", err)
 	}
-	want := []string{"terraform", "keystone", "admin"}
+	want := []string{aliasTerraform, aliasKeystone, aliasAdmin}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("TopoSort() = %v, want %v", got, want)
 	}

@@ -10,6 +10,14 @@ import (
 	"time"
 )
 
+// Model keys used across the config tests. They stand in for whatever the
+// default config ships with, so they are named once rather than spelled out at
+// every assertion.
+const (
+	modelClaude = "claude"
+	modelCodex  = "codex"
+)
+
 func isolatedHome(t *testing.T) {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
@@ -20,15 +28,15 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Version != 1 {
 		t.Errorf("Version = %d, want 1", cfg.Version)
 	}
-	if cfg.DefaultModel != "claude" {
-		t.Errorf("DefaultModel = %q, want %q", cfg.DefaultModel, "claude")
+	if cfg.DefaultModel != modelClaude {
+		t.Errorf("DefaultModel = %q, want %q", cfg.DefaultModel, modelClaude)
 	}
-	for _, key := range []string{"claude", "codex", "opencode", "dirac", "shell"} {
+	for _, key := range []string{modelClaude, modelCodex, "opencode", "dirac", "shell"} {
 		if _, ok := cfg.Models[key]; !ok {
 			t.Errorf("missing default model %q", key)
 		}
 	}
-	if m := cfg.Models["claude"]; m.NonoProfile != "claude-code" || m.Binary != "claude" {
+	if m := cfg.Models[modelClaude]; m.NonoProfile != "claude-code" || m.Binary != "claude" {
 		t.Errorf("claude model = %+v, unexpected defaults", m)
 	}
 }
@@ -39,8 +47,8 @@ func TestLoadMissingReturnsDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	if cfg.DefaultModel != "claude" {
-		t.Errorf("DefaultModel = %q, want %q", cfg.DefaultModel, "claude")
+	if cfg.DefaultModel != modelClaude {
+		t.Errorf("DefaultModel = %q, want %q", cfg.DefaultModel, modelClaude)
 	}
 }
 
@@ -48,7 +56,7 @@ func TestSaveAndLoadRoundtrip(t *testing.T) {
 	isolatedHome(t)
 
 	orig := DefaultConfig()
-	orig.DefaultModel = "codex"
+	orig.DefaultModel = modelCodex
 	orig.WorktreeBase = "/custom/base"
 	orig.Repos = []Repo{
 		{
@@ -60,7 +68,7 @@ func TestSaveAndLoadRoundtrip(t *testing.T) {
 					Branch:    "wt/myrepo/myworktree",
 					Path:      "/some/path/wt",
 					CreatedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
-					Model:     "codex",
+					Model:     modelCodex,
 				},
 			},
 		},
@@ -299,23 +307,23 @@ func TestAllWorktreeNamesMultiRepo(t *testing.T) {
 }
 
 func TestResolveModelExplicit(t *testing.T) {
-	cfg := &Config{DefaultModel: "codex"}
+	cfg := &Config{DefaultModel: modelCodex}
 	if got := cfg.ResolveModel("dirac"); got != "dirac" {
 		t.Errorf("ResolveModel(dirac) = %q, want %q", got, "dirac")
 	}
 }
 
 func TestResolveModelFallsBackToDefault(t *testing.T) {
-	cfg := &Config{DefaultModel: "codex"}
-	if got := cfg.ResolveModel(""); got != "codex" {
-		t.Errorf("ResolveModel('') = %q, want %q", got, "codex")
+	cfg := &Config{DefaultModel: modelCodex}
+	if got := cfg.ResolveModel(""); got != modelCodex {
+		t.Errorf("ResolveModel('') = %q, want %q", got, modelCodex)
 	}
 }
 
 func TestResolveModelFallsBackToClaude(t *testing.T) {
 	cfg := &Config{}
-	if got := cfg.ResolveModel(""); got != "claude" {
-		t.Errorf("ResolveModel('') with no default = %q, want %q", got, "claude")
+	if got := cfg.ResolveModel(""); got != modelClaude {
+		t.Errorf("ResolveModel('') with no default = %q, want %q", got, modelClaude)
 	}
 }
 
