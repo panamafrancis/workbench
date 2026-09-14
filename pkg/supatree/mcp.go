@@ -33,58 +33,58 @@ func MCPServer(version string) *mcp.Server {
 			{
 				Name:        "supatree_info",
 				Description: "Show the current supatree: member repos, branches, dependency edges, and merge order.",
-				InputSchema: emptyObject(),
+				InputSchema: mcp.EmptyObject(),
 				Handler:     handleInfo,
 			},
 			{
 				Name:        "sync",
 				Description: "Reconcile member worktrees with supatree.yml after editing it (creates missing members). Set prune to also remove members no longer listed.",
-				InputSchema: objectSchema(map[string]any{
-					"prune": boolProp("Also remove member worktrees no longer listed in supatree.yml"),
+				InputSchema: mcp.ObjectSchema(map[string]any{
+					"prune": mcp.BoolProp("Also remove member worktrees no longer listed in supatree.yml"),
 				}, nil),
 				Handler: handleSync,
 			},
 			{
 				Name:        "rename_branches",
 				Description: "Rename every member branch from st/<slug>/<alias> to st/<new_slug>/<alias>. Do this before creating PRs so branches have a meaningful name.",
-				InputSchema: objectSchema(map[string]any{
-					"new_slug": stringProp("New branch slug (lowercase alphanumeric and hyphens, max 40 chars)"),
-					"push":     boolProp("Push the new branches and delete the old remote branches"),
+				InputSchema: mcp.ObjectSchema(map[string]any{
+					"new_slug": mcp.StringProp("New branch slug (lowercase alphanumeric and hyphens, max 40 chars)"),
+					"push":     mcp.BoolProp("Push the new branches and delete the old remote branches"),
 				}, []string{"new_slug"}),
 				Handler: handleRenameBranches,
 			},
 			{
 				Name:        "create_pr",
 				Description: "Push one member repo's branch and open a PR via gh. Refuses if the slug is still an auto-generated name (call rename_branches first) or if the repo's dependencies have no PRs yet (override with force).",
-				InputSchema: objectSchema(map[string]any{
-					"repo":  stringProp("Member repo alias"),
-					"title": stringProp("PR title (omit to auto-fill from commits)"),
-					"body":  stringProp("PR body"),
-					"draft": boolProp("Create as draft"),
-					"force": boolProp("Create even if dependencies have no PRs yet"),
+				InputSchema: mcp.ObjectSchema(map[string]any{
+					"repo":  mcp.StringProp("Member repo alias"),
+					"title": mcp.StringProp("PR title (omit to auto-fill from commits)"),
+					"body":  mcp.StringProp("PR body"),
+					"draft": mcp.BoolProp("Create as draft"),
+					"force": mcp.BoolProp("Create even if dependencies have no PRs yet"),
 				}, []string{"repo"}),
 				Handler: handleCreatePR,
 			},
 			{
 				Name:        "create_prs",
 				Description: "Open PRs for every member with commits, in dependency order, cross-linking the sibling PRs. Refuses if the slug is still auto-generated.",
-				InputSchema: objectSchema(map[string]any{
-					"title": stringProp("PR title applied to every repo (omit to auto-fill)"),
-					"body":  stringProp("PR body prepended to every repo's cross-link section"),
-					"draft": boolProp("Create all as drafts"),
+				InputSchema: mcp.ObjectSchema(map[string]any{
+					"title": mcp.StringProp("PR title applied to every repo (omit to auto-fill)"),
+					"body":  mcp.StringProp("PR body prepended to every repo's cross-link section"),
+					"draft": mcp.BoolProp("Create all as drafts"),
 				}, nil),
 				Handler: handleCreatePRs,
 			},
 			{
 				Name:        "pr_status",
 				Description: "Look up the PR status of every member branch and return an aggregate.",
-				InputSchema: emptyObject(),
+				InputSchema: mcp.EmptyObject(),
 				Handler:     handlePRStatus,
 			},
 			{
 				Name:        "docs",
 				Description: "Supatree usage documentation.",
-				InputSchema: emptyObject(),
+				InputSchema: mcp.EmptyObject(),
 				Handler:     func(map[string]any) (string, bool) { return supatreeDocs, false },
 			},
 		},
@@ -189,7 +189,11 @@ func handleCreatePR(args map[string]any) (string, bool) {
 	}
 	force, _ := args["force"].(bool)
 	if !force {
-		if missing := depsWithoutPRs(inst, m); len(missing) > 0 {
+		missing, err := depsWithoutPRs(inst, m)
+		if err != nil {
+			return fmt.Sprintf("could not check whether dependencies have PRs: %v (pass force=true to skip the check)", err), true
+		}
+		if len(missing) > 0 {
 			return fmt.Sprintf("dependencies without PRs yet: %s (pass force=true to override)", strings.Join(missing, ", ")), true
 		}
 	}
@@ -276,21 +280,32 @@ func handlePRStatus(map[string]any) (string, bool) {
 	return b.String(), false
 }
 
-// depsWithoutPRs returns dependency aliases of m that have no open/merged PR.
-func depsWithoutPRs(inst *Instance, m *Member) []string {
+// depsWithoutPRs returns dependency aliases of m that have no open/merged PR. A
+// lookup that fails is reported as an error rather than counted as "no PR":
+// that distinction is what the caller refuses on, and a rate-limited or
+// unauthenticated gh would otherwise read as every dependency missing its PR.
+func depsWithoutPRs(inst *Instance, m *Member) ([]string, error) {
+	// The cache supplies known PR refs so a dependency whose PR merged under a
+	// previous branch slug still resolves (see github.ResolvePR) instead of
+	// reading as "no PR yet" and blocking the create.
+	cache := github.NewCache(PRCachePath())
+	_ = cache.Load()
 	var missing []string
 	for _, dep := range m.DependsOn {
 		dm := inst.FindMember(dep)
 		if dm == nil {
 			continue
 		}
-		info, err := github.LookupPR(dm.Path, dm.Branch)
-		if err != nil || info == nil || info.Status == github.PRNone {
+		info, err := github.ResolvePR(dm.Path, dm.Branch, cache.Ref(dm.Branch))
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", dep, err)
+		}
+		if info == nil || info.Status == github.PRNone {
 			missing = append(missing, dep)
 		}
 	}
 	sort.Strings(missing)
-	return missing
+	return missing, nil
 }
 
 // createOnePR pushes HEAD and runs gh pr create in worktreePath.
@@ -322,27 +337,6 @@ func createOnePR(worktreePath string, args map[string]any) (string, error) {
 		return fmt.Sprintf("gh pr create failed: %s", strings.TrimSpace(string(out))), err
 	}
 	return strings.TrimSpace(string(out)), nil
-}
-
-// --- small JSON-schema helpers ---
-
-func emptyObject() map[string]any {
-	return map[string]any{"type": "object", "properties": map[string]any{}}
-}
-
-func objectSchema(props map[string]any, required []string) map[string]any {
-	s := map[string]any{"type": "object", "properties": props}
-	if len(required) > 0 {
-		s["required"] = required
-	}
-	return s
-}
-
-func stringProp(desc string) map[string]any {
-	return map[string]any{"type": "string", "description": desc}
-}
-func boolProp(desc string) map[string]any {
-	return map[string]any{"type": "boolean", "description": desc}
 }
 
 const supatreeDocs = `Supatree — multi-repo worktrees for one issue.

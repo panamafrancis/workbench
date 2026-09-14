@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -113,6 +114,55 @@ func tabHasCommandPane(tabName string) bool {
 	return false
 }
 
+// TabIDs maps every tab name to its stable Zellij id. Ids are what let a tab be
+// closed without focusing it first — and closing by focus is exactly what a
+// sidebar must never do to its own tab (see OpenOrFocusTab).
+func TabIDs() (map[string]int, error) {
+	stdout, _, err := runZellij("list-tabs")
+	if err != nil {
+		return nil, fmt.Errorf("zellij list-tabs: %w", err)
+	}
+	return parseTabIDs(stdout), nil
+}
+
+// parseTabIDs reads "list-tabs" output: a "TAB_ID POSITION NAME" header row
+// followed by one row per tab. Names may contain spaces, so only the first two
+// fields are split off.
+func parseTabIDs(out string) map[string]int {
+	ids := make(map[string]int)
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 3 {
+			continue
+		}
+		id, err := strconv.Atoi(fields[0])
+		if err != nil {
+			continue // the header row
+		}
+		rest := strings.TrimSpace(line)
+		rest = strings.TrimSpace(strings.TrimPrefix(rest, fields[0]))
+		rest = strings.TrimSpace(strings.TrimPrefix(rest, fields[1]))
+		if rest != "" {
+			ids[rest] = id
+		}
+	}
+	return ids
+}
+
+func closeTabByID(id int) error {
+	_, stderr, err := runZellij("close-tab-by-id", strconv.Itoa(id))
+	if err != nil {
+		if s := strings.TrimSpace(stderr); s != "" {
+			return fmt.Errorf("zellij close-tab-by-id: %s", s)
+		}
+		return fmt.Errorf("zellij close-tab-by-id: %w", err)
+	}
+	return nil
+}
+
+// closeTab closes a tab by focusing it first. It is the fallback for when the
+// tab's id cannot be resolved; prefer closeTabByID, because focusing is how a
+// process ends up closing the tab it is itself running in.
 func closeTab(name string) {
 	if err := GoToTab(name); err != nil {
 		return
@@ -133,7 +183,31 @@ func (w Workspace) OpenOrFocusTab(name, cwd, sidebarWidth string, nonoArgs []str
 		if tabHasCommandPane(name) {
 			return false, GoToTab(name)
 		}
-		closeTab(name)
+		// The tab is still there but its agent has exited, so it has to be
+		// replaced. Create the replacement FIRST and only then close the husk,
+		// by id — the old order (close, then create) killed the caller whenever
+		// it was the sidebar of that very tab: closing the tab kills every pane
+		// in it, so the process died before it could create anything, and the
+		// user was left in a neighbouring tab with nothing opened.
+		//
+		// Zellij tolerates the two same-named tabs that exist in between. If the
+		// id cannot be resolved, fall back to closing by focus rather than
+		// leaving a duplicate behind: a duplicate name makes every later tab
+		// lookup ambiguous, which is worse.
+		ids, idErr := TabIDs()
+		staleID, haveID := ids[name]
+		if idErr != nil || !haveID {
+			closeTab(name)
+			err = w.OpenTab(name, cwd, sidebarWidth, nonoArgs, envVars)
+			return err == nil, err
+		}
+		if err = w.OpenTab(name, cwd, sidebarWidth, nonoArgs, envVars); err != nil {
+			return false, err
+		}
+		// Best effort: the replacement is already up, and this may well be the
+		// call that kills this process along with the husk.
+		_ = closeTabByID(staleID)
+		return true, nil
 	}
 	err = w.OpenTab(name, cwd, sidebarWidth, nonoArgs, envVars)
 	return err == nil, err

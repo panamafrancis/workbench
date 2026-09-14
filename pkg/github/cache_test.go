@@ -174,3 +174,81 @@ func TestKnowsPR(t *testing.T) {
 		t.Error("uncached branch names no PR")
 	}
 }
+
+func TestCacheRenameKeepsNumberButForcesRefetch(t *testing.T) {
+	c := NewCache(filepath.Join(t.TempDir(), "pr.json"))
+	c.Set("st/old-slug/ads", &PRInfo{
+		Number:    485,
+		Status:    PROpen,
+		URL:       "https://github.com/org/ads/pull/485",
+		FetchedAt: time.Now(),
+	})
+
+	c.Rename("st/old-slug/ads", "st/new-slug/ads")
+
+	if c.Get("st/old-slug/ads") != nil {
+		t.Error("old key should be gone after a rename")
+	}
+	info := c.Get("st/new-slug/ads")
+	if info == nil {
+		t.Fatal("entry should have moved to the new key")
+	}
+	if info.Number != 485 {
+		t.Errorf("number = %d, want 485 — it is the identity that survives a rename", info.Number)
+	}
+	if info.URL != "https://github.com/org/ads/pull/485" {
+		t.Errorf("url = %q, want it carried over — it scopes the number to its repo", info.URL)
+	}
+	// The carried status was verified against the old branch name; GitHub may
+	// never have heard of the new one, so it must be re-verified next round.
+	if !c.IsStale("st/new-slug/ads", 10*time.Minute) {
+		t.Error("renamed entry must be stale so the next round re-verifies it")
+	}
+}
+
+func TestCacheRenameTerminalEntryIsStale(t *testing.T) {
+	// TerminalMaxAge must not keep a merged status alive under a key that was
+	// never checked: that is how a merged PR kept showing as open for days.
+	c := NewCache(filepath.Join(t.TempDir(), "pr.json"))
+	c.Set("old", &PRInfo{Number: 1, Status: PRMerged, FetchedAt: time.Now()})
+	c.Rename("old", "new")
+	if !c.IsStale("new", 10*time.Minute) {
+		t.Error("renamed terminal entry must be stale")
+	}
+}
+
+func TestCacheRenameDoesNotMutateOriginal(t *testing.T) {
+	c := NewCache(filepath.Join(t.TempDir(), "pr.json"))
+	fetched := time.Now()
+	info := &PRInfo{Number: 9, Status: PROpen, FetchedAt: fetched}
+	c.Set("old", info)
+	c.Rename("old", "new")
+	if !info.FetchedAt.Equal(fetched) {
+		t.Error("Rename must copy the entry, not zero the caller's PRInfo in place")
+	}
+}
+
+func TestCacheRenameMissingEntry(t *testing.T) {
+	c := NewCache(filepath.Join(t.TempDir(), "pr.json"))
+	c.Rename("absent", "new")
+	if c.Get("new") != nil {
+		t.Error("renaming an uncached branch should not invent an entry")
+	}
+}
+
+func TestCacheRef(t *testing.T) {
+	c := NewCache(filepath.Join(t.TempDir(), "pr.json"))
+	c.Set("has-pr", &PRInfo{Number: 7, Status: PROpen, URL: "https://github.com/org/repo/pull/7"})
+	c.Set("no-pr", &PRInfo{Status: PRNone})
+
+	got := c.Ref("has-pr")
+	if got.Number != 7 || got.URL != "https://github.com/org/repo/pull/7" {
+		t.Errorf("Ref = %+v, want #7 with its URL — the URL is what scopes the number to a repo", got)
+	}
+	if got := c.Ref("no-pr"); got.Number != 0 {
+		t.Errorf("Ref = %+v, want zero", got)
+	}
+	if got := c.Ref("never-seen"); got.Number != 0 || got.URL != "" {
+		t.Errorf("Ref = %+v, want zero", got)
+	}
+}

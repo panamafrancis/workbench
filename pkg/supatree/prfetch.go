@@ -89,7 +89,7 @@ func FetchPRs(targets []FetchTarget, cache *github.Cache, force bool, staleAge t
 			if !force && !cache.IsStale(t.Branch, staleAge) {
 				continue
 			}
-			info, err := github.LookupPR(t.Path, t.Branch)
+			info, err := github.ResolvePR(t.Path, t.Branch, cache.Ref(t.Branch))
 			if err != nil {
 				lastErr = err
 				if github.IsPermanentError(err) || github.IsRateLimited(err) {

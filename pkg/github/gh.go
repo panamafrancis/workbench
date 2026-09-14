@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -51,9 +52,21 @@ type PRInfo struct {
 	FetchedAt time.Time   `json:"fetched_at"`
 }
 
+// PRRef is what a previous round recorded about a branch's PR: the number that
+// identifies it, and the URL that says which repository that number belongs to.
+type PRRef struct {
+	Number int
+	URL    string
+}
+
 var ErrGHNotFound = errors.New("gh CLI not found")
 var ErrGHAuth = errors.New("gh auth required")
 var ErrGHRateLimited = errors.New("gh rate limited")
+
+// ErrPRNotFound means GitHub has no PR with the number we asked about — it was
+// deleted, or the number belongs to another repo. Distinct from "this branch
+// has no PR", which LookupPR reports as a PRNone result.
+var ErrPRNotFound = errors.New("pull request not found")
 
 type ghPR struct {
 	Number         int           `json:"number"`
@@ -74,32 +87,25 @@ type ghCheckNode struct {
 	State      string `json:"state"`
 }
 
+// prJSONFields is the field set every PR lookup asks gh for. Both entry points
+// unmarshal into ghPR, so they must stay in step.
+const prJSONFields = "number,state,title,url,isDraft,reviewDecision,statusCheckRollup,updatedAt"
+
+// LookupPR finds the PR whose head is branch. GitHub keys this on the current
+// head ref, so it returns nothing for a PR whose head has since moved or whose
+// branch was renamed after it merged — see ResolvePR.
 func LookupPR(repoPath, branch string) (*PRInfo, error) {
 	cmd := exec.CommandContext(context.Background(), "gh", "pr", "list",
 		"--head", branch,
 		"--state", "all",
-		"--json", "number,state,title,url,isDraft,reviewDecision,statusCheckRollup,updatedAt",
+		"--json", prJSONFields,
 		"--limit", "1",
 	)
 	cmd.Dir = repoPath
 
 	out, err := cmd.Output()
 	if err != nil {
-		if errors.Is(err, exec.ErrNotFound) {
-			return nil, ErrGHNotFound
-		}
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			stderr := string(exitErr.Stderr)
-			if exitErr.ExitCode() == 4 || strings.Contains(stderr, "not logged in") || strings.Contains(stderr, "authentication") {
-				return nil, ErrGHAuth
-			}
-			if strings.Contains(strings.ToLower(stderr), "rate limit") {
-				return nil, ErrGHRateLimited
-			}
-			return nil, fmt.Errorf("gh: %s", stderr)
-		}
-		return nil, fmt.Errorf("gh: %w", err)
+		return nil, classifyGHError(err)
 	}
 
 	var prs []ghPR
@@ -111,8 +117,132 @@ func LookupPR(repoPath, branch string) (*PRInfo, error) {
 	if len(prs) == 0 {
 		return &PRInfo{Status: PRNone, FetchedAt: now}, nil
 	}
+	return prs[0].toInfo(now), nil
+}
 
-	pr := prs[0]
+// LookupPRByNumber fetches a PR by its number. The number is the only stable
+// identity a PR has: it survives branch renames, merges, and deletion of the
+// head branch, all of which make a --head lookup come back empty.
+func LookupPRByNumber(repoPath string, number int) (*PRInfo, error) {
+	cmd := exec.CommandContext(context.Background(), "gh", "pr", "view",
+		strconv.Itoa(number),
+		"--json", prJSONFields,
+	)
+	cmd.Dir = repoPath
+
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, classifyGHError(err)
+	}
+
+	var pr ghPR
+	if err := json.Unmarshal(out, &pr); err != nil {
+		return nil, fmt.Errorf("parse gh output: %w", err)
+	}
+	if pr.Number == 0 {
+		return nil, ErrPRNotFound
+	}
+	return pr.toInfo(time.Now()), nil
+}
+
+// prLookup is the seam the resolution policy is tested against; the exported
+// ResolvePR binds it to the real gh calls.
+type prLookup struct {
+	byHead   func(repoPath, branch string) (*PRInfo, error)
+	byNumber func(repoPath string, number int) (*PRInfo, error)
+}
+
+// ResolvePR refreshes the PR status for branch. prev is what a previous round
+// recorded for this branch, zero if nothing is known.
+//
+// The head ref is not the PR's identity. Renaming a local branch only retargets
+// a PR that is still open when the new branch is pushed; a PR that merged or
+// closed first keeps the old head forever, as does one whose push failed or was
+// never made (--push=false). Asking by head alone then returns nothing and the
+// PR silently disappears from the cache. So a head lookup that comes back empty
+// while we hold a number falls back to that number, which resolves the PR
+// wherever its head has ended up.
+//
+// Head first, not number first: a branch may have picked up a *new* PR since
+// the cached number was recorded (a reused worktree name), and that new PR is
+// the one worth reporting. prev carries the URL as well as the number so a
+// number recorded against a different repo (the cache is keyed on branch name
+// alone) can be rejected instead of resolving an unrelated PR.
+func ResolvePR(repoPath, branch string, prev PRRef) (*PRInfo, error) {
+	return resolvePR(prLookup{byHead: LookupPR, byNumber: LookupPRByNumber}, repoPath, branch, prev)
+}
+
+func resolvePR(l prLookup, repoPath, branch string, prev PRRef) (*PRInfo, error) {
+	info, err := l.byHead(repoPath, branch)
+	if err != nil {
+		return nil, err
+	}
+	if prev.Number == 0 || info.Status != PRNone {
+		return info, nil
+	}
+	byNum, err := l.byNumber(repoPath, prev.Number)
+	if errors.Is(err, ErrPRNotFound) {
+		// The PR really is gone; the empty head result is the truth.
+		return info, nil
+	}
+	if err != nil {
+		// Transient (rate limit, auth, network): report it rather than letting
+		// the caller cache an empty result over a PR we know exists.
+		return nil, err
+	}
+	if !sameRepo(prev.URL, byNum.URL) {
+		// The number was recorded against another repo — the cache is keyed on
+		// branch name alone, so two repos with the same branch name share an
+		// entry. Looking that number up here resolves whatever unrelated PR
+		// happens to hold it, so fall back to what the head lookup said.
+		return info, nil
+	}
+	return byNum, nil
+}
+
+// sameRepo reports whether two PR URLs name the same repository. A ref with no
+// URL to compare against is taken at face value.
+func sameRepo(a, b string) bool {
+	if a == "" || b == "" {
+		return true
+	}
+	return prRepoURL(a) == prRepoURL(b)
+}
+
+// prRepoURL strips the /pull/<n> suffix off a PR URL, leaving the repository it
+// belongs to (https://github.com/owner/repo/pull/12 → .../owner/repo).
+func prRepoURL(prURL string) string {
+	if i := strings.LastIndex(prURL, "/pull/"); i >= 0 {
+		return prURL[:i]
+	}
+	return prURL
+}
+
+// classifyGHError maps a failed gh invocation onto the sentinels callers switch
+// on. Anything unrecognized comes back as an opaque error carrying gh's stderr.
+func classifyGHError(err error) error {
+	if errors.Is(err, exec.ErrNotFound) {
+		return ErrGHNotFound
+	}
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		return fmt.Errorf("gh: %w", err)
+	}
+	stderr := string(exitErr.Stderr)
+	lower := strings.ToLower(stderr)
+	if exitErr.ExitCode() == 4 || strings.Contains(stderr, "not logged in") || strings.Contains(stderr, "authentication") {
+		return ErrGHAuth
+	}
+	if strings.Contains(lower, "rate limit") {
+		return ErrGHRateLimited
+	}
+	if strings.Contains(lower, "could not resolve to a pullrequest") || strings.Contains(lower, "no pull requests found") {
+		return ErrPRNotFound
+	}
+	return fmt.Errorf("gh: %s", stderr)
+}
+
+func (pr ghPR) toInfo(now time.Time) *PRInfo {
 	return &PRInfo{
 		Number:    pr.Number,
 		Status:    mapStatus(pr.State, pr.IsDraft),
@@ -122,7 +252,7 @@ func LookupPR(repoPath, branch string) (*PRInfo, error) {
 		Checks:    rollupChecks(pr.Checks),
 		UpdatedAt: pr.UpdatedAt,
 		FetchedAt: now,
-	}, nil
+	}
 }
 
 // mapReview normalizes GitHub's reviewDecision enum. An empty decision means

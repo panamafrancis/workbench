@@ -55,8 +55,8 @@ pkg/
     names.go            # GenerateName (city names), ValidateName, ExtractBaseCity, IsCityName
     status.go           # IsDirty, BranchName
   github/
-    gh.go               # LookupPR via gh CLI (status, review decision, check rollup)
-    cache.go            # PR status cache — Get/Set/Rename/Delete/IsStale
+    gh.go               # LookupPR (by head) / LookupPRByNumber / ResolvePR via gh CLI
+    cache.go            # PR status cache — Get/Set/Rename/Delete/IsStale/PRNumber
   sandbox/
     nono.go             # BuildNonoArgs(path, modelKey, cfg) → []string
   setup/
@@ -109,6 +109,8 @@ All state lives under `~/.workbench/`:
 
 **GitHub quota discipline** — the sidebar runs once per Zellij tab, so a naive per-process poll multiplies GitHub's 5,000/hour **GraphQL** quota (the bucket `gh pr list` spends — not the `core` bucket `gh api rate_limit` reports) by the tab count. `fetchVisibleCmd` therefore: re-reads the on-disk cache before building targets; skips branches with no `origin/<branch>` ref (`git.HasRemoteBranch` — an unpushed branch cannot have a PR); trusts merged/closed statuses for `github.TerminalMaxAge` (24h, enforced inside `Cache.IsStale`, bypassed by a forced refresh); and runs the actual `gh` calls under `config.TryFileLock(config.PRCacheLockPath())` so only one tab fetches per round while the rest emit `prSkippedMsg` and pick up the cache it writes. A rate-limit response arms a persisted `SetRetryAfter` cooldown that every tab observes. `pkg/supatree/tui` mirrors this exactly — keep the two in step.
 
+**A PR is identified by number, not by branch.** `gh pr list --head <branch>` only finds a PR whose head ref is *currently* that branch, and a rename retargets the head only for a PR still open when the new branch is pushed — one that merged or closed first is frozen on the old name, as is one whose push failed or never ran. So `Cache.Rename` carries the entry's `Number` but zeroes `FetchedAt` (a status verified under the old key must not be trusted, nor held for `TerminalMaxAge`), and every fetcher goes through `github.ResolvePR(path, branch, cache.Ref(branch))`: head lookup first — a branch may have picked up a *new* PR — then `gh pr view <n>` when that comes back empty and a number is known. The ref carries the cached URL as well as the number, and a by-number result from a different repo is rejected — the cache is keyed on branch name alone, so two repos with the same branch name share one entry and the number would otherwise resolve an unrelated PR. Never call `LookupPR` directly from a fetch path.
+
 **Local re-sync on focus/tick** — `reloadLocalState()` re-reads `config.yml` + `state.yml` and swaps `m.cfg`/`m.tree.cfg`/`m.state` on `tea.FocusMsg` and every `tickMsg`, so sidebars in different tabs stay consistent without a manual `r`. It deliberately skips the network PR fetch (that's what the full `refreshMsg` is for). It's a no-op while `m.mode != modeNormal` or a create is in flight (`m.creating`), because reloading would either shift the `pendingRepoIdx`/`pendingWorktreeIdx` slice indices under an open confirm/input mode or drop an optimistic worktree that isn't persisted yet.
 
 **Inline input mode** — the model has an `inputMode` state machine (`modeNormal` / `modeAddRepoPath` / `modeAddRepoAlias` / `modeNewWorktree` / `modeConfirmDelete` / `modeConfirmQuit` / `modeOpenWith` / `modeHelp`). When mode is non-normal, `Update` routes `tea.KeyMsg` to `updateInput()` which handles `enter`/`esc` and passes everything else to the `textinput.Model`. Use this same pattern for any future inline prompts.
@@ -131,6 +133,10 @@ Layout/session writing hangs off a `zellij.Workspace` (`pkg/zellij/workspace.go`
 
 `pkg/zellij/client.go` provides tab-level operations (`OpenTab`, `GoToTab`, `OpenOrFocusTab`). These call `zellij action` subcommands and only work inside a Zellij session.
 
+**Never close a tab by focusing it.** `zellij action close-tab` closes the *client's current tab*, and closing a tab kills every process in it — including the sidebar that asked for the close. That is why `OpenOrFocusTab` replaces a tab whose agent has exited by creating the replacement **first** and only then closing the husk via `close-tab-by-id` (ids come from `TabIDs`): the caller may well be that tab's own sidebar, and it dies on the close, so nothing may be left to do afterwards. The old close-then-create order silently did nothing at all when an agent was reopened from its own tab's sidebar. `closeTab` (by focus) survives only as the fallback for when an id cannot be resolved.
+
+Note that `zellij action dump-layout` reports a tab as *empty* once its `close_on_exit=true` command pane has exited, even though the sidebar pane is still running — so `tabHasCommandPane` answers "no agent here", which is what triggers the replacement path.
+
 ## nono sandbox
 
 `BuildNonoArgs` returns `["run", "--profile", <profile>, "--allow", <worktreePath>, "--", <binary>, <args...>]`. The profile and binary come from the model config entry — no hardcoded mapping.
@@ -139,7 +145,7 @@ Layout/session writing hangs off a `zellij.Workspace` (`pkg/zellij/workspace.go`
 
 - **New inline TUI action**: add key to `keys.go`, add `inputMode` constants if needed, handle in `model.go` `Update` and `updateInput`.
 - **New CLI command**: add file under `cmd/`, wire into `rootCmd` in `cmd/root.go` via `rootCmd.AddCommand(...)` in `init()`.
-- **New MCP tool**: `pkg/mcp` is a reusable framework — `rpc.go` has the JSON-RPC `Server{Name,Version,Tools,Prompts,Gate}` + stdio loop; `workbench.go` builds the workbench tool set. Add workbench tools there; supatree tools live in `pkg/supatree/mcp.go`. Tool handlers have signature `func(args map[string]any) (text string, isError bool)`.
+- **New MCP tool**: `pkg/mcp` is a reusable framework — `rpc.go` has the JSON-RPC `Server{Name,Version,Tools,Prompts,Gate}` + stdio loop; `workbench.go` builds the workbench tool set. Add workbench tools there; supatree tools live in `pkg/supatree/mcp.go`. Input schemas are built with the shared helpers in `schema.go` (`ObjectSchema`/`StringProp`/`BoolProp`/`EnumProp`/`EmptyObject`) — both tool sets use them, so don't hand-roll the map literals. Tool handlers have signature `func(args map[string]any) (text string, isError bool)`.
 - **New config field**: add to structs in `pkg/config/config.go`, update `DefaultConfig()` if it needs a default.
 - **Worktree creation hooks**: `copy_files` runs first (copies gitignored files from repo), then `startup_script`.
 - **Change what opens in a new tab**: edit the KDL template in `pkg/zellij/layout.go`.
@@ -166,11 +172,15 @@ Layout/session writing hangs off a `zellij.Workspace` (`pkg/zellij/workspace.go`
 
 **Sidebar navigation.** Vim motions live in `updateNormal`: `j`/`k`, `ctrl+d`/`ctrl+u` (`halfPage`, sized from the `viewHeight` that `viewport` records each render), `G` (`gotoBottom`), `}`/`{` (`jumpTree` — next/previous `rowTree`), plus the two-key sequences `gg`, `zM` and `zR` driven by the `pending` prefix field (an unrecognized second key clears the prefix and falls through to the normal switch, so a mistyped `g` never swallows a command). Mouse handling is in `updateMouse`: the wheel calls `scrollBy`, which pans `m.scroll` and clears `m.follow`; `viewport` only drags the scroll offset to the cursor while `follow` is set, so a wheel-scrolled view survives the 30s tick reload. Every deliberate cursor move (`moveCursor`, `gotoTop`/`gotoBottom`, `jumpTree`, `setCollapse`, `selectByRow`) re-arms `follow` — but `clampCursor`/`reloadWithSelection` deliberately do not, or background reloads would yank the view back mid-scroll.
 
+**Claude folder trust.** `OpenRootAgent` seeds `projects["<root>"].hasTrustDialogAccepted` in `~/.claude.json` via `sandbox.TrustDir` before launching. Claude asks "Do you trust the files in this folder?" once per directory and records the answer there — but a supatree root is shared by several agents, and each rewrites that whole file from the snapshot it read at startup, so an agent that started before the dialog was accepted writes the unaccepted entry back and the prompt returns forever. Seeding it before any agent starts means every process reads an already-trusted entry and writes it back unchanged. It is best effort (a failure is at most a warning), writes only when the flag is not already set, and resolves the `~/.claude.json` symlink so an atomic write lands on the real file instead of replacing the link. Workbench worktrees are one-agent-per-directory and do not need it.
+
 **Agents.** Several agents share the supatree root but resume independently via session IDs (`Model.NewSessionArgs`/`ResumeSessionArgs`, `{session_id}` substituted by `sandbox.BuildAgentNonoArgs`). `supatree open [--agent <name>]` opens/resumes a root agent; `--repo <alias>` opens an agent scoped to one member (dir-based resume). Tab names: `<name>` for the `main` agent, `<name>:<agent>` otherwise.
 
 **MCP tools** (`supatree mcp`, gated by `SUPATREE=1` except `docs`/`supatree_info`): `supatree_info`, `sync`, `rename_branches`, `create_pr`, `create_prs`, `pr_status`, `docs`. `pr_status` reports the `Status` rollup and refreshes through `FetchPRs` (forced past the staleness gate — an agent asking wants a current answer — but still under the lock and backoff). `create_pr`/`create_prs` refuse a still-city-name slug and (unless `force`) a repo whose dependencies have no PRs yet. Only `supatree init` registers this server (`claude mcp add supatree -s user`); skip it and a supatree session sees only workbench's tools. The **workbench** MCP tools (`create_pr`/`rename_branch`, gated by `WORKBENCH=1`) detect `SUPATREE=1` and redirect to these instead of dead-ending on the missing `WORKBENCH` env var. Branch slugs (`rename_branches`) share `git.ValidateName` — max 40 chars.
 
-**Conventions.** Reuse workbench packages — never fork them. `git.CreateWorktree`/`RemoveWorktree`/`RenameBranch`/`CommitsAhead`, `repo.RunCopyFiles`/`RunStartup`/`RunCleanup`, `github.LookupPR`/`Cache`, `sandbox.BuildNonoArgs`/`BuildAgentNonoArgs`, `config.WithFileLock`. `make ci` + both e2e scripts must stay green.
+**Rename (`rename.go`).** `RenameBranchSlug` is phased so the tree is never half-renamed: every local `git branch -m` runs first and a failure part-way rolls the earlier ones back (`meta.Slug` derives `Member.Branch`, so a member left on the other slug falls outside its own tree and loses its PR and status); only then are meta + info written; only then does `--push` run, collecting per-member failures rather than aborting, since the rename has already been committed to meta.
+
+**Conventions.** Reuse workbench packages — never fork them. `git.CreateWorktree`/`RemoveWorktree`/`RenameBranch`/`CommitsAhead`, `repo.RunCopyFiles`/`RunStartup`/`RunCleanup`, `github.ResolvePR`/`Cache`, `sandbox.BuildNonoArgs`/`BuildAgentNonoArgs`, `config.WithFileLock`. `make ci` + both e2e scripts must stay green.
 
 ## Before pushing / creating a PR
 

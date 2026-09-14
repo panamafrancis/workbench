@@ -277,6 +277,11 @@ Before creating a PR, rename to something meaningful:
 
 Do NOT use bare git branch -m — it desyncs workbench config and PR cache.
 
+A PR follows the rename only if it is still open when the new branch is
+pushed; one that merged or closed first keeps its old head ref on GitHub.
+The PR cache therefore re-verifies a renamed branch on the next round and
+falls back to the cached PR number when the new branch names no PR.
+
 ## Creation flow
 
 1. Name generated or validated (synchronous)
