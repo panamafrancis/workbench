@@ -425,6 +425,8 @@ Press `D` in the supatree sidebar to open or focus the dashboard in a `supatree-
 
 ### Agents
 
+Opening a root agent also marks the tree root as a trusted folder in `~/.claude.json`, so Claude does not ask "Do you trust the files in this folder?" on every launch. It has to be seeded rather than simply answered once: several agents share the tree root, each rewrites that file wholesale from what it read at startup, and an agent that started before you accepted puts the unaccepted answer back. Only the `hasTrustDialogAccepted` flag for the tree root is touched, only when it is not already set.
+
 All agents run at the supatree root under a nono sandbox that allows the whole tree. Multiple named agents (`--agent`) share the directory but resume independently via cached session IDs. `--repo <alias>` opens an agent scoped to a single member repo instead.
 
 ### MCP tools

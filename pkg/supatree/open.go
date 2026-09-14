@@ -35,6 +35,12 @@ func OpenRootAgent(inst *Instance, wb *config.Config, ws zellij.Workspace, sideb
 	if err != nil {
 		return false, err
 	}
+	// Several agents share this directory, which is what makes Claude's folder
+	// trust never stick here (see sandbox.TrustDir). Seed it before launching;
+	// failing to is a prompt the user answers, not a reason to refuse to open.
+	if err := sandbox.TrustDir(inst.Root); err != nil && startupW != nil {
+		_, _ = fmt.Fprintf(startupW, "warning: could not pre-trust %s with claude: %v\n", inst.Root, err)
+	}
 	// Resume only when this agent's session transcript actually exists; a freshly
 	// created agent (or one whose id was never launched) starts a new session so
 	// it never lands in another agent's chat.
