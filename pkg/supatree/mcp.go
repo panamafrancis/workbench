@@ -189,7 +189,11 @@ func handleCreatePR(args map[string]any) (string, bool) {
 	}
 	force, _ := args["force"].(bool)
 	if !force {
-		if missing := depsWithoutPRs(inst, m); len(missing) > 0 {
+		missing, err := depsWithoutPRs(inst, m)
+		if err != nil {
+			return fmt.Sprintf("could not check whether dependencies have PRs: %v (pass force=true to skip the check)", err), true
+		}
+		if len(missing) > 0 {
 			return fmt.Sprintf("dependencies without PRs yet: %s (pass force=true to override)", strings.Join(missing, ", ")), true
 		}
 	}
@@ -276,10 +280,13 @@ func handlePRStatus(map[string]any) (string, bool) {
 	return b.String(), false
 }
 
-// depsWithoutPRs returns dependency aliases of m that have no open/merged PR.
-func depsWithoutPRs(inst *Instance, m *Member) []string {
-	// The cache supplies known PR numbers so a dependency whose PR merged under
-	// a previous branch slug still resolves (see github.ResolvePR) instead of
+// depsWithoutPRs returns dependency aliases of m that have no open/merged PR. A
+// lookup that fails is reported as an error rather than counted as "no PR":
+// that distinction is what the caller refuses on, and a rate-limited or
+// unauthenticated gh would otherwise read as every dependency missing its PR.
+func depsWithoutPRs(inst *Instance, m *Member) ([]string, error) {
+	// The cache supplies known PR refs so a dependency whose PR merged under a
+	// previous branch slug still resolves (see github.ResolvePR) instead of
 	// reading as "no PR yet" and blocking the create.
 	cache := github.NewCache(PRCachePath())
 	_ = cache.Load()
@@ -289,13 +296,16 @@ func depsWithoutPRs(inst *Instance, m *Member) []string {
 		if dm == nil {
 			continue
 		}
-		info, err := github.ResolvePR(dm.Path, dm.Branch, cache.PRNumber(dm.Branch))
-		if err != nil || info == nil || info.Status == github.PRNone {
+		info, err := github.ResolvePR(dm.Path, dm.Branch, cache.Ref(dm.Branch))
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", dep, err)
+		}
+		if info == nil || info.Status == github.PRNone {
 			missing = append(missing, dep)
 		}
 	}
 	sort.Strings(missing)
-	return missing
+	return missing, nil
 }
 
 // createOnePR pushes HEAD and runs gh pr create in worktreePath.

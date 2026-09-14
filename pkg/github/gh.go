@@ -52,6 +52,13 @@ type PRInfo struct {
 	FetchedAt time.Time   `json:"fetched_at"`
 }
 
+// PRRef is what a previous round recorded about a branch's PR: the number that
+// identifies it, and the URL that says which repository that number belongs to.
+type PRRef struct {
+	Number int
+	URL    string
+}
+
 var ErrGHNotFound = errors.New("gh CLI not found")
 var ErrGHAuth = errors.New("gh auth required")
 var ErrGHRateLimited = errors.New("gh rate limited")
@@ -145,8 +152,8 @@ type prLookup struct {
 	byNumber func(repoPath string, number int) (*PRInfo, error)
 }
 
-// ResolvePR refreshes the PR status for branch. knownNumber is the PR number a
-// previous round recorded for this branch, or 0 if none.
+// ResolvePR refreshes the PR status for branch. prev is what a previous round
+// recorded for this branch, zero if nothing is known.
 //
 // The head ref is not the PR's identity. Renaming a local branch only retargets
 // a PR that is still open when the new branch is pushed; a PR that merged or
@@ -158,20 +165,22 @@ type prLookup struct {
 //
 // Head first, not number first: a branch may have picked up a *new* PR since
 // the cached number was recorded (a reused worktree name), and that new PR is
-// the one worth reporting.
-func ResolvePR(repoPath, branch string, knownNumber int) (*PRInfo, error) {
-	return resolvePR(prLookup{byHead: LookupPR, byNumber: LookupPRByNumber}, repoPath, branch, knownNumber)
+// the one worth reporting. prev carries the URL as well as the number so a
+// number recorded against a different repo (the cache is keyed on branch name
+// alone) can be rejected instead of resolving an unrelated PR.
+func ResolvePR(repoPath, branch string, prev PRRef) (*PRInfo, error) {
+	return resolvePR(prLookup{byHead: LookupPR, byNumber: LookupPRByNumber}, repoPath, branch, prev)
 }
 
-func resolvePR(l prLookup, repoPath, branch string, knownNumber int) (*PRInfo, error) {
+func resolvePR(l prLookup, repoPath, branch string, prev PRRef) (*PRInfo, error) {
 	info, err := l.byHead(repoPath, branch)
 	if err != nil {
 		return nil, err
 	}
-	if knownNumber == 0 || info.Status != PRNone {
+	if prev.Number == 0 || info.Status != PRNone {
 		return info, nil
 	}
-	byNum, err := l.byNumber(repoPath, knownNumber)
+	byNum, err := l.byNumber(repoPath, prev.Number)
 	if errors.Is(err, ErrPRNotFound) {
 		// The PR really is gone; the empty head result is the truth.
 		return info, nil
@@ -181,7 +190,32 @@ func resolvePR(l prLookup, repoPath, branch string, knownNumber int) (*PRInfo, e
 		// the caller cache an empty result over a PR we know exists.
 		return nil, err
 	}
+	if !sameRepo(prev.URL, byNum.URL) {
+		// The number was recorded against another repo — the cache is keyed on
+		// branch name alone, so two repos with the same branch name share an
+		// entry. Looking that number up here resolves whatever unrelated PR
+		// happens to hold it, so fall back to what the head lookup said.
+		return info, nil
+	}
 	return byNum, nil
+}
+
+// sameRepo reports whether two PR URLs name the same repository. A ref with no
+// URL to compare against is taken at face value.
+func sameRepo(a, b string) bool {
+	if a == "" || b == "" {
+		return true
+	}
+	return prRepoURL(a) == prRepoURL(b)
+}
+
+// prRepoURL strips the /pull/<n> suffix off a PR URL, leaving the repository it
+// belongs to (https://github.com/owner/repo/pull/12 → .../owner/repo).
+func prRepoURL(prURL string) string {
+	if i := strings.LastIndex(prURL, "/pull/"); i >= 0 {
+		return prURL[:i]
+	}
+	return prURL
 }
 
 // classifyGHError maps a failed gh invocation onto the sentinels callers switch

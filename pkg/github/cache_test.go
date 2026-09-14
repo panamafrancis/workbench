@@ -177,7 +177,12 @@ func TestKnowsPR(t *testing.T) {
 
 func TestCacheRenameKeepsNumberButForcesRefetch(t *testing.T) {
 	c := NewCache(filepath.Join(t.TempDir(), "pr.json"))
-	c.Set("st/old-slug/ads", &PRInfo{Number: 485, Status: PROpen, FetchedAt: time.Now()})
+	c.Set("st/old-slug/ads", &PRInfo{
+		Number:    485,
+		Status:    PROpen,
+		URL:       "https://github.com/org/ads/pull/485",
+		FetchedAt: time.Now(),
+	})
 
 	c.Rename("st/old-slug/ads", "st/new-slug/ads")
 
@@ -190,6 +195,9 @@ func TestCacheRenameKeepsNumberButForcesRefetch(t *testing.T) {
 	}
 	if info.Number != 485 {
 		t.Errorf("number = %d, want 485 — it is the identity that survives a rename", info.Number)
+	}
+	if info.URL != "https://github.com/org/ads/pull/485" {
+		t.Errorf("url = %q, want it carried over — it scopes the number to its repo", info.URL)
 	}
 	// The carried status was verified against the old branch name; GitHub may
 	// never have heard of the new one, so it must be re-verified next round.
@@ -228,18 +236,19 @@ func TestCacheRenameMissingEntry(t *testing.T) {
 	}
 }
 
-func TestPRNumber(t *testing.T) {
+func TestCacheRef(t *testing.T) {
 	c := NewCache(filepath.Join(t.TempDir(), "pr.json"))
-	c.Set("has-pr", &PRInfo{Number: 7, Status: PROpen})
+	c.Set("has-pr", &PRInfo{Number: 7, Status: PROpen, URL: "https://github.com/org/repo/pull/7"})
 	c.Set("no-pr", &PRInfo{Status: PRNone})
 
-	if got := c.PRNumber("has-pr"); got != 7 {
-		t.Errorf("PRNumber = %d, want 7", got)
+	got := c.Ref("has-pr")
+	if got.Number != 7 || got.URL != "https://github.com/org/repo/pull/7" {
+		t.Errorf("Ref = %+v, want #7 with its URL — the URL is what scopes the number to a repo", got)
 	}
-	if got := c.PRNumber("no-pr"); got != 0 {
-		t.Errorf("PRNumber = %d, want 0", got)
+	if got := c.Ref("no-pr"); got.Number != 0 {
+		t.Errorf("Ref = %+v, want zero", got)
 	}
-	if got := c.PRNumber("never-seen"); got != 0 {
-		t.Errorf("PRNumber = %d, want 0", got)
+	if got := c.Ref("never-seen"); got.Number != 0 || got.URL != "" {
+		t.Errorf("Ref = %+v, want zero", got)
 	}
 }

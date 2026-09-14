@@ -1058,7 +1058,7 @@ func (m *Model) fetchVisibleCmd(force bool) tea.Cmd {
 				if !force && !cache.IsStale(t.branch, visibleMaxAge) {
 					continue
 				}
-				info, err := github.ResolvePR(t.repoPath, t.branch, cache.PRNumber(t.branch))
+				info, err := github.ResolvePR(t.repoPath, t.branch, cache.Ref(t.branch))
 				if err != nil {
 					lastErr = err
 					if github.IsPermanentError(err) {
@@ -1122,7 +1122,7 @@ func (m *Model) fetchIfUncached() tea.Cmd {
 	return func() tea.Msg {
 		// This path runs only for a branch with no cache entry at all (see the
 		// Get check above), so there is no known PR number to fall back on.
-		info, err := github.ResolvePR(repoPath, branch, 0)
+		info, err := github.ResolvePR(repoPath, branch, github.PRRef{})
 		if err != nil {
 			return prBatchDoneMsg{ghErr: err}
 		}

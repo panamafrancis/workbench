@@ -28,8 +28,10 @@ type renamedMember struct {
 // happens first: a failure part-way rolls the earlier ones back and returns with
 // nothing changed, because meta.Slug is what derives Member.Branch — a member
 // left on the other slug falls outside its own tree and loses its PR and status.
-// Only once all members are on the new slug is meta saved, and only then are the
-// branches pushed. A push failure therefore cannot desync meta from the branches;
+// Only once all members are on the new slug is meta saved — and a failure there
+// rolls them back too, since meta is the first thing written and the renames are
+// still the only change made. The PR cache, info.md and the pushes all follow a
+// saved meta, so a failure in any of them cannot desync meta from the branches;
 // it is reported, but the rename itself stands.
 func RenameBranchSlug(c *Config, wb *config.Config, name, newSlug string, push bool) error {
 	if err := git.ValidateName(newSlug, nil); err != nil {
@@ -52,6 +54,16 @@ func RenameBranchSlug(c *Config, wb *config.Config, name, newSlug string, push b
 		return err
 	}
 
+	// Meta is saved before anything else is touched. If it fails, the local
+	// renames are the only change made so far and must be undone: meta.Slug is
+	// what derives Member.Branch, so leaving them in place strands every member
+	// outside its own tree, and a retry would then die on "branch already
+	// exists" with no way forward.
+	meta.Slug = newSlug
+	if err := meta.Save(inst.Root); err != nil {
+		return undoRenames(err, renamed)
+	}
+
 	prCache := github.NewCache(PRCachePath())
 	_ = prCache.Load()
 	for _, r := range renamed {
@@ -59,10 +71,6 @@ func RenameBranchSlug(c *Config, wb *config.Config, name, newSlug string, push b
 	}
 	_ = prCache.Save()
 
-	meta.Slug = newSlug
-	if err := meta.Save(inst.Root); err != nil {
-		return err
-	}
 	updated, err := LoadInstance(inst.Root)
 	if err != nil {
 		return err
@@ -88,15 +96,21 @@ func renameMemberBranches(inst *Instance, newSlug string) ([]renamedMember, erro
 		}
 		newBranch := fmt.Sprintf("st/%s/%s", newSlug, m.Alias)
 		if err := git.RenameBranch(m.Path, newBranch); err != nil {
-			err = fmt.Errorf("rename %s: %w", m.Alias, err)
-			if stuck := rollbackRenames(done); len(stuck) > 0 {
-				return nil, fmt.Errorf("%w (rolled back, except: %w)", err, errors.Join(stuck...))
-			}
-			return nil, err
+			return nil, undoRenames(fmt.Errorf("rename %s: %w", m.Alias, err), done)
 		}
 		done = append(done, renamedMember{alias: m.Alias, path: m.Path, oldBranch: m.Branch, newBranch: newBranch})
 	}
 	return done, nil
+}
+
+// undoRenames rolls back the renames already made because of cause, and returns
+// the error to report: cause alone when everything was restored, or cause plus
+// whichever members are stuck on the new slug.
+func undoRenames(cause error, done []renamedMember) error {
+	if stuck := rollbackRenames(done); len(stuck) > 0 {
+		return fmt.Errorf("%w (rolled back, except: %w)", cause, errors.Join(stuck...))
+	}
+	return cause
 }
 
 // rollbackRenames puts each member back on its old branch, newest first, and

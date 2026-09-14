@@ -113,7 +113,7 @@ func TestResolvePRUsesHeadResult(t *testing.T) {
 			return nil, nil
 		},
 	}
-	got, err := resolvePR(l, "/repo", "branch", 5)
+	got, err := resolvePR(l, "/repo", "branch", PRRef{Number: 5})
 	if err != nil {
 		t.Fatalf("resolvePR: %v", err)
 	}
@@ -129,7 +129,7 @@ func TestResolvePRFallsBackToNumber(t *testing.T) {
 		byHead:   func(string, string) (*PRInfo, error) { return &PRInfo{Status: PRNone}, nil },
 		byNumber: func(_ string, n int) (*PRInfo, error) { return fakeInfo(n, PRMerged), nil },
 	}
-	got, err := resolvePR(l, "/repo", "st/new-slug/ads-service", 485)
+	got, err := resolvePR(l, "/repo", "st/new-slug/ads-service", PRRef{Number: 485})
 	if err != nil {
 		t.Fatalf("resolvePR: %v", err)
 	}
@@ -143,7 +143,7 @@ func TestResolvePRNoKnownNumber(t *testing.T) {
 		byHead:   func(string, string) (*PRInfo, error) { return &PRInfo{Status: PRNone}, nil },
 		byNumber: func(string, int) (*PRInfo, error) { t.Fatal("no number to look up"); return nil, nil },
 	}
-	got, err := resolvePR(l, "/repo", "branch", 0)
+	got, err := resolvePR(l, "/repo", "branch", PRRef{})
 	if err != nil {
 		t.Fatalf("resolvePR: %v", err)
 	}
@@ -158,7 +158,7 @@ func TestResolvePRNumberGone(t *testing.T) {
 		byHead:   func(string, string) (*PRInfo, error) { return &PRInfo{Status: PRNone}, nil },
 		byNumber: func(string, int) (*PRInfo, error) { return nil, ErrPRNotFound },
 	}
-	got, err := resolvePR(l, "/repo", "branch", 485)
+	got, err := resolvePR(l, "/repo", "branch", PRRef{Number: 485})
 	if err != nil {
 		t.Fatalf("resolvePR: %v", err)
 	}
@@ -173,7 +173,7 @@ func TestResolvePRPropagatesFallbackError(t *testing.T) {
 		byHead:   func(string, string) (*PRInfo, error) { return &PRInfo{Status: PRNone}, nil },
 		byNumber: func(string, int) (*PRInfo, error) { return nil, ErrGHRateLimited },
 	}
-	if _, err := resolvePR(l, "/repo", "branch", 485); !errors.Is(err, ErrGHRateLimited) {
+	if _, err := resolvePR(l, "/repo", "branch", PRRef{Number: 485}); !errors.Is(err, ErrGHRateLimited) {
 		t.Errorf("err = %v, want ErrGHRateLimited", err)
 	}
 }
@@ -186,7 +186,7 @@ func TestResolvePRPropagatesHeadError(t *testing.T) {
 			return nil, nil
 		},
 	}
-	if _, err := resolvePR(l, "/repo", "branch", 485); !errors.Is(err, ErrGHAuth) {
+	if _, err := resolvePR(l, "/repo", "branch", PRRef{Number: 485}); !errors.Is(err, ErrGHAuth) {
 		t.Errorf("err = %v, want ErrGHAuth", err)
 	}
 }
@@ -245,5 +245,60 @@ func TestPRNotFoundIsNotPermanent(t *testing.T) {
 	// down the way a missing gh binary or a failed login does.
 	if IsPermanentError(ErrPRNotFound) {
 		t.Error("ErrPRNotFound must not be a permanent error")
+	}
+}
+
+func TestResolvePRRejectsOtherRepoNumber(t *testing.T) {
+	// The cache is keyed on branch name alone, so two repos with the same branch
+	// name share an entry. A number recorded against one must not be looked up
+	// against the other, where it would resolve an unrelated PR that happens to
+	// hold that number.
+	l := prLookup{
+		byHead: func(string, string) (*PRInfo, error) { return &PRInfo{Status: PRNone}, nil },
+		byNumber: func(string, int) (*PRInfo, error) {
+			return &PRInfo{Number: 12, Status: PROpen, URL: "https://github.com/org/other/pull/12"}, nil
+		},
+	}
+	got, err := resolvePR(l, "/repo", "fix-login", PRRef{Number: 12, URL: "https://github.com/org/mine/pull/12"})
+	if err != nil {
+		t.Fatalf("resolvePR: %v", err)
+	}
+	if got.Status != PRNone {
+		t.Errorf("got #%d %q, want none — the number belongs to another repo", got.Number, got.Status)
+	}
+}
+
+func TestResolvePRAcceptsSameRepoNumber(t *testing.T) {
+	l := prLookup{
+		byHead: func(string, string) (*PRInfo, error) { return &PRInfo{Status: PRNone}, nil },
+		byNumber: func(string, int) (*PRInfo, error) {
+			return &PRInfo{Number: 485, Status: PRMerged, URL: "https://github.com/org/ads/pull/485"}, nil
+		},
+	}
+	got, err := resolvePR(l, "/repo", "st/new/ads", PRRef{Number: 485, URL: "https://github.com/org/ads/pull/485"})
+	if err != nil {
+		t.Fatalf("resolvePR: %v", err)
+	}
+	if got.Status != PRMerged {
+		t.Errorf("status = %q, want merged", got.Status)
+	}
+}
+
+func TestSameRepo(t *testing.T) {
+	tests := []struct {
+		a, b string
+		want bool
+	}{
+		{"https://github.com/org/repo/pull/1", "https://github.com/org/repo/pull/99", true},
+		{"https://github.com/org/repo/pull/1", "https://github.com/org/other/pull/1", false},
+		{"https://github.com/org/repo/pull/1", "https://ghe.corp/org/repo/pull/1", false},
+		// Nothing to compare against: take the result at face value.
+		{"", "https://github.com/org/repo/pull/1", true},
+		{"https://github.com/org/repo/pull/1", "", true},
+	}
+	for _, tt := range tests {
+		if got := sameRepo(tt.a, tt.b); got != tt.want {
+			t.Errorf("sameRepo(%q, %q) = %v, want %v", tt.a, tt.b, got, tt.want)
+		}
 	}
 }

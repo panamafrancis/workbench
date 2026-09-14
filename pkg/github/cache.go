@@ -143,19 +143,21 @@ func isTerminal(s PRStatus) bool {
 // when the local repo has no remote-tracking ref for its branch (e.g. it was
 // pushed from another clone and never fetched here).
 func (c *Cache) KnowsPR(branch string) bool {
-	return c.PRNumber(branch) != 0
+	return c.Ref(branch).Number != 0
 }
 
-// PRNumber returns the PR number cached for branch, or 0 if none is known.
-// Fetchers pass it to github.ResolvePR so a PR whose head ref has moved away
-// from branch can still be resolved by its stable number.
-func (c *Cache) PRNumber(branch string) int {
+// Ref returns what the cache knows about branch's PR — its number and URL, both
+// zero if the branch is uncached or names no PR. Fetchers hand it to
+// github.ResolvePR so a PR whose head ref has moved away from branch can still
+// be resolved by its stable number, and so a number recorded against a
+// different repo is not mistaken for this one's.
+func (c *Cache) Ref(branch string) PRRef {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	if info, ok := c.entries[branch]; ok {
-		return info.Number
+		return PRRef{Number: info.Number, URL: info.URL}
 	}
-	return 0
+	return PRRef{}
 }
 
 func (c *Cache) IsStale(branch string, maxAge time.Duration) bool {
