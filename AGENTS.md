@@ -56,7 +56,7 @@ pkg/
     status.go           # IsDirty, BranchName
   github/
     gh.go               # LookupPR (by head) / LookupPRByNumber / ResolvePR via gh CLI
-    cache.go            # PR status cache — Get/Set/Rename/Delete/IsStale/PRNumber
+    cache.go            # PR status cache — Get/Set/Rename/Delete/IsStale/Ref
   sandbox/
     nono.go             # BuildNonoArgs(path, modelKey, cfg) → []string
   setup/
