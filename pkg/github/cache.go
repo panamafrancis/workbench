@@ -94,7 +94,8 @@ func (c *Cache) Rename(oldBranch, newBranch string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	info, ok := c.entries[oldBranch]
-	if !ok {
+	if !ok || info == nil {
+		delete(c.entries, oldBranch)
 		return
 	}
 	moved := *info
@@ -154,7 +155,7 @@ func (c *Cache) KnowsPR(branch string) bool {
 func (c *Cache) Ref(branch string) PRRef {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	if info, ok := c.entries[branch]; ok {
+	if info := c.entries[branch]; info != nil {
 		return PRRef{Number: info.Number, URL: info.URL}
 	}
 	return PRRef{}

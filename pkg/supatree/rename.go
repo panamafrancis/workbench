@@ -71,18 +71,22 @@ func RenameBranchSlug(c *Config, wb *config.Config, name, newSlug string, push b
 	}
 	_ = prCache.Save()
 
-	updated, err := LoadInstance(inst.Root)
-	if err != nil {
-		return err
+	// info.md is generated convenience and the pushes are independent of it, so
+	// a failure to rewrite it is collected rather than returned: bailing here
+	// would silently skip the --push the caller asked for and leave the remote
+	// on the old branch names with nothing in the error to say so.
+	var errs []error
+	if updated, err := LoadInstance(inst.Root); err != nil {
+		errs = append(errs, err)
+	} else if err := WriteInfo(updated); err != nil {
+		errs = append(errs, err)
 	}
-	if err := WriteInfo(updated); err != nil {
-		return err
-	}
-
 	if push {
-		return pushRenamedMembers(renamed, newSlug)
+		if err := pushRenamedMembers(renamed, newSlug); err != nil {
+			errs = append(errs, err)
+		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 // renameMemberBranches renames every checked-out member onto newSlug. On the

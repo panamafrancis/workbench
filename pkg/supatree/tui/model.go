@@ -43,6 +43,7 @@ const (
 	modeNewTreeName // naming the supatree
 	modeConfirmDelete
 	modeConfirmQuit
+	modeHelp // showing the keybinding reference
 )
 
 type rowKind int
@@ -50,9 +51,14 @@ type rowKind int
 const (
 	rowTree rowKind = iota
 	rowSubheader
+	rowRepos // the "repositories" section header — selectable and foldable
 	rowAgent
 	rowMember
 )
+
+// reposLabel is the text of the repositories section header. It is also the row
+// identity setReposCollapse re-selects on, so the two must agree.
+const reposLabel = "repositories"
 
 type row struct {
 	kind  rowKind
@@ -72,7 +78,7 @@ type Model struct {
 	cursor      int
 	dirty       map[string]bool // member path -> dirty
 	openTabs    map[string]bool
-	collapsed   map[string]bool // supatree name -> folded (agents/repos hidden)
+	ui          *supatree.UIState // fold state, shared on disk with the other tabs' sidebars
 	isSidebar   bool
 	width       int
 	height      int
@@ -82,6 +88,7 @@ type Model struct {
 	pending     string // half-typed multi-key sequence ("g" or "z")
 	mode        mode
 	input       textinput.Model
+	inputErr    error  // live validation of the text input (cleared as the user types)
 	actionTree  string // tree targeted by the active input mode
 	actionStack string // stack chosen for a pending new-tree create
 	stackCursor int    // cursor within the modeNewTree stack picker
@@ -104,7 +111,7 @@ func New(stCfg *supatree.Config, wbCfg *config.Config, ws zellij.Workspace) *Mod
 		prCache:     cache,
 		dirty:       map[string]bool{},
 		openTabs:    map[string]bool{},
-		collapsed:   map[string]bool{},
+		ui:          supatree.LoadUIState(),
 		ghAvailable: true,
 		follow:      true,
 		isSidebar:   os.Getenv("SUPATREE_SIDEBAR") == "1",
@@ -118,6 +125,9 @@ func New(stCfg *supatree.Config, wbCfg *config.Config, ws zellij.Workspace) *Mod
 func (m *Model) reload() {
 	insts, _ := supatree.List(m.stCfg)
 	m.insts = insts
+	// Fold state lives on disk so every tab's sidebar shows the same shape; a
+	// reload is exactly when a fold made in another tab should appear here.
+	m.ui = supatree.LoadUIState()
 	m.rebuildRows()
 }
 
@@ -151,30 +161,61 @@ func (m *Model) selectRow(want row) {
 // setCollapse folds or unfolds a supatree's agents/repos and parks the cursor on
 // its (still-visible) tree row so it never lands in the rows that just vanished.
 func (m *Model) setCollapse(tree string, collapsed bool) {
-	if m.collapsed[tree] == collapsed {
+	if m.ui.TreeCollapsed(tree) == collapsed {
 		return
 	}
-	m.collapsed[tree] = collapsed
+	m.persistUI(func(u *supatree.UIState) { u.SetTreeCollapsed(tree, collapsed) })
 	m.rebuildRows()
 	m.selectRow(row{kind: rowTree, tree: tree, label: tree})
 	m.follow = true
 }
 
+// setReposCollapse folds or unfolds one supatree's repositories section, parking
+// the cursor on the section header — the row that survives either way.
+func (m *Model) setReposCollapse(tree string, collapsed bool) {
+	if m.ui.ReposCollapsed(tree) == collapsed {
+		return
+	}
+	m.persistUI(func(u *supatree.UIState) { u.SetReposCollapsed(tree, collapsed) })
+	m.rebuildRows()
+	m.selectRow(row{kind: rowRepos, tree: tree, label: reposLabel})
+	m.follow = true
+}
+
 // setAllCollapsed folds or unfolds every supatree at once (vim's zM / zR),
-// keeping the cursor on the supatree it was already in.
+// keeping the cursor on the supatree it was already in. It moves the repository
+// sections with the trees: "unfold all" that left them shut would not be all.
 func (m *Model) setAllCollapsed(collapsed bool) {
 	cur := ""
 	if r := m.selected(); r != nil {
 		cur = r.tree
 	}
+	names := make([]string, 0, len(m.insts))
 	for _, inst := range m.insts {
-		m.collapsed[inst.Name] = collapsed
+		names = append(names, inst.Name)
 	}
+	m.persistUI(func(u *supatree.UIState) {
+		for _, name := range names {
+			u.SetTreeCollapsed(name, collapsed)
+			u.SetReposCollapsed(name, collapsed)
+		}
+	})
 	m.rebuildRows()
 	if cur != "" {
 		m.selectRow(row{kind: rowTree, tree: cur, label: cur})
 	}
 	m.follow = true
+}
+
+// persistUI applies a fold change to the shared on-disk state and adopts the
+// result, so the other tabs' sidebars pick it up on their next reload. A write
+// failure still leaves m.ui mutated, so this tab stays responsive — the fold is
+// simply not shared.
+func (m *Model) persistUI(mutate func(*supatree.UIState)) {
+	mutate(m.ui)
+	if ui, err := supatree.UpdateUIState(mutate); err == nil {
+		m.ui = ui
+	}
 }
 
 // gotoTop / gotoBottom are vim's gg and G.
@@ -255,7 +296,7 @@ func (m *Model) rebuildRows() {
 	var rows []row
 	for _, inst := range m.insts {
 		rows = append(rows, row{kind: rowTree, tree: inst.Name, label: inst.Name})
-		if m.collapsed[inst.Name] {
+		if m.ui.TreeCollapsed(inst.Name) {
 			continue
 		}
 		agents, _ := supatree.LoadAgents(inst.Root)
@@ -266,7 +307,13 @@ func (m *Model) rebuildRows() {
 		for _, a := range agents {
 			rows = append(rows, row{kind: rowAgent, tree: inst.Name, label: a.Name})
 		}
-		rows = append(rows, row{kind: rowSubheader, tree: inst.Name, label: "repositories"})
+		// The repositories header is a row of its own rather than a plain
+		// subheader: it folds, and folded it still reports every member's PR
+		// status as a count badge.
+		rows = append(rows, row{kind: rowRepos, tree: inst.Name, label: reposLabel})
+		if m.ui.ReposCollapsed(inst.Name) {
+			continue
+		}
 		for _, mem := range inst.Members {
 			rows = append(rows, row{kind: rowMember, tree: inst.Name, label: mem.Alias, alias: mem.Alias})
 		}
