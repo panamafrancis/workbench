@@ -308,18 +308,28 @@ func (w Workspace) OpenOrFocusCommandTab(name string, argv []string) error {
 	return nil
 }
 
-// NewPane opens a shell pane in the caller's current tab, rooted at cwd. It
-// deliberately runs no command: the pane gets the user's own shell, outside the
-// nono sandbox that wraps every agent this tool launches, because it is theirs
-// rather than an agent's. A pane rather than a tab because such a shell is
-// disposable — it closes when the shell exits — and so needs no identity in the
-// tab namespace that OpenOrFocusTab keys agents on.
+// NewPane opens a shell pane in the main area of the caller's current tab,
+// rooted at cwd. The shell is the user's own, outside the nono sandbox that
+// wraps every agent this tool launches, because the pane is theirs rather than
+// an agent's. A pane rather than a tab because such a shell is disposable — it
+// closes when the shell exits — and so needs no identity in the tab namespace
+// that OpenOrFocusTab keys agents on.
+//
+// Two zellij details shape the call. `new-pane` splits the *focused* pane, and
+// the caller is the sidebar, so the shell would otherwise appear stacked under
+// it in the sidebar's narrow column; stepping the focus right first puts the
+// split in the main area, where the agent lives. And `--cwd` is honoured only
+// for a pane that runs a command — a bare shell pane silently inherits the
+// session's cwd (the user's home) — so the shell is passed explicitly, with
+// --close-on-exit to keep a command pane's exit behaviour the same as a plain
+// one's (closed, not held open for a rerun).
 func NewPane(name, cwd string) error {
-	args := []string{"new-pane", "--cwd", cwd}
-	if name != "" {
-		args = append(args, "--name", name)
-	}
-	_, stderr, err := runZellij(args...)
+	// Best effort: at the screen edge (no pane to the right) this reports an
+	// error and changes nothing, which is still a usable pane — placement is not
+	// worth failing the open over.
+	_, _, _ = runZellij("move-focus", "right")
+
+	_, stderr, err := runZellij(newPaneArgs(name, cwd, userShell())...)
 	if err != nil {
 		if s := strings.TrimSpace(stderr); s != "" {
 			return fmt.Errorf("zellij: %s", s)
@@ -327,4 +337,22 @@ func NewPane(name, cwd string) error {
 		return fmt.Errorf("zellij: %w", err)
 	}
 	return nil
+}
+
+func newPaneArgs(name, cwd, shell string) []string {
+	args := []string{"new-pane", "--direction", "right", "--cwd", cwd, "--close-on-exit"}
+	if name != "" {
+		args = append(args, "--name", name)
+	}
+	return append(args, "--", shell)
+}
+
+// userShell is the interactive shell a "take me there" pane runs. $SHELL is
+// what the terminal the session was started from advertises; bash is the
+// fallback zellij itself uses when it is unset.
+func userShell() string {
+	if sh := strings.TrimSpace(os.Getenv("SHELL")); sh != "" {
+		return sh
+	}
+	return "bash"
 }

@@ -359,7 +359,7 @@ func helpView() string {
 		"  zM / zR  fold / unfold all",
 		"",
 		styleHeader.Render("Open"),
-		"  enter    agent, or shell",
+		"  enter/o  agent, or shell",
 		"           on a repo row",
 		"  a        new named agent,",
 		"           repo agent on a repo",

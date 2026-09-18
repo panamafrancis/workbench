@@ -1,6 +1,9 @@
 package zellij
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
 
 func TestParseTabIDs(t *testing.T) {
 	out := `TAB_ID  POSITION  NAME
@@ -32,5 +35,48 @@ func TestParseTabIDsNameWithSpaces(t *testing.T) {
 func TestParseTabIDsEmpty(t *testing.T) {
 	if got := parseTabIDs(""); len(got) != 0 {
 		t.Errorf("parseTabIDs(\"\") = %v, want empty", got)
+	}
+}
+
+func TestNewPaneArgs(t *testing.T) {
+	got := newPaneArgs("tree/api", "/trees/x/repos/api", "/bin/zsh")
+	want := []string{
+		"new-pane", "--direction", "right",
+		"--cwd", "/trees/x/repos/api",
+		"--close-on-exit",
+		"--name", "tree/api",
+		"--", "/bin/zsh",
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("newPaneArgs = %v, want %v", got, want)
+	}
+}
+
+// The shell is passed as an explicit command because zellij honours --cwd only
+// for a command pane; a bare shell pane lands in the session's cwd instead.
+func TestNewPaneArgsUnnamedStillCarriesCwdAndShell(t *testing.T) {
+	got := newPaneArgs("", "/trees/x/repos/api", "/bin/zsh")
+	if slices.Contains(got, "--name") {
+		t.Errorf("newPaneArgs with no name should omit --name: %v", got)
+	}
+	want := []string{
+		"new-pane", "--direction", "right",
+		"--cwd", "/trees/x/repos/api",
+		"--close-on-exit",
+		"--", "/bin/zsh",
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("newPaneArgs = %v, want %v", got, want)
+	}
+}
+
+func TestUserShellFallsBackToBash(t *testing.T) {
+	t.Setenv("SHELL", "")
+	if got := userShell(); got != "bash" {
+		t.Errorf("userShell() with empty SHELL = %q, want bash", got)
+	}
+	t.Setenv("SHELL", "/bin/fish")
+	if got := userShell(); got != "/bin/fish" {
+		t.Errorf("userShell() = %q, want /bin/fish", got)
 	}
 }
