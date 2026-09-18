@@ -2,6 +2,7 @@ package tui
 
 import (
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -51,19 +52,18 @@ func TestRebuildRowsStructure(t *testing.T) {
 		},
 	}}
 	m.rebuildRows()
-	// Expect: tree, "agents" subheader, main agent, "repositories" subheader, 2 members.
-	kinds := make([]rowKind, 0, len(m.rows))
-	for _, r := range m.rows {
-		kinds = append(kinds, r.kind)
+	// Repositories start folded, so out of the box: tree, "agents" subheader,
+	// main agent, "repositories" header — and no member rows.
+	want := []rowKind{rowTree, rowSubheader, rowAgent, rowRepos}
+	if got := rowKinds(m); !slices.Equal(got, want) {
+		t.Fatalf("folded rows = %v, want %v", got, want)
 	}
-	want := []rowKind{rowTree, rowSubheader, rowAgent, rowSubheader, rowMember, rowMember}
-	if len(kinds) != len(want) {
-		t.Fatalf("rows = %v, want %v", kinds, want)
-	}
-	for i := range want {
-		if kinds[i] != want[i] {
-			t.Fatalf("row %d kind = %v, want %v", i, kinds[i], want[i])
-		}
+
+	// Unfolding the section adds the members under it.
+	expandRepos(m)
+	want = []rowKind{rowTree, rowSubheader, rowAgent, rowRepos, rowMember, rowMember}
+	if got := rowKinds(m); !slices.Equal(got, want) {
+		t.Fatalf("unfolded rows = %v, want %v", got, want)
 	}
 	// Cursor must never rest on a subheader.
 	m.cursor = 1
@@ -134,7 +134,7 @@ func TestReloadWithSelectionPinsRow(t *testing.T) {
 		Name:    "milan",
 		Members: []supatree.Member{{Alias: "web", Branch: "st/milan/web"}},
 	}}
-	m.rebuildRows()
+	expandRepos(m)
 	// Select the member row of "milan".
 	for i, r := range m.rows {
 		if r.kind == rowMember && r.tree == "milan" {
@@ -148,7 +148,7 @@ func TestReloadWithSelectionPinsRow(t *testing.T) {
 		{Name: "athens", Members: []supatree.Member{{Alias: "api", Branch: "st/athens/api"}}},
 		{Name: "milan", Members: []supatree.Member{{Alias: "web", Branch: "st/milan/web"}}},
 	}
-	m.rebuildRows()
+	expandRepos(m)
 	m.selectRow(want)
 	if sel := m.selected(); sel == nil || sel.tree != "milan" || sel.kind != rowMember {
 		t.Fatalf("selection not pinned to milan member after row shift: %+v", sel)
@@ -171,21 +171,11 @@ func TestWrapPartsFoldsToWidth(t *testing.T) {
 
 // Collapsing a tree hides its agents/repos and parks the cursor on the tree row.
 func TestCollapseHidesChildrenAndKeepsCursor(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	m := New(supatree.DefaultConfig(), config.DefaultConfig(), zellij.Workspace{})
-	m.insts = []*supatree.Instance{{
-		Name:    "oslo",
-		Members: []supatree.Member{{Alias: "web", Branch: "st/oslo/web"}},
-	}}
-	m.rebuildRows()
+	m := osloModel(t)
 	full := len(m.rows)
 
-	// Fold via the member row; children vanish, cursor lands on the tree row.
-	for i, r := range m.rows {
-		if r.kind == rowMember {
-			m.cursor = i
-		}
-	}
+	// Fold via the tree row; children vanish, cursor stays on the tree row.
+	m.cursor = rowIndex(m, rowTree)
 	m.updateNormal(key(" "))
 	if len(m.rows) != 1 || m.rows[0].kind != rowTree {
 		t.Fatalf("collapsed rows = %d, want 1 tree row", len(m.rows))
@@ -198,6 +188,85 @@ func TestCollapseHidesChildrenAndKeepsCursor(t *testing.T) {
 	m.updateNormal(key(" "))
 	if len(m.rows) != full {
 		t.Fatalf("expanded rows = %d, want %d", len(m.rows), full)
+	}
+}
+
+// space folds the innermost section the cursor is in: from a member row that is
+// the repositories list, not the whole supatree around it.
+func TestSpaceOnMemberRowFoldsOnlyRepos(t *testing.T) {
+	m := osloModel(t)
+
+	m.cursor = rowIndex(m, rowMember)
+	m.updateNormal(key(" "))
+	if rowIndex(m, rowMember) != -1 {
+		t.Fatal("space on a member row left the member rows visible")
+	}
+	if rowIndex(m, rowAgent) == -1 {
+		t.Fatal("space on a member row folded the whole supatree, not just its repos")
+	}
+	// The cursor parks on the section header, the row that survived the fold.
+	if sel := m.selected(); sel == nil || sel.kind != rowRepos {
+		t.Fatalf("cursor = %+v, want the repositories header", sel)
+	}
+
+	// h on the already-folded header steps out and folds the supatree itself.
+	m.updateNormal(key("h"))
+	if rowIndex(m, rowAgent) != -1 {
+		t.Fatal("h on a folded repositories header did not fold the supatree")
+	}
+}
+
+// The repositories section is folded until asked otherwise, and its header
+// carries the members' PR statuses as coloured counts while it is.
+func TestReposFoldedByDefaultWithCountBadge(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	m := New(supatree.DefaultConfig(), config.DefaultConfig(), zellij.Workspace{})
+	m.insts = []*supatree.Instance{{
+		Name: "oslo",
+		Members: []supatree.Member{
+			{Alias: "web", Branch: "st/oslo/web"},
+			{Alias: "api", Branch: "st/oslo/api"},
+			{Alias: "db", Branch: "st/oslo/db"},
+		},
+	}}
+	m.prCache.Set("st/oslo/web", &github.PRInfo{Status: github.PROpen, Number: 1})
+	m.prCache.Set("st/oslo/api", &github.PRInfo{Status: github.PRMerged, Number: 2})
+	m.rebuildRows()
+
+	if rowIndex(m, rowMember) != -1 {
+		t.Fatal("repositories section was not folded on first render")
+	}
+	got := m.prCounts("oslo")
+	// One open, one merged, one member with no PR at all.
+	for _, want := range []string{"◉1", "✓1", "·1"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("prCounts = %q, want it to contain %q", got, want)
+		}
+	}
+	if strings.Contains(got, "open") || strings.Contains(got, "merged") {
+		t.Errorf("prCounts = %q, want colours and glyphs rather than status words", got)
+	}
+	if !strings.Contains(m.View(), got) {
+		t.Error("the count badge is missing from the rendered sidebar")
+	}
+}
+
+// Folds are shared state: one sidebar per Zellij tab means a fold made in one
+// tab has to show up in the next tab's reload, not just in the tab that made it.
+func TestFoldStateIsSharedAcrossSidebars(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	one := New(supatree.DefaultConfig(), config.DefaultConfig(), zellij.Workspace{})
+	two := New(supatree.DefaultConfig(), config.DefaultConfig(), zellij.Workspace{})
+
+	one.setCollapse("oslo", true)
+	one.setReposCollapse("bergen", false)
+
+	two.reload()
+	if !two.ui.TreeCollapsed("oslo") {
+		t.Error("a fold made in one sidebar did not reach the other")
+	}
+	if two.ui.ReposCollapsed("bergen") {
+		t.Error("an unfolded repositories section did not reach the other sidebar")
 	}
 }
 
@@ -308,7 +377,49 @@ func threeTrees(t *testing.T) *Model {
 			},
 		})
 	}
+	// The navigation tests are about moving over member rows, so they start from
+	// a fully unfolded list rather than the folded-repos default.
+	expandRepos(m)
+	return m
+}
+
+// expandRepos unfolds every supatree's repositories section — the sidebar keeps
+// them folded by default, and most tests want the member rows on screen.
+func expandRepos(m *Model) {
+	names := make([]string, 0, len(m.insts))
+	for _, inst := range m.insts {
+		names = append(names, inst.Name)
+	}
+	// Through the persisting path, not straight into m.ui: every other fold goes
+	// to disk and is read back, so a test fold that only lived in memory would be
+	// dropped by the next one.
+	m.persistUI(func(u *supatree.UIState) {
+		for _, name := range names {
+			u.SetReposCollapsed(name, false)
+		}
+	})
 	m.rebuildRows()
+}
+
+// rowKinds is the shape of the rendered list, for structural assertions.
+func rowKinds(m *Model) []rowKind {
+	kinds := make([]rowKind, 0, len(m.rows))
+	for _, r := range m.rows {
+		kinds = append(kinds, r.kind)
+	}
+	return kinds
+}
+
+// osloModel is a one-supatree, one-member model with its repositories unfolded.
+func osloModel(t *testing.T) *Model {
+	t.Helper()
+	t.Setenv("HOME", t.TempDir())
+	m := New(supatree.DefaultConfig(), config.DefaultConfig(), zellij.Workspace{})
+	m.insts = []*supatree.Instance{{
+		Name:    "oslo",
+		Members: []supatree.Member{{Alias: "web", Branch: "st/oslo/web"}},
+	}}
+	expandRepos(m)
 	return m
 }
 
@@ -403,7 +514,7 @@ func TestFoldAllAndUnfoldAll(t *testing.T) {
 		t.Fatalf("zM: %d rows, want 3 (one per collapsed tree)", len(m.rows))
 	}
 	for _, name := range []string{berlin, cairo, delhi} {
-		if !m.collapsed[name] {
+		if !m.ui.TreeCollapsed(name) {
 			t.Errorf("zM did not collapse %s", name)
 		}
 	}
@@ -510,7 +621,7 @@ func memberModel(t *testing.T) (*Model, string) {
 			{Alias: "terraform", Path: path, Branch: "st/berlin/terraform", Exists: true},
 		},
 	}}
-	m.rebuildRows()
+	expandRepos(m)
 	return m, path
 }
 
@@ -575,5 +686,104 @@ func TestFooterHintFollowsRowKind(t *testing.T) {
 	m.cursor = rowIndex(m, rowAgent)
 	if got := m.footer(); !strings.Contains(got, "enter open") {
 		t.Errorf("agent row footer = %q, want it to hint open", got)
+	}
+}
+
+// An invalid supatree name is reported while it is still being typed, the
+// prompt stays open so it can be fixed in place, and the complaint disappears
+// with the character that caused it — rather than being left in the footer to
+// sit under the next attempt.
+func TestInvalidTreeNameWarnsInlineAndClears(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	m := New(supatree.DefaultConfig(), config.DefaultConfig(), zellij.Workspace{})
+
+	m.updateNormal(key("n"))
+	if m.mode != modeNewTreeName {
+		t.Fatalf("n: mode = %v, want modeNewTreeName", m.mode)
+	}
+	for _, r := range "feature-v1.1" {
+		m.Update(key(string(r)))
+	}
+	if m.inputErr == nil {
+		t.Fatal("a dotted name typed into the prompt raised no warning")
+	}
+	if !strings.Contains(m.footer(), m.inputErr.Error()) {
+		t.Errorf("footer %q does not show the warning", m.footer())
+	}
+
+	// Enter keeps the prompt open rather than firing a create that would fail.
+	if _, cmd := m.Update(key("enter")); cmd != nil {
+		t.Error("enter on an invalid name started a create")
+	}
+	if m.mode != modeNewTreeName {
+		t.Fatalf("enter on an invalid name: mode = %v, want the prompt still open", m.mode)
+	}
+
+	// Deleting the offending characters clears the warning immediately.
+	for range 2 {
+		m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
+	}
+	if m.inputErr != nil {
+		t.Errorf("warning survived the fix: %v", m.inputErr)
+	}
+}
+
+// A name already taken by a supatree or a workbench worktree is refused too —
+// both would collide on the generated branch and tab names.
+func TestTreeNameValidationRejectsDuplicates(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	wb := config.DefaultConfig()
+	wb.Repos = []config.Repo{{Alias: "web", Worktrees: []config.Worktree{{Name: "lisbon"}}}}
+	m := New(supatree.DefaultConfig(), wb, zellij.Workspace{})
+	m.insts = []*supatree.Instance{{Name: berlin}}
+
+	if err := m.validateTreeName(""); err != nil {
+		t.Errorf("a blank name is auto-generated, not an error: %v", err)
+	}
+	if err := m.validateTreeName("madrid"); err != nil {
+		t.Errorf("valid name rejected: %v", err)
+	}
+	if err := m.validateTreeName(berlin); err == nil {
+		t.Error("an existing supatree name was accepted")
+	}
+	if err := m.validateTreeName("lisbon"); err == nil {
+		t.Error("an existing workbench worktree name was accepted")
+	}
+}
+
+// A message or error from a finished action is cleared by the next keystroke,
+// so it never outlives the moment it described.
+func TestKeypressClearsLastActionResult(t *testing.T) {
+	m := osloModel(t)
+	m.err = errors.New("name must be lowercase alphanumeric and hyphens")
+	m.msg = "created oslo"
+
+	m.updateNormal(key("j"))
+	if m.err != nil || m.msg != "" {
+		t.Errorf("stale result survived a keystroke: err = %v, msg = %q", m.err, m.msg)
+	}
+}
+
+// ? opens the keybinding reference and any key closes it again.
+func TestHelpOpensAndCloses(t *testing.T) {
+	m := osloModel(t)
+
+	m.Update(key("?"))
+	if m.mode != modeHelp {
+		t.Fatalf("?: mode = %v, want modeHelp", m.mode)
+	}
+	out := m.View()
+	for _, want := range []string{"Navigation", "Folding", "zM / zR", "dashboard"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("help view missing %q:\n%s", want, out)
+		}
+	}
+
+	m.Update(key("j"))
+	if m.mode != modeNormal {
+		t.Fatalf("a key did not dismiss the help: mode = %v", m.mode)
+	}
+	if strings.Contains(m.View(), "press any key to close") {
+		t.Error("help still rendered after being dismissed")
 	}
 }

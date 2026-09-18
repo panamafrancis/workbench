@@ -12,12 +12,18 @@ import (
 )
 
 func (m *Model) View() string {
-	footer := m.footer()
-
 	var b strings.Builder
 	b.WriteString(styleHeader.Render("supatree"))
 	b.WriteString("\n")
 
+	// The reference replaces the list rather than overlaying it: the sidebar is
+	// a narrow column, so there is nowhere to float a panel over.
+	if m.mode == modeHelp {
+		b.WriteString(helpView())
+		return b.String()
+	}
+
+	footer := m.footer()
 	if len(m.rows) == 0 {
 		b.WriteString(styleMuted.Render("no supatrees — press n to create one"))
 		b.WriteString("\n\n")
@@ -78,13 +84,21 @@ func (m *Model) viewport(avail int) (int, int) {
 func (m *Model) renderRow(r row, selected bool) string {
 	switch r.kind {
 	case rowTree:
-		badge := m.prBadge(r.tree)
+		// The PR summary belongs to the repositories section; it is lifted onto
+		// the supatree row only when that section is out of sight, so a folded
+		// supatree still reports where its members stand without the count being
+		// printed twice when everything is open.
+		badge := ""
+		collapsed := m.ui.TreeCollapsed(r.tree)
+		if collapsed {
+			badge = m.prCounts(r.tree)
+		}
 		running := ""
 		if m.openTabs[r.tree] {
 			running = styleRunning.Render(" ●")
 		}
 		fold := "▼"
-		if m.collapsed[r.tree] {
+		if collapsed {
 			fold = "▶"
 		}
 		line := fold + " " + r.label + running
@@ -101,6 +115,18 @@ func (m *Model) renderRow(r row, selected bool) string {
 		return marker + sel(selected, styleTree.Render(line))
 	case rowSubheader:
 		return "    " + styleSub.Render(r.label)
+	case rowRepos:
+		fold := "▼"
+		if m.ui.ReposCollapsed(r.tree) {
+			fold = "▶"
+		}
+		// Indented one level past the supatree's own fold arrow and one level
+		// short of its members, so the nesting reads at a glance.
+		line := "    " + styleSub.Render(fold+" "+r.label)
+		if counts := m.prCounts(r.tree); counts != "" {
+			line += "  " + counts
+		}
+		return sel(selected, line)
 	case rowAgent:
 		icon := "○"
 		if m.openTabs[supatree.TabName(r.tree, r.label)] {
@@ -140,24 +166,36 @@ func (m *Model) renderMember(r row) string {
 	return fmt.Sprintf("      %s %-18s%s", dirtyMark, r.alias, pr)
 }
 
-func (m *Model) prBadge(tree string) string {
+// prCountStatuses is the order counts are rendered in: roughly the order a PR
+// travels through, with the members that have no PR yet last.
+var prCountStatuses = []github.PRStatus{
+	github.PRDraft, github.PROpen, github.PRMerged, github.PRClosed, github.PRNone,
+}
+
+// prCounts summarises a supatree's members as one coloured glyph-and-count per
+// PR status present ("◉2 ✓1"), so a folded repositories section still says how
+// far along the tree is. The colour carries the status — spelling it out would
+// not fit the sidebar's width.
+func (m *Model) prCounts(tree string) string {
 	inst := m.instance(tree)
-	if inst == nil {
+	if inst == nil || len(inst.Members) == 0 {
 		return ""
 	}
-	open, total := 0, 0
+	counts := make(map[github.PRStatus]int, len(prCountStatuses))
 	for _, mem := range inst.Members {
-		if info := m.prCache.Get(mem.Branch); info != nil && info.Status != github.PRNone {
-			total++
-			if info.Status == github.PROpen || info.Status == github.PRDraft {
-				open++
-			}
+		status := github.PRNone
+		if info := m.prCache.Get(mem.Branch); info != nil {
+			status = info.Status
+		}
+		counts[status]++
+	}
+	parts := make([]string, 0, len(prCountStatuses))
+	for _, status := range prCountStatuses {
+		if n := counts[status]; n > 0 {
+			parts = append(parts, prStyle(status).Render(fmt.Sprintf("%s%d", prGlyph(status), n)))
 		}
 	}
-	if total == 0 {
-		return ""
-	}
-	return styleMuted.Render(fmt.Sprintf("%d/%d PRs", open, total))
+	return strings.Join(parts, " ")
 }
 
 func (m *Model) footer() string {
@@ -177,15 +215,23 @@ func (m *Model) footer() string {
 		}
 		return b.String()
 	case modeNewTreeName:
-		return "new supatree — name: " + m.input.View()
+		prompt := "new supatree — name: " + m.input.View()
+		if m.inputErr != nil {
+			// Live validation: the complaint sits under the field the user is
+			// still typing in, and goes away with the character that caused it.
+			prompt += "\n" + styleDirty.Render(wrapText(m.inputErr.Error(), m.width))
+		}
+		return prompt
 	case modeConfirmDelete:
 		return styleDirty.Render(fmt.Sprintf("delete %q? [y/N]", m.actionTree))
 	case modeConfirmQuit:
 		return styleDirty.Render("quit sidebar? [y/N]")
+	case modeHelp:
+		return styleMuted.Render("press any key to close")
 	case modeNormal:
 	}
 	if m.err != nil {
-		return stylePRClosed.Render("error: " + m.err.Error())
+		return stylePRClosed.Render(wrapText("error: "+m.err.Error(), m.width))
 	}
 	// Enter is contextual (a member row is a place, an agent row is a process),
 	// so the hint says which one the cursor is on rather than a generic "open".
@@ -193,7 +239,9 @@ func (m *Model) footer() string {
 	if r := m.selected(); r != nil && r.kind == rowMember {
 		openHint = "enter shell"
 	}
-	parts := []string{openHint, "space fold", "}/{ tree", "g/G ends", "a agent", "n new", "s sync", "d del", "D dash", "r refresh", "q quit"}
+	// The motions moved into `?` — the footer keeps the actions, which are the
+	// ones that are not guessable from vim habits.
+	parts := []string{openHint, "space fold", "a agent", "n new", "s sync", "d del", "D dash", "r refresh", "? help", "q quit"}
 	if m.prHint != "" {
 		parts = append(parts, "("+m.prHint+")")
 	}
@@ -230,20 +278,54 @@ func wrapParts(parts []string, sep string, width int) string {
 	return strings.Join(lines, "\n")
 }
 
+// prIcon is the per-member badge: the status glyph plus its name, in the status
+// colour. PRStatus's own string is the name ("open", "merged", ...).
+// wrapText word-wraps one message to the sidebar width — an error or a
+// validation complaint is a sentence, and a narrow pane would otherwise clip it.
+func wrapText(s string, width int) string {
+	return wrapParts(strings.Fields(s), " ", width)
+}
+
 func prIcon(s github.PRStatus) string {
+	if s == github.PRNone {
+		return ""
+	}
+	return prStyle(s).Render(prGlyph(s) + " " + string(s))
+}
+
+// prGlyph and prStyle are the one place a PR status is turned into a symbol and
+// a colour, shared by the per-member badge and the folded-section counts.
+func prGlyph(s github.PRStatus) string {
 	switch s {
 	case github.PROpen:
-		return stylePROpen.Render("◉ open")
+		return "◉"
 	case github.PRDraft:
-		return stylePRDraft.Render("◌ draft")
+		return "◌"
 	case github.PRMerged:
-		return stylePRMerged.Render("✓ merged")
+		return "✓"
 	case github.PRClosed:
-		return stylePRClosed.Render("✕ closed")
+		return "✕"
 	case github.PRNone:
-		return ""
+		return "·"
 	default:
-		return ""
+		return "·"
+	}
+}
+
+func prStyle(s github.PRStatus) lipgloss.Style {
+	switch s {
+	case github.PROpen:
+		return stylePROpen
+	case github.PRDraft:
+		return stylePRDraft
+	case github.PRMerged:
+		return stylePRMerged
+	case github.PRClosed:
+		return stylePRClosed
+	case github.PRNone:
+		return styleMuted
+	default:
+		return styleMuted
 	}
 }
 
@@ -256,4 +338,50 @@ func sel(selected bool, s string) string {
 
 func zellijTabs() (map[string]bool, error) {
 	return zellij.TabNames()
+}
+
+// helpView is the `?` reference. It is a plain block rather than the footer's
+// wrapped one-liner because the sidebar is narrow: every line is kept short
+// enough to survive a 25%-width pane without folding.
+func helpView() string {
+	lines := []string{
+		styleHeader.Render("Navigation"),
+		"  j/k ↑↓   move",
+		"  ctrl+d/u half page",
+		"  gg / G   first / last",
+		"  } / {    next / prev tree",
+		"  wheel    scroll",
+		"  click    select",
+		"",
+		styleHeader.Render("Folding"),
+		"  space    fold this section",
+		"  h / l    close / open",
+		"  zM / zR  fold / unfold all",
+		"",
+		styleHeader.Render("Open"),
+		"  enter    agent, or shell",
+		"           on a repo row",
+		"  a        new named agent,",
+		"           repo agent on a repo",
+		"  D        dashboard",
+		"",
+		styleHeader.Render("Supatrees"),
+		"  n        new supatree",
+		"  s        sync members",
+		"  d        delete supatree",
+		"",
+		styleHeader.Render("Global"),
+		"  r        refresh",
+		"  ?        this help",
+		"  q        quit",
+		"",
+		styleHeader.Render("Zellij"),
+		"  Alt+←/→     panes",
+		"  Ctrl+t ←/→  tabs",
+		"  Ctrl+o d    detach",
+		"  Ctrl+q      quit session",
+		"",
+		styleMuted.Render("press any key to close"),
+	}
+	return strings.Join(lines, "\n")
 }

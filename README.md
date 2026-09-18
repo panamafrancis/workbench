@@ -382,8 +382,8 @@ supatree rm <name>                              # tear down all member worktrees
 | `Ctrl+d` / `Ctrl+u` | Half-page down/up |
 | `gg` / `G` | Jump to the first / last row |
 | `}` / `{` (or `]` / `[`) | Jump to the next / previous supatree |
-| `Space` | Fold/unfold the selected supatree |
-| `h` / `l` (or `←` / `→`) | Collapse / expand the selected supatree |
+| `Space` | Fold/unfold the innermost section — the repositories list on a repo row, otherwise the supatree |
+| `h` / `l` (or `←` / `→`) | Collapse / expand; `h` closes the repositories section first, then the supatree |
 | `zM` / `zR` | Fold / unfold **every** supatree |
 | `Enter` / `o` | Open the selected agent, or a shell in the selected member repo |
 | `a` | Add an agent to the selected supatree — on a member row, open that repo's agent |
@@ -392,13 +392,16 @@ supatree rm <name>                              # tear down all member worktrees
 | `d` | Delete the selected supatree |
 | `D` | Open (or focus) the dashboard tab |
 | `r` | Refresh (forces a PR status fetch) |
+| `?` | Keybinding reference (any key closes it) |
 | `q` | Quit (confirms in sidebar mode) |
 
 The mouse works too: the wheel scrolls the list and a click selects a row. Wheel scrolling pans the view without moving the cursor, so you can read further down the list and it stays put — the view snaps back to the cursor as soon as you press a movement key. When the list is taller than the pane it scrolls to keep the cursor in view.
 
-Pressing `n` prompts for a **name** (leave it blank to auto-generate a city name). If more than one stack is registered you first pick which stack from a list (`↑`/`↓` or `j`/`k` to move, `enter` to select, `esc` to cancel), then the name. After creation the cursor lands on the new supatree so it scrolls into view.
+Pressing `n` prompts for a **name** (leave it blank to auto-generate a city name). If more than one stack is registered you first pick which stack from a list (`↑`/`↓` or `j`/`k` to move, `enter` to select, `esc` to cancel), then the name. The name is checked as you type — a name that would be rejected (`feature-v1.1`, or one already taken by a supatree or a workbench worktree) shows the reason under the field and `enter` leaves the prompt open so you can fix it in place; the warning clears with the character that caused it. After creation the cursor lands on the new supatree so it scrolls into view.
 
-Member rows show the repo's PR state and number (`◉ open #871`) once a PR exists; the supatree row carries an `open/total PRs` badge.
+Each supatree's **repositories section starts folded**, so a long list of supatrees stays readable. Its header carries a coloured count per PR status instead (`◌1 ◉2 ✓1 ✕1 ·3` — draft, open, merged, closed, and members with no PR yet); the same summary moves up onto the supatree row when the whole supatree is folded. Unfold the section (`Space`, `l` or `enter` on the `repositories` row) to see the member rows, which show each repo's PR state and number in full (`◉ open #871`).
+
+Folds are shared: they live in `~/.supatree/ui.yml` rather than in each sidebar process, so folding a supatree in one tab folds it in every other tab's sidebar on its next reload (focus or the 30s tick) instead of leaving each tab with its own shape of the same list.
 
 The two sections answer different questions, so `enter` does different things in them. Agent rows are processes (the `●`/`○` dot is liveness), and `enter` opens or focuses that agent's tab. Member rows are places reporting state (branch, dirty mark, PR), so `enter` stands in one: a shell pane in the current tab, rooted at `repos/<alias>/`. That shell is your own — it is **not** inside the nono sandbox, unlike every agent workbench and supatree launch — and it is disposable, closing when you exit it. To get an agent scoped to a single member repo instead (nono allows only that repo, not the whole tree), press `a` on the member row; `a` on a supatree or agent row still prompts for a new root agent's name. The footer hint tracks the cursor (`enter shell` vs `enter open`) so you can see which you'll get. A member that isn't checked out yet says so and points at `supatree sync`.
 

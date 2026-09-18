@@ -69,6 +69,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.MouseMsg:
 		return m.updateMouse(msg)
 	case tea.KeyMsg:
+		if m.mode == modeHelp {
+			// Any key dismisses the reference — it is a read-only overlay, so
+			// there is nothing to confirm or cancel.
+			m.mode = modeNormal
+			return m, nil
+		}
 		if m.mode != modeNormal {
 			return m.updateInput(msg)
 		}
@@ -96,6 +102,14 @@ func (m *Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// The footer carries the last action's result, and an error there outlives
+	// the moment it describes — a rejected supatree name sat under the next
+	// create prompt until some other action happened to replace it. Any
+	// deliberate keystroke means the user has read it, so clear it here and let
+	// the action about to run post its own.
+	m.err = nil
+	m.msg = ""
+
 	// Two-key vim sequences: gg (top), zM (fold all), zR (unfold all). A pending
 	// prefix consumes exactly one more key; an unrecognized pair cancels the
 	// prefix and the key is handled on its own below.
@@ -142,18 +156,40 @@ func (m *Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.reloadWithSelection()
 		return m, tea.Batch(m.refreshDirtyCmd(), m.refreshRunningCmd(), m.fetchPRCmd(true))
 	case " ":
+		// Fold the innermost section the cursor is in: the repositories list on a
+		// repo or section row, the whole supatree anywhere else.
 		if r := m.selected(); r != nil {
-			m.setCollapse(r.tree, !m.collapsed[r.tree])
+			if inRepos(r.kind) {
+				m.setReposCollapse(r.tree, !m.ui.ReposCollapsed(r.tree))
+			} else {
+				m.setCollapse(r.tree, !m.ui.TreeCollapsed(r.tree))
+			}
 		}
 	case "h", "left":
+		// Vim's fold-close: shut the repositories section first, and only once it
+		// is already shut does another h close the supatree around it.
 		if r := m.selected(); r != nil {
-			m.setCollapse(r.tree, true)
+			if inRepos(r.kind) && !m.ui.ReposCollapsed(r.tree) {
+				m.setReposCollapse(r.tree, true)
+			} else {
+				m.setCollapse(r.tree, true)
+			}
 		}
 	case "l", "right":
 		if r := m.selected(); r != nil {
-			m.setCollapse(r.tree, false)
+			if inRepos(r.kind) {
+				m.setReposCollapse(r.tree, false)
+			} else {
+				m.setCollapse(r.tree, false)
+			}
 		}
 	case "enter", "o":
+		// On the repositories header "open" means open the section, since it is
+		// neither a place to stand in nor a process to focus.
+		if r := m.selected(); r != nil && r.kind == rowRepos {
+			m.setReposCollapse(r.tree, !m.ui.ReposCollapsed(r.tree))
+			return m, nil
+		}
 		return m, m.openSelected()
 	case "a":
 		if r := m.selected(); r != nil {
@@ -166,12 +202,14 @@ func (m *Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.mode = modeNewAgent
 			m.actionTree = r.tree
 			m.input.SetValue("")
+			m.inputErr = nil
 			m.input.Placeholder = "agent name"
 			m.input.Focus()
 		}
 	case "n":
 		m.actionStack = ""
 		m.input.SetValue("")
+		m.inputErr = nil
 		if len(m.stCfg.Stacks) > 1 {
 			// Ambiguous: pick the stack from a list first, then name the tree.
 			m.mode = modeNewTree
@@ -185,6 +223,8 @@ func (m *Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if r := m.selected(); r != nil {
 			return m, m.syncTree(r.tree)
 		}
+	case "?":
+		m.mode = modeHelp
 	case "D":
 		return m, m.openDashboard()
 	case "d":
@@ -220,6 +260,7 @@ func (m *Model) updateInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
 		m.mode = modeNormal
+		m.inputErr = nil
 		m.input.Blur()
 		return m, nil
 	case "enter":
@@ -234,11 +275,19 @@ func (m *Model) updateInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, m.openAgent(tree, val)
 		case modeNewTreeName:
+			// A name the creator would reject keeps the prompt open with the
+			// reason attached, rather than tearing it down and leaving the
+			// complaint behind in the footer for the user to clear.
+			if err := m.validateTreeName(val); err != nil {
+				m.inputErr = err
+				return m, nil
+			}
 			stack := m.actionStack
 			m.mode = modeNormal
+			m.inputErr = nil
 			m.input.Blur()
 			return m, m.newTree(stack, val)
-		case modeNormal, modeNewTree, modeConfirmDelete, modeConfirmQuit:
+		case modeNormal, modeNewTree, modeConfirmDelete, modeConfirmQuit, modeHelp:
 			// Not text-input modes; handled earlier in updateInput.
 		}
 		m.mode = modeNormal
@@ -247,8 +296,39 @@ func (m *Model) updateInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	default:
 		var cmd tea.Cmd
 		m.input, cmd = m.input.Update(msg)
+		if m.mode == modeNewTreeName {
+			// Re-validate on every keystroke so the warning tracks what is in the
+			// field: it appears the moment the name goes bad and is gone again by
+			// the time the offending character has been deleted.
+			m.inputErr = m.validateTreeName(m.input.Value())
+		}
 		return m, cmd
 	}
+}
+
+// validateTreeName reports why a typed supatree name would be rejected, or nil
+// if it is fine. An empty name is fine — the creator generates one.
+//
+// It checks against the names already in memory rather than re-scanning the
+// trees base, because it runs on every keystroke; supatree.New re-validates
+// authoritatively against disk when the name is actually submitted.
+func (m *Model) validateTreeName(name string) error {
+	if name == "" {
+		return nil
+	}
+	existing := make([]string, 0, len(m.insts))
+	for _, inst := range m.insts {
+		existing = append(existing, inst.Name)
+	}
+	existing = append(existing, m.wbCfg.AllWorktreeNames()...)
+	return git.ValidateName(name, existing)
+}
+
+// inRepos reports whether a row kind sits inside a supatree's repositories
+// section, and so whether the fold keys should act on that section rather than
+// on the whole supatree.
+func inRepos(k rowKind) bool {
+	return k == rowRepos || k == rowMember
 }
 
 // updateStackPick drives the inline stack picker shown when more than one stack
@@ -270,6 +350,7 @@ func (m *Model) updateStackPick(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.actionStack = m.stCfg.Stacks[m.stackCursor].Alias
 		m.mode = modeNewTreeName
 		m.input.SetValue("")
+		m.inputErr = nil
 		m.input.Placeholder = "name (blank = auto)"
 		m.input.Focus()
 	}
@@ -306,7 +387,9 @@ func (m *Model) openSelected() tea.Cmd {
 		return m.shellMember(r.tree, r.alias)
 	case rowAgent:
 		return m.openAgent(r.tree, r.label)
-	case rowTree, rowSubheader:
+	case rowTree, rowSubheader, rowRepos:
+		// rowRepos never reaches here — updateNormal folds it instead — but the
+		// tree and agents headers stand for the supatree's main agent.
 		return m.openAgent(r.tree, "main")
 	}
 	return nil
