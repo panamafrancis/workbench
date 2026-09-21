@@ -213,7 +213,17 @@ func (w Workspace) OpenOrFocusTab(name, cwd, sidebarWidth string, nonoArgs []str
 	return err == nil, err
 }
 
+// runZellij runs a `zellij action` subcommand against the session the caller is
+// attached to (the ZELLIJ env var zellij reads for itself).
 func runZellij(actionArgs ...string) (stdout, stderr string, err error) {
+	return runZellijIn("", actionArgs...)
+}
+
+// runZellijIn runs a `zellij action` subcommand against a named session. A
+// process outside any session — the supatree watcher, which must live outside
+// both zellij and the nono sandbox — has no session for a bare `zellij action`
+// to target, so it has to name one explicitly.
+func runZellijIn(session string, actionArgs ...string) (stdout, stderr string, err error) {
 	breaker.mu.Lock()
 	if breaker.failures >= cbThreshold {
 		if time.Since(breaker.lastFailure) < cbCooldown {
@@ -227,7 +237,11 @@ func runZellij(actionArgs ...string) (stdout, stderr string, err error) {
 	ctx, cancel := context.WithTimeout(context.Background(), cmdTimeout)
 	defer cancel()
 
-	args := append([]string{"action"}, actionArgs...)
+	args := make([]string, 0, 3+len(actionArgs))
+	if session != "" {
+		args = append(args, "--session", session)
+	}
+	args = append(append(args, "action"), actionArgs...)
 	cmd := exec.CommandContext(ctx, "zellij", args...)
 	var outBuf, errBuf bytes.Buffer
 	cmd.Stdout = &outBuf
@@ -355,4 +369,40 @@ func userShell() string {
 		return sh
 	}
 	return "bash"
+}
+
+// FocusedTab returns the name of the focused tab in a named session, or "" if
+// it cannot be determined. Callers outside a zellij session must pass the
+// session name; inside one, "" targets the caller's own session.
+//
+// "" is deliberately indistinguishable from an error here. Every caller so far
+// uses this to *suppress* something it would otherwise do, and suppressing on a
+// guess is worse than not suppressing at all.
+func FocusedTab(session string) string {
+	stdout, _, err := runZellijIn(session, "dump-layout")
+	if err != nil {
+		return ""
+	}
+	return parseFocusedTab(stdout)
+}
+
+// parseFocusedTab pulls the focused tab's name out of a dumped KDL layout.
+// Split out from FocusedTab so the parsing is testable without a live server.
+func parseFocusedTab(layout string) string {
+	for _, line := range strings.Split(layout, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "tab ") || !strings.Contains(trimmed, "focus=true") {
+			continue
+		}
+		const marker = `name="`
+		i := strings.Index(trimmed, marker)
+		if i < 0 {
+			continue
+		}
+		rest := trimmed[i+len(marker):]
+		if j := strings.Index(rest, `"`); j >= 0 {
+			return rest[:j]
+		}
+	}
+	return ""
 }

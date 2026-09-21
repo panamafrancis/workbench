@@ -22,6 +22,8 @@ var (
 	styleDirty    = lipgloss.NewStyle().Foreground(colorDirty)
 	styleStatus   = lipgloss.NewStyle().Foreground(colorMuted)
 	styleRunning  = lipgloss.NewStyle().Foreground(colorGreen)
+	// styleAttention marks a supatree holding news you have not looked at.
+	styleAttention = lipgloss.NewStyle().Bold(true).Foreground(colorRed)
 
 	stylePRDraft  = lipgloss.NewStyle().Foreground(colorMuted)
 	stylePROpen   = lipgloss.NewStyle().Foreground(colorGreen)

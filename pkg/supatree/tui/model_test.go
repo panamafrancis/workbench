@@ -319,8 +319,14 @@ func TestPrMsgGhAvailabilityAndHint(t *testing.T) {
 	if m.prHint != "gh auth required" {
 		t.Fatalf("prHint = %q, want gh auth required", m.prHint)
 	}
-	if got := len(m.backgroundCmds()); got != 2 {
-		t.Fatalf("backgroundCmds with gh down = %d cmds, want 2 (no fetch)", got)
+	// Asserted as a delta rather than an absolute count, so adding an unrelated
+	// background command does not fail a test about the PR fetch.
+	down := len(m.backgroundCmds())
+	m.ghAvailable = true
+	up := len(m.backgroundCmds())
+	m.ghAvailable = false
+	if up != down+1 {
+		t.Fatalf("backgroundCmds = %d with gh down, %d with gh up; want exactly one more (the fetch)", down, up)
 	}
 
 	// Transient error clears a stale hint without flipping availability back.
@@ -335,8 +341,8 @@ func TestPrMsgGhAvailabilityAndHint(t *testing.T) {
 	if !m.ghAvailable || m.prHint != "" {
 		t.Fatalf("success should restore gh: ghAvailable=%v prHint=%q", m.ghAvailable, m.prHint)
 	}
-	if got := len(m.backgroundCmds()); got != 3 {
-		t.Fatalf("backgroundCmds with gh up = %d cmds, want 3 (incl fetch)", got)
+	if got := len(m.backgroundCmds()); got != up {
+		t.Fatalf("backgroundCmds after recovery = %d, want %d (the fetch is back)", got, up)
 	}
 }
 

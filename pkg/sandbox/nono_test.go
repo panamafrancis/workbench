@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/panamafrancis/workbench/pkg/config"
@@ -12,7 +13,7 @@ import (
 func testConfig() *config.Config {
 	return &config.Config{
 		Models: map[string]config.Model{
-			"claude": {
+			modelClaude: {
 				NonoProfile: "claude-code",
 				Binary:      "claude",
 				Args:        []string{},
@@ -30,6 +31,10 @@ func testConfig() *config.Config {
 		},
 	}
 }
+
+// modelClaude is the model key these tests exercise; goconst objects to the
+// literal appearing in every table.
+const modelClaude = "claude"
 
 func TestBuildNonoArgsClaude(t *testing.T) {
 	cfg := testConfig()
@@ -145,5 +150,54 @@ func TestBuildNonoArgsSeparatorPresent(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("-- separator not found in args %v", got)
+	}
+}
+
+// An agent gets a bus name only when its model defines one. The token is
+// substituted anywhere in the argument, so "--name=x" works as well as a
+// separate argument.
+func TestBuildNamedAgentNonoArgs(t *testing.T) {
+	cfg := &config.Config{Models: map[string]config.Model{
+		modelClaude: {
+			NonoProfile:    "claude-code",
+			Binary:         "claude",
+			NewSessionArgs: []string{"--session-id", "{session_id}"},
+			AgentNameArgs:  []string{"--name", "{agent_name}"},
+		},
+		"inline": {
+			Binary:        "other",
+			AgentNameArgs: []string{"--name={agent_name}"},
+		},
+		"nobus": {Binary: "codex"},
+	}}
+	wt := t.TempDir()
+
+	args, err := BuildNamedAgentNonoArgs(wt, modelClaude, cfg, "sid-1", "st-canberra-main", false)
+	if err != nil {
+		t.Fatalf("BuildNamedAgentNonoArgs: %v", err)
+	}
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "--name st-canberra-main") {
+		t.Errorf("args = %v, want the bus name", args)
+	}
+	if !strings.Contains(joined, "--session-id sid-1") {
+		t.Errorf("args = %v, want the session id still substituted", args)
+	}
+
+	args, _ = BuildNamedAgentNonoArgs(wt, "inline", cfg, "", "st-canberra-main", false)
+	if !strings.Contains(strings.Join(args, " "), "--name=st-canberra-main") {
+		t.Errorf("args = %v, want the token substituted mid-argument", args)
+	}
+
+	// A model with no bus must not have a name flag invented for it.
+	args, _ = BuildNamedAgentNonoArgs(wt, "nobus", cfg, "", "st-canberra-main", false)
+	if strings.Contains(strings.Join(args, " "), "st-canberra-main") {
+		t.Errorf("args = %v, want no name for a model without AgentNameArgs", args)
+	}
+
+	// And an unnamed launch stays exactly as it was before agents had names.
+	args, _ = BuildNamedAgentNonoArgs(wt, modelClaude, cfg, "sid-1", "", false)
+	if strings.Contains(strings.Join(args, " "), "--name") {
+		t.Errorf("args = %v, want no name flag when no name is given", args)
 	}
 }

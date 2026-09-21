@@ -18,6 +18,11 @@ type Agent struct {
 	Model     string    `yaml:"model"`
 	SessionID string    `yaml:"session_id,omitempty"`
 	CreatedAt time.Time `yaml:"created_at"`
+	// Address is how sibling agents reach this one on their CLI's message bus.
+	// Persisted rather than derived at read time so a supatree renamed after an
+	// agent was launched still reports the name that agent is actually running
+	// under — the launched process cannot be renamed.
+	Address string `yaml:"address,omitempty"`
 }
 
 type agentsFile struct {
@@ -68,9 +73,10 @@ func FindAgent(agents []Agent, name string) *Agent {
 }
 
 // EnsureAgent returns the named agent for a supatree, creating and persisting it
-// with a fresh session ID (via now for the timestamp) if it does not yet exist.
-// The bool result reports whether the agent was newly created.
-func EnsureAgent(root, name, model string, now time.Time) (Agent, bool, error) {
+// with a fresh session ID (via now for the timestamp) and a bus address if it
+// does not yet exist. The bool result reports whether the agent was newly
+// created.
+func EnsureAgent(root, tree, name, model string, now time.Time) (Agent, bool, error) {
 	// Agent names become part of a Zellij tab identity ("<tree>:<agent>") that is
 	// spliced into layout files, so restrict them to the safe charset up front.
 	if err := git.ValidateName(name, nil); err != nil {
@@ -87,7 +93,7 @@ func EnsureAgent(root, name, model string, now time.Time) (Agent, bool, error) {
 	if err != nil {
 		return Agent{}, false, err
 	}
-	a := Agent{Name: name, Model: model, SessionID: sid, CreatedAt: now}
+	a := Agent{Name: name, Model: model, SessionID: sid, CreatedAt: now, Address: AgentAddress(tree, name)}
 	agents = append(agents, a)
 	if err := saveAgents(root, agents); err != nil {
 		return Agent{}, false, err
@@ -104,4 +110,19 @@ func newSessionID() (string, error) {
 	b[6] = (b[6] & 0x0f) | 0x40 // version 4
 	b[8] = (b[8] & 0x3f) | 0x80 // variant 10
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16]), nil
+}
+
+// AgentAddress is the name an agent is launched under on its CLI's message bus.
+//
+// Deliberately not the "<tree>:<agent>" Zellij tab identity: a colon in a bus
+// name is asking for trouble, and the two namespaces should be free to diverge.
+// The "st-" prefix keeps supatree agents distinguishable from the sessions a
+// bare `claude` run names after its own directory.
+//
+// Verified 2026-09-20 (claude 2.1.261): an explicitly named session appears on
+// the bus under exactly this string, with none of the two-character suffix the
+// bus appends to *directory-derived* names. So addresses match exactly; there
+// is no prefix correlation to do.
+func AgentAddress(tree, agent string) string {
+	return "st-" + tree + "-" + agent
 }

@@ -13,7 +13,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.FocusMsg:
 		return m, m.reloadCmd()
 	case tickMsg:
-		return m, tea.Batch(m.reloadCmd(), m.fetchCmd(false), m.tickCmd())
+		cmds := []tea.Cmd{m.reloadCmd(), m.fetchCmd(false), m.tickCmd()}
+		if m.feed {
+			cmds = append(cmds, m.eventsCmd())
+		}
+		return m, tea.Batch(cmds...)
+	case eventsMsg:
+		m.events = msg.events
 	case summaryMsg:
 		m.summary = msg.summary
 		m.loaded = true
@@ -121,6 +127,14 @@ func (m *Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if t := m.selectedTree(); t != nil {
 			return m, m.openTreeCmd(t.Name)
 		}
+	case "b":
+		m.board = !m.board
+	case "e":
+		m.feed = !m.feed
+		if m.feed {
+			return m, m.eventsCmd()
+		}
+		m.events = nil
 	case "r":
 		return m, tea.Batch(m.fetchCmd(true), m.reloadCmd())
 	}

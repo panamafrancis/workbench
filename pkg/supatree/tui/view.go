@@ -102,6 +102,12 @@ func (m *Model) renderRow(r row, selected bool) string {
 			fold = "▶"
 		}
 		line := fold + " " + r.label + running
+		if m.attention[r.tree] {
+			// Something happened in this supatree that you have not looked at.
+			// It sits next to the name rather than in the gutter, which the
+			// "you are here" marker already owns.
+			line += styleAttention.Render(" !")
+		}
 		if badge != "" {
 			line += "  " + badge
 		}
@@ -364,6 +370,8 @@ func helpView() string {
 		"  a        new named agent,",
 		"           repo agent on a repo",
 		"  D        dashboard",
+		"  P        PM agent",
+		"  m        hand this row to the PM",
 		"",
 		styleHeader.Render("Supatrees"),
 		"  n        new supatree",

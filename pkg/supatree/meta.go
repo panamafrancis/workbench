@@ -19,6 +19,17 @@ type Meta struct {
 	Stack     string    `yaml:"stack"`
 	Model     string    `yaml:"model"`
 	CreatedAt time.Time `yaml:"created_at"`
+	// Autonomy is how much the PM may do here unasked ("off", "nudge", "auto").
+	// Empty inherits the workspace default.
+	Autonomy string `yaml:"autonomy,omitempty"`
+	// Outward allows actions a third party sees. A pointer so "unset" is
+	// distinguishable from "explicitly false" and can inherit the default.
+	Outward *bool `yaml:"outward,omitempty"`
+	// Intent is what this supatree was created for — the issue, ticket or
+	// prompt. Captured at creation because the rename flow deliberately
+	// discards the city name for a slug, so without it nothing three weeks
+	// later says what "canberra" was *for*.
+	Intent string `yaml:"intent,omitempty"`
 }
 
 // LoadMeta reads .supatree/meta.yml from a supatree root.

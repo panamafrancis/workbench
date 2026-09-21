@@ -88,14 +88,15 @@ type Model struct {
 	pending     string // half-typed multi-key sequence ("g" or "z")
 	mode        mode
 	input       textinput.Model
-	inputErr    error  // live validation of the text input (cleared as the user types)
-	actionTree  string // tree targeted by the active input mode
-	actionStack string // stack chosen for a pending new-tree create
-	stackCursor int    // cursor within the modeNewTree stack picker
-	activeTree  string // supatree whose Zellij tab this sidebar belongs to ("you are here")
-	fetching    bool   // a PR fetch is in flight
-	ghAvailable bool   // gh usable; false after a permanent error suppresses tick fetches
-	prHint      string // persistent PR-fetch hint (e.g. "gh rate limited")
+	inputErr    error           // live validation of the text input (cleared as the user types)
+	actionTree  string          // tree targeted by the active input mode
+	actionStack string          // stack chosen for a pending new-tree create
+	stackCursor int             // cursor within the modeNewTree stack picker
+	activeTree  string          // supatree whose Zellij tab this sidebar belongs to ("you are here")
+	attention   map[string]bool // supatrees with an event you have not looked at yet
+	fetching    bool            // a PR fetch is in flight
+	ghAvailable bool            // gh usable; false after a permanent error suppresses tick fetches
+	prHint      string          // persistent PR-fetch hint (e.g. "gh rate limited")
 	msg         string
 	err         error
 }
@@ -116,6 +117,7 @@ func New(stCfg *supatree.Config, wbCfg *config.Config, ws zellij.Workspace) *Mod
 		follow:      true,
 		isSidebar:   os.Getenv("SUPATREE_SIDEBAR") == "1",
 		activeTree:  treeFromTab(os.Getenv("SUPATREE_ACTIVE_TREE")),
+		attention:   map[string]bool{},
 		input:       textinput.New(),
 	}
 	m.reload()
@@ -130,6 +132,15 @@ func (m *Model) reload() {
 	m.ui = supatree.LoadUIState()
 	m.rebuildRows()
 }
+
+// attentionWindow bounds how far back the marker looks. An event older than
+// this has either been dealt with or stopped mattering, and a marker that never
+// clears is a marker people stop reading.
+const attentionWindow = 7 * 24 * time.Hour
+
+// attentionFor reads the ledger and returns the supatrees holding news you have
+// not seen. A missing or unreadable ledger simply means no markers: the sidebar
+// must render whether or not the watcher has ever run.
 
 // reloadWithSelection re-reads live state (so newly created/removed supatrees
 // appear without a manual refresh) while keeping the cursor pinned to the same
@@ -335,7 +346,8 @@ func (m *Model) Init() tea.Cmd {
 	// Non-forced fetch: honor the on-disk cache. The sidebar runs in a restart
 	// loop, so forcing here would re-hit the gh API for every member on every
 	// restart and exhaust the rate limit.
-	return tea.Batch(m.tickCmd(), m.refreshDirtyCmd(), m.refreshRunningCmd(), m.fetchPRCmd(false))
+	return tea.Batch(m.tickCmd(), m.refreshDirtyCmd(), m.refreshRunningCmd(),
+		m.refreshAttentionCmd(), m.fetchPRCmd(false))
 }
 
 func (m *Model) clampCursor() {
@@ -369,6 +381,7 @@ func (m *Model) tickCmd() tea.Cmd {
 
 type tickMsg struct{}
 type dirtyMsg struct{ dirty map[string]bool }
+type attentionMsg struct{ attention map[string]bool }
 type runningMsg struct{ tabs map[string]bool }
 type prMsg struct{ err error }
 

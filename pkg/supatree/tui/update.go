@@ -32,6 +32,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(append(m.backgroundCmds(), m.tickCmd())...)
 	case dirtyMsg:
 		m.dirty = msg.dirty
+	case attentionMsg:
+		m.attention = msg.attention
 	case runningMsg:
 		m.openTabs = msg.tabs
 	case prSkippedMsg:
@@ -65,7 +67,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// it, rather than leaving it pinned to the prior selection off-screen.
 			m.selectRow(row{kind: rowTree, tree: msg.reveal, label: msg.reveal})
 		}
-		return m, tea.Batch(m.refreshDirtyCmd(), m.refreshRunningCmd())
+		return m, tea.Batch(m.refreshDirtyCmd(), m.refreshRunningCmd(), m.refreshAttentionCmd())
 	case tea.MouseMsg:
 		return m.updateMouse(msg)
 	case tea.KeyMsg:
@@ -227,6 +229,10 @@ func (m *Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.mode = modeHelp
 	case "D":
 		return m, m.openDashboard()
+	case "P":
+		return m, m.openPM()
+	case "m":
+		return m, m.handToPM()
 	case "d":
 		if r := m.selected(); r != nil {
 			m.mode = modeConfirmDelete
@@ -402,6 +408,13 @@ func (m *Model) openAgent(tree, agent string) tea.Cmd {
 			return actionDoneMsg{err: fmt.Errorf("supatree %q gone", tree)}
 		}
 		_, err := supatree.OpenRootAgent(inst, m.wbCfg, m.ws, m.stCfg.ResolveSidebarWidth(), agent, "", nil)
+		// Going to a supatree is what "I have seen this" means, so it clears the
+		// attention marker. Doing it here rather than per render keeps the
+		// per-tab sidebars off the ui.yml lock. Only on success: an open that
+		// failed is one you never got to look at.
+		if err == nil {
+			supatree.MarkSeen(tree, time.Now())
+		}
 		return actionDoneMsg{msg: "opened " + supatree.TabName(tree, agent), err: err}
 	}
 }
@@ -474,6 +487,79 @@ func (m *Model) openDashboard() tea.Cmd {
 	}
 }
 
+// handToPM queues the selected row for the PM and focuses its tab, so you land
+// in the chat with it already reading about that supatree.
+//
+// One verb on every row kind, which is what makes it learnable: what differs is
+// only how much context the row carries. It does not *open* the PM if it is not
+// running — the request waits in the queue, which is the whole point of the
+// queue being read from a stored offset.
+func (m *Model) handToPM() tea.Cmd {
+	r := m.selected()
+	if r == nil {
+		return nil
+	}
+	ctx := *r
+	prNumber := 0
+	if ctx.kind == rowMember {
+		if inst := m.instance(ctx.tree); inst != nil {
+			if mem := inst.FindMember(ctx.alias); mem != nil {
+				if pr := m.prCache.Get(mem.Branch); pr != nil {
+					prNumber = pr.Number
+				}
+			}
+		}
+	}
+	return func() tea.Msg {
+		req := supatree.Request{
+			From:   "sidebar",
+			Tree:   ctx.tree,
+			Member: ctx.alias,
+			PR:     prNumber,
+			Text:   handoffText(ctx),
+		}
+		if err := supatree.AppendRequest(req); err != nil {
+			return actionDoneMsg{err: err}
+		}
+		if zellij.IsInZellij() {
+			// Best effort: the request is queued either way, and failing to
+			// focus a tab that is not open is not a failure to hand over.
+			_ = zellij.GoToTab(supatree.PMTab)
+		}
+		return actionDoneMsg{msg: "handed " + ctx.tree + " to the PM"}
+	}
+}
+
+// handoffText says what the human was looking at when they pressed m. The PM
+// gets the row's identity as structured fields; this is the part it reads.
+func handoffText(r row) string {
+	switch r.kind {
+	case rowMember:
+		return fmt.Sprintf("Look at %s/%s.", r.tree, r.alias)
+	case rowAgent:
+		return fmt.Sprintf("Look at the %s agent in %s.", r.label, r.tree)
+	case rowTree, rowSubheader, rowRepos:
+		return fmt.Sprintf("Look at %s.", r.tree)
+	}
+	return "Look at " + r.tree + "."
+}
+
+// openPM opens or focuses the PM agent's tab. Unlike the dashboard it is a
+// sandboxed agent rather than a command pane, so it goes through OpenOrFocusTab
+// with its own grants rather than OpenOrFocusCommandTab.
+func (m *Model) openPM() tea.Cmd {
+	stCfg, wbCfg, ws, width := m.stCfg, m.wbCfg, m.ws, m.stCfg.ResolveSidebarWidth()
+	return func() tea.Msg {
+		if !zellij.IsInZellij() {
+			return actionDoneMsg{msg: "not inside zellij — run: supatree pm"}
+		}
+		if _, err := supatree.OpenPM(stCfg, wbCfg, ws, width); err != nil {
+			return actionDoneMsg{err: err}
+		}
+		return actionDoneMsg{msg: "PM"}
+	}
+}
+
 func (m *Model) newTree(stack, name string) tea.Cmd {
 	return func() tea.Msg {
 		inst, _, err := supatree.New(m.stCfg, m.wbCfg, supatree.CreateOptions{Stack: stack, Name: name})
@@ -485,6 +571,23 @@ func (m *Model) newTree(stack, name string) tea.Cmd {
 }
 
 // --- background polling ---
+
+// refreshAttentionCmd recomputes which supatrees hold news you have not seen.
+//
+// Off the main loop, like every other disk read here. The ledger is append-only
+// and grows without bound, and one sidebar runs per Zellij tab: reading it
+// synchronously on each tick froze every sidebar for as long as the file took
+// to scan. The dashboard already reads it in a tea.Cmd for exactly this reason.
+func (m *Model) refreshAttentionCmd() tea.Cmd {
+	ui := m.ui
+	return func() tea.Msg {
+		evs, err := supatree.ReadEvents(time.Now().Add(-attentionWindow))
+		if err != nil {
+			return attentionMsg{attention: map[string]bool{}}
+		}
+		return attentionMsg{attention: supatree.Attention(evs, ui)}
+	}
+}
 
 func (m *Model) refreshDirtyCmd() tea.Cmd {
 	insts := m.insts
@@ -515,7 +618,7 @@ func (m *Model) refreshRunningCmd() tea.Cmd {
 // tick handlers. The PR fetch is skipped while gh is known-unavailable (a
 // permanent error), so a broken auth doesn't spawn a fetch every tick forever.
 func (m *Model) backgroundCmds() []tea.Cmd {
-	cmds := []tea.Cmd{m.refreshDirtyCmd(), m.refreshRunningCmd()}
+	cmds := []tea.Cmd{m.refreshDirtyCmd(), m.refreshRunningCmd(), m.refreshAttentionCmd()}
 	if m.ghAvailable {
 		cmds = append(cmds, m.fetchPRCmd(false))
 	}

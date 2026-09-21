@@ -31,7 +31,7 @@ func OpenRootAgent(inst *Instance, wb *config.Config, ws zellij.Workspace, sideb
 	if modelOverride != "" {
 		model = modelOverride
 	}
-	agent, _, err := EnsureAgent(inst.Root, agentName, model, time.Now())
+	agent, _, err := EnsureAgent(inst.Root, inst.Name, agentName, model, time.Now())
 	if err != nil {
 		return false, err
 	}
@@ -45,7 +45,7 @@ func OpenRootAgent(inst *Instance, wb *config.Config, ws zellij.Workspace, sideb
 	// created agent (or one whose id was never launched) starts a new session so
 	// it never lands in another agent's chat.
 	resume := sandbox.SessionExists(inst.Root, agent.SessionID)
-	nonoArgs, err := sandbox.BuildAgentNonoArgs(inst.Root, agent.Model, wb, agent.SessionID, resume)
+	nonoArgs, err := sandbox.BuildNamedAgentNonoArgs(inst.Root, agent.Model, wb, agent.SessionID, agent.Address, resume)
 	if err != nil {
 		return false, err
 	}

@@ -53,6 +53,11 @@ type Model struct {
 	// to a single directory-resumed agent via ResumeArgs.
 	NewSessionArgs    []string `yaml:"new_session_args,omitempty"`
 	ResumeSessionArgs []string `yaml:"resume_session_args,omitempty"`
+	// AgentNameArgs give the agent a stable name on whatever cross-session
+	// message bus its CLI provides, so siblings can address it. Each occurrence
+	// of "{agent_name}" is substituted. Empty for models with no such bus, which
+	// then fall back to file mailboxes alone.
+	AgentNameArgs []string `yaml:"agent_name_args,omitempty"`
 }
 
 type Repo struct {
@@ -85,6 +90,7 @@ func DefaultConfig() *Config {
 				ResumeArgs:        []string{"--continue"},
 				NewSessionArgs:    []string{"--session-id", "{session_id}"},
 				ResumeSessionArgs: []string{"--resume", "{session_id}"},
+				AgentNameArgs:     []string{"--name", "{agent_name}"},
 			},
 			"codex": {
 				NonoProfile: "default",

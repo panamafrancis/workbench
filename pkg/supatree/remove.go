@@ -20,6 +20,7 @@ type RemoveOptions struct {
 type RemoveResult struct {
 	Warnings []string
 	Agents   []Agent // agents that existed (so the caller can clean their tabs)
+	Archived int     // transcripts rescued from deletion into ArchiveDir
 }
 
 // Remove tears down a supatree: every member worktree (reverse dependency
@@ -52,6 +53,7 @@ func Remove(c *Config, wb *config.Config, name string, opts RemoveOptions) (*Rem
 			}
 		}
 		removeMember(inst.Root, m.Alias, wb, &SyncReport{Warnings: res.Warnings})
+		archiveSessions(m.Path, name, &res.Archived)
 		_ = sandbox.ClearSessionCache(m.Path)
 		prCache.Delete(m.Branch)
 	}
@@ -63,6 +65,7 @@ func Remove(c *Config, wb *config.Config, name string, opts RemoveOptions) (*Rem
 			res.Warnings = append(res.Warnings, fmt.Sprintf("push %s: %v", name, err))
 		}
 	}
+	archiveSessions(inst.Root, name, &res.Archived)
 	_ = sandbox.ClearSessionCache(inst.Root)
 	if stack != nil {
 		if err := git.RemoveWorktree(stack.Path, inst.Root); err != nil {
@@ -85,4 +88,18 @@ func hasUncommittedChanges(root string) (bool, error) {
 		return false, err
 	}
 	return out != "", nil
+}
+
+// archiveSessions rescues an agent's transcripts before the cache is cleared.
+//
+// Silent and best effort on purpose. Removing a supatree is the user's
+// instruction and must not fail because a transcript could not be copied; the
+// cost of a miss is one lost history, and the cost of a hard failure is a
+// half-removed supatree.
+func archiveSessions(path, tree string, total *int) {
+	n, err := sandbox.ArchiveSessionCache(path, ArchiveDir(tree))
+	if err != nil {
+		return
+	}
+	*total += n
 }

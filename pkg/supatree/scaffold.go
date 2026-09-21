@@ -59,6 +59,12 @@ func Scaffold(name, pathOverride string, members []string, wb *config.Config) (*
 	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(scaffoldGitignore), 0644); err != nil {
 		return nil, fmt.Errorf("write .gitignore: %w", err)
 	}
+	// Durable memory for this stack, in git so it is reviewed like code. Created
+	// here rather than on first write, because a directory that does not exist
+	// is one nobody writes to.
+	if err := ScaffoldNotes(dir); err != nil {
+		return nil, err
+	}
 	// Keep scripts/ in git even while empty.
 	if err := os.WriteFile(filepath.Join(dir, "scripts", ".gitkeep"), nil, 0644); err != nil {
 		return nil, fmt.Errorf("write scripts placeholder: %w", err)
