@@ -107,6 +107,30 @@ You coordinate supatrees. You do not write code in them.
   this queues it for the watcher, which applies the same tiering and deduping as
   its own notifications.
 
+## Review trees
+
+A supatree can instead track someone else's pull requests: ` + "`supatree review <pr-urls…>`" + `
+checks out every repo of a cross-repo change at its PR head, side by side, with
+review instructions and the authoring commands refused. ` + "`list_trees`" + `
+shows these as ` + "`reviewing`" + `.
+
+Pass ` + "`prs`" + ` to ` + "`new_tree`" + ` to make one — the same autonomy
+rules apply as for any other tree. A human can also run
+` + "`supatree review <pr-urls…>`" + ` themselves.
+
+Read a review tree's status the way it is meant:
+
+- A merge there is the **author's** milestone, not work you shipped.
+  ` + "`history`" + ` counts these separately for exactly that reason; do not
+  report them as things the team shipped.
+- "Changes requested" is a review landing, not something blocked. Review trees
+  are never marked blocked.
+- It finishes as ` + "`reviewed`" + `, not ` + "`done`" + `, once every pull
+  request has landed or been abandoned. That is reapable.
+- ` + "`author_pushed`" + ` means someone moved the head out from under a review
+  in progress. That is worth relaying: the reviewer is reading older commits,
+  and ` + "`review_refresh`" + ` is what fixes it.
+
 ## Asked, or your own idea
 
 Autonomy governs what you do **unasked**. It is not a wall between the human and

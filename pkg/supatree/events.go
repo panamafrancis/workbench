@@ -29,16 +29,28 @@ const (
 	EventClosed           EventKind = "closed"
 	EventTreeDone         EventKind = "tree_done"
 	EventStale            EventKind = "stale"
+	// EventTreeReviewed is a review tree whose pull requests have all landed.
+	// Separate from EventTreeDone so History never counts someone else's merge
+	// as work this tree shipped.
+	EventTreeReviewed EventKind = "tree_reviewed"
+	// EventAuthorPushed is the author moving the head out from under a review
+	// in progress — the one transition that makes a reviewer's work stale.
+	EventAuthorPushed EventKind = "author_pushed"
 )
 
 // Event is one entry in the activity ledger (~/.supatree/events.jsonl).
 type Event struct {
-	At     time.Time `json:"at"`
-	Kind   EventKind `json:"kind"`
-	Tree   string    `json:"tree"`
-	Member string    `json:"member,omitempty"`
-	PR     int       `json:"pr,omitempty"`
-	Text   string    `json:"text"`
+	At   time.Time `json:"at"`
+	Kind EventKind `json:"kind"`
+	Tree string    `json:"tree"`
+	// Mode is the tree's lifecycle when the event was recorded. It is written
+	// even though nothing reads it yet: the ledger is append-only, so an entry
+	// stored without it can never be reinterpreted, and an authoring merge and
+	// a merge on a PR you were merely reviewing are not the same news.
+	Mode   Mode   `json:"mode,omitempty"`
+	Member string `json:"member,omitempty"`
+	PR     int    `json:"pr,omitempty"`
+	Text   string `json:"text"`
 }
 
 // Key identifies the thing an event is about, ignoring when it happened. It is
@@ -81,7 +93,7 @@ func Diff(prev, cur Summary) []Event {
 			if !seenMember {
 				continue
 			}
-			evs = append(evs, memberEvents(t.Name, pm, m, cur.At)...)
+			evs = append(evs, memberEvents(t.Name, pm, m, cur.At, t.Mode)...)
 		}
 		evs = append(evs, treeEvents(pt, t, cur.At)...)
 	}
@@ -89,10 +101,10 @@ func Diff(prev, cur Summary) []Event {
 }
 
 // memberEvents reports the transitions of one member repo between two rounds.
-func memberEvents(tree string, prev, cur MemberStatus, at time.Time) []Event {
+func memberEvents(tree string, prev, cur MemberStatus, at time.Time, mode Mode) []Event {
 	var evs []Event
 	add := func(kind EventKind, text string) {
-		evs = append(evs, Event{At: at, Kind: kind, Tree: tree, Member: cur.Alias, PR: prNumber(cur.PR), Text: text})
+		evs = append(evs, Event{At: at, Kind: kind, Tree: tree, Mode: mode, Member: cur.Alias, PR: prNumber(cur.PR), Text: text})
 	}
 
 	if cur.State != prev.State {
@@ -107,16 +119,37 @@ func memberEvents(tree string, prev, cur MemberStatus, at time.Time) []Event {
 				add(EventPROpened, fmt.Sprintf("%s/%s opened PR #%d", tree, cur.Alias, prNumber(cur.PR)))
 			}
 		case MemberChanges:
-			add(EventChangesRequested, fmt.Sprintf("%s/%s: changes requested on #%d", tree, cur.Alias, prNumber(cur.PR)))
+			// Whose verdict this is flips with the mode. On your own tree it is
+			// something to act on; on a review tree it is your review landing.
+			if mode == ModeReviewing {
+				add(EventChangesRequested, fmt.Sprintf("%s/%s: #%d now has changes requested", tree, cur.Alias, prNumber(cur.PR)))
+			} else {
+				add(EventChangesRequested, fmt.Sprintf("%s/%s: changes requested on #%d", tree, cur.Alias, prNumber(cur.PR)))
+			}
 		case MemberApproved:
 			add(EventApproved, fmt.Sprintf("%s/%s: #%d approved", tree, cur.Alias, prNumber(cur.PR)))
 		case MemberMerged:
-			add(EventMerged, fmt.Sprintf("%s/%s: #%d merged", tree, cur.Alias, prNumber(cur.PR)))
+			if mode == ModeReviewing {
+				add(EventMerged, fmt.Sprintf("%s/%s: #%d merged by its author", tree, cur.Alias, prNumber(cur.PR)))
+			} else {
+				add(EventMerged, fmt.Sprintf("%s/%s: #%d merged", tree, cur.Alias, prNumber(cur.PR)))
+			}
 		case MemberClosed:
 			add(EventClosed, fmt.Sprintf("%s/%s: #%d closed without merging", tree, cur.Alias, prNumber(cur.PR)))
-		case MemberAbsent, MemberIdle, MemberWIP:
-			// Not news: no worktree, nothing to ship, or work in progress.
+		case MemberAbsent, MemberIdle, MemberWIP, MemberInReview, MemberForeign:
+			// Not news: no worktree, nothing to ship, work in progress, or a
+			// review tree simply sitting at the head it was created at.
+			// Foreign is a fault the status surfaces report directly rather
+			// than a transition worth a desktop notification.
 		}
+	}
+
+	// The author moving the head is not a lifecycle transition — the PR sits in
+	// `open` throughout — but it is the one thing that invalidates a review in
+	// progress, so it is diffed on its own.
+	if cur.AuthorPushed && !prev.AuthorPushed {
+		add(EventAuthorPushed, fmt.Sprintf("%s/%s: #%d has new commits since you checked it out — run `supatree review refresh`",
+			tree, cur.Alias, prNumber(cur.PR)))
 	}
 
 	// Checks are orthogonal to the lifecycle state — a PR sits in `open` while
@@ -143,14 +176,28 @@ func memberEvents(tree string, prev, cur MemberStatus, at time.Time) []Event {
 func treeEvents(prev, cur TreeStatus, at time.Time) []Event {
 	var evs []Event
 	if cur.State == TreeDone && prev.State != TreeDone {
-		evs = append(evs, Event{At: at, Kind: EventTreeDone, Tree: cur.Name,
+		evs = append(evs, Event{At: at, Kind: EventTreeDone, Tree: cur.Name, Mode: cur.Mode,
 			Text: fmt.Sprintf("%s is done — every PR merged or closed", cur.Name)})
 	}
+	if cur.State == TreeReviewed && prev.State != TreeReviewed {
+		evs = append(evs, Event{At: at, Kind: EventTreeReviewed, Tree: cur.Name, Mode: cur.Mode,
+			Text: fmt.Sprintf("%s: everything under review has landed — safe to remove", cur.Name)})
+	}
 	if cur.Stale && !prev.Stale {
-		evs = append(evs, Event{At: at, Kind: EventStale, Tree: cur.Name,
-			Text: fmt.Sprintf("%s has gone stale", cur.Name)})
+		evs = append(evs, Event{At: at, Kind: EventStale, Tree: cur.Name, Mode: cur.Mode,
+			Text: staleText(cur)})
 	}
 	return evs
+}
+
+// staleText says what went quiet. On a review tree the last commit is the
+// author's, so the same silence means their pull request has stopped moving,
+// not that you have.
+func staleText(t TreeStatus) string {
+	if t.Mode == ModeReviewing {
+		return fmt.Sprintf("%s: the pull requests under review have gone quiet", t.Name)
+	}
+	return fmt.Sprintf("%s has gone stale", t.Name)
 }
 
 func hasPR(pr *github.PRInfo) bool { return pr != nil && pr.Number != 0 }

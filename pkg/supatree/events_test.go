@@ -15,7 +15,11 @@ var diffNow = time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
 // goconst objects to the literals appearing in every table.
 const (
 	treeA = "canberra"
-	treeB = "darwin"
+	// treeBerlin and headRefRefunds are shared test fixtures, declared here
+	// beside treeA so the package has one home for them.
+	treeBerlin     = "berlin"
+	headRefRefunds = "feat/refunds"
+	treeB          = "darwin"
 )
 
 // summaryOf builds a one-tree, one-member summary. Every Diff case below is a

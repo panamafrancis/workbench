@@ -50,7 +50,7 @@ func TestAddStackConflictingPath(t *testing.T) {
 func TestMetaRoundTrip(t *testing.T) {
 	root := t.TempDir()
 	when := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
-	m := &Meta{Name: "berlin", Slug: "berlin", Stack: "s", Model: "claude", CreatedAt: when}
+	m := &Meta{Name: treeBerlin, Slug: treeBerlin, Stack: "s", Model: "claude", CreatedAt: when}
 	if err := m.Save(root); err != nil {
 		t.Fatalf("Save() error = %v", err)
 	}
@@ -58,7 +58,7 @@ func TestMetaRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadMeta() error = %v", err)
 	}
-	if got.Name != "berlin" || got.Slug != "berlin" || got.Model != "claude" {
+	if got.Name != treeBerlin || got.Slug != treeBerlin || got.Model != "claude" {
 		t.Errorf("meta round-trip mismatch: %+v", got)
 	}
 	if got.MemberBranch(aliasTerraform) != "st/berlin/terraform" {

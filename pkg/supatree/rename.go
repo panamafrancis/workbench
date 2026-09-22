@@ -45,6 +45,9 @@ func RenameBranchSlug(c *Config, wb *config.Config, name, newSlug string, push b
 	if err != nil {
 		return err
 	}
+	if meta.Reviewing() {
+		return fmt.Errorf("%s is a review tree: %w", name, ErrReviewTree)
+	}
 	if meta.Slug == newSlug {
 		return fmt.Errorf("slug is already %q", newSlug)
 	}

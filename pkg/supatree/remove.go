@@ -52,10 +52,10 @@ func Remove(c *Config, wb *config.Config, name string, opts RemoveOptions) (*Rem
 				res.Warnings = append(res.Warnings, fmt.Sprintf("%s cleanup: %v", m.Alias, err))
 			}
 		}
-		removeMember(inst.Root, m.Alias, wb, &SyncReport{Warnings: res.Warnings})
+		removeMember(inst.Root, m.Alias, m.Branch, wb, &SyncReport{Warnings: res.Warnings})
 		archiveSessions(m.Path, name, &res.Archived)
 		_ = sandbox.ClearSessionCache(m.Path)
-		prCache.Delete(m.Branch)
+		prCache.Delete(m.CacheKey())
 	}
 	_ = prCache.Save()
 

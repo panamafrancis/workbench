@@ -42,14 +42,17 @@ const (
 )
 
 type PRInfo struct {
-	Number    int         `json:"number"`
-	Status    PRStatus    `json:"status"`
-	Title     string      `json:"title"`
-	URL       string      `json:"url"`
-	Review    ReviewState `json:"review,omitempty"`
-	Checks    CheckState  `json:"checks,omitempty"`
-	UpdatedAt time.Time   `json:"updated_at"`
-	FetchedAt time.Time   `json:"fetched_at"`
+	Number int         `json:"number"`
+	Status PRStatus    `json:"status"`
+	Title  string      `json:"title"`
+	URL    string      `json:"url"`
+	Review ReviewState `json:"review,omitempty"`
+	Checks CheckState  `json:"checks,omitempty"`
+	// HeadOID is the commit the PR's head points at. It is what makes "the
+	// author has pushed since you looked" answerable without a second request.
+	HeadOID   string    `json:"head_oid,omitempty"`
+	UpdatedAt time.Time `json:"updated_at"`
+	FetchedAt time.Time `json:"fetched_at"`
 }
 
 // PRRef is what a previous round recorded about a branch's PR: the number that
@@ -76,6 +79,7 @@ type ghPR struct {
 	IsDraft        bool          `json:"isDraft"`
 	ReviewDecision string        `json:"reviewDecision"`
 	Checks         []ghCheckNode `json:"statusCheckRollup"`
+	HeadRefOid     string        `json:"headRefOid"`
 	UpdatedAt      time.Time     `json:"updatedAt"`
 }
 
@@ -89,7 +93,7 @@ type ghCheckNode struct {
 
 // prJSONFields is the field set every PR lookup asks gh for. Both entry points
 // unmarshal into ghPR, so they must stay in step.
-const prJSONFields = "number,state,title,url,isDraft,reviewDecision,statusCheckRollup,updatedAt"
+const prJSONFields = "number,state,title,url,isDraft,reviewDecision,statusCheckRollup,headRefOid,updatedAt"
 
 // LookupPR finds the PR whose head is branch. GitHub keys this on the current
 // head ref, so it returns nothing for a PR whose head has since moved or whose
@@ -172,6 +176,37 @@ func ResolvePR(repoPath, branch string, prev PRRef) (*PRInfo, error) {
 	return resolvePR(prLookup{byHead: LookupPR, byNumber: LookupPRByNumber}, repoPath, branch, prev)
 }
 
+// ResolvePRByNumber looks a PR up by number alone, skipping the head lookup.
+//
+// It exists for callers that know the PR by construction rather than by having
+// found it from a branch — a review tree, whose members sit on a tree-local
+// branch that provably has no PR. Going through ResolvePR would spend a
+// guaranteed-empty `gh pr list --head` on every member of every round, which is
+// exactly the wasted quota the fetch discipline is built to avoid.
+func ResolvePRByNumber(repoPath string, ref PRRef) (*PRInfo, error) {
+	return resolveByNumber(LookupPRByNumber, repoPath, ref)
+}
+
+// resolveByNumber is the shared by-number path: not found means the PR is gone,
+// and a result from another repository is rejected the same way resolvePR
+// rejects it.
+func resolveByNumber(byNumber func(string, int) (*PRInfo, error), repoPath string, ref PRRef) (*PRInfo, error) {
+	if ref.Number == 0 {
+		return &PRInfo{Status: PRNone}, nil
+	}
+	info, err := byNumber(repoPath, ref.Number)
+	if errors.Is(err, ErrPRNotFound) {
+		return &PRInfo{Status: PRNone}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !sameRepo(ref.URL, info.URL) {
+		return nil, fmt.Errorf("%w: #%d resolved to %s, not %s", ErrPRNotFound, ref.Number, info.URL, ref.URL)
+	}
+	return info, nil
+}
+
 func resolvePR(l prLookup, repoPath, branch string, prev PRRef) (*PRInfo, error) {
 	info, err := l.byHead(repoPath, branch)
 	if err != nil {
@@ -250,6 +285,7 @@ func (pr ghPR) toInfo(now time.Time) *PRInfo {
 		URL:       pr.URL,
 		Review:    mapReview(pr.ReviewDecision),
 		Checks:    rollupChecks(pr.Checks),
+		HeadOID:   pr.HeadRefOid,
 		UpdatedAt: pr.UpdatedAt,
 		FetchedAt: now,
 	}

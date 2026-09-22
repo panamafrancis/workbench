@@ -13,7 +13,7 @@ func TestRequestQueueCatchUp(t *testing.T) {
 	}
 
 	for _, text := range []string{"first", "second"} {
-		if err := AppendRequest(Request{From: "cli", Tree: "canberra", Text: text}); err != nil {
+		if err := AppendRequest(Request{From: "cli", Tree: treeA, Text: text}); err != nil {
 			t.Fatalf("AppendRequest: %v", err)
 		}
 	}

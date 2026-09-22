@@ -68,13 +68,45 @@ func CreateWorktree(repoPath, worktreePath, branch string) (offline bool, err er
 		offline = true
 	}
 
-	cmd := exec.CommandContext(context.Background(), "git", "-C", repoPath, "worktree", "add", "-b", branch, worktreePath, base)
+	return offline, CreateWorktreeAt(repoPath, worktreePath, branch, base)
+}
+
+// CreateWorktreeAt adds a worktree on a new branch starting at an arbitrary
+// ref, which the caller is responsible for having fetched.
+//
+// CreateWorktree is the common case — branch off the default branch, fetching
+// it first — and delegates here. This exists for the callers that already know
+// their start point, such as a review tree checking out a pull request head.
+func CreateWorktreeAt(repoPath, worktreePath, branch, startRef string) error {
+	cmd := exec.CommandContext(context.Background(), "git", "-C", repoPath,
+		"worktree", "add", "-b", branch, worktreePath, startRef)
 	var errBuf bytes.Buffer
 	cmd.Stderr = &errBuf
 	if err := cmd.Run(); err != nil {
-		return offline, fmt.Errorf("git worktree add: %s", strings.TrimSpace(errBuf.String()))
+		return fmt.Errorf("git worktree add: %s", strings.TrimSpace(errBuf.String()))
 	}
-	return offline, nil
+	return nil
+}
+
+// FetchRef fetches an arbitrary remote ref into FETCH_HEAD and returns the
+// commit it resolved to.
+//
+// FetchOrigin only takes a branch name, which cannot reach refs/pull/<n>/head —
+// the ref a pull request's commits actually live on, including for a PR opened
+// from a fork, where the head branch exists in no remote this clone knows.
+func FetchRef(repoPath, ref string) (string, error) {
+	cmd := exec.CommandContext(context.Background(), "git", "-C", repoPath, "fetch", "origin", ref)
+	var errBuf bytes.Buffer
+	cmd.Stderr = &errBuf
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("git fetch %s: %s", ref, strings.TrimSpace(errBuf.String()))
+	}
+	out, err := exec.CommandContext(context.Background(), "git", "-C", repoPath,
+		"rev-parse", "FETCH_HEAD").Output()
+	if err != nil {
+		return "", fmt.Errorf("git rev-parse FETCH_HEAD: %w", err)
+	}
+	return strings.TrimSpace(string(out)), nil
 }
 
 func RemoveWorktree(repoPath, worktreePath string) error {

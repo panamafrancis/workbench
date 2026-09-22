@@ -18,16 +18,40 @@ type Instance struct {
 	Stack   string   // stack alias this supatree was created from
 	Root    string   // absolute path to the tree root
 	Model   string   // default model for agents
+	Mode    Mode     // authoring (zero value) or reviewing
 	Members []Member // in dependency order
 }
+
+// Reviewing reports whether this tree tracks someone else's pull requests.
+func (inst *Instance) Reviewing() bool { return inst.Mode == ModeReviewing }
 
 // Member is one repo participating in a supatree.
 type Member struct {
 	Alias     string   // workbench repo alias
 	Path      string   // <root>/repos/<alias>
-	Branch    string   // st/<slug>/<alias>
+	Branch    string   // st/<slug>/<alias>, or review/<slug>/<alias>
 	DependsOn []string // in-set dependency aliases
 	Exists    bool     // whether the member worktree is checked out on disk
+	// Review is the pull request this member is checked out at, in a review
+	// tree. Nil in an authoring tree.
+	Review *ReviewRef
+	// Base is the branch this member's pull request should target. Empty means
+	// the repository default.
+	Base string
+}
+
+// CacheKey is how this member's PR status is keyed in the shared PR cache.
+//
+// The cache is one flat map across every repo and tree, which is safe for
+// authoring branches only because st/<slug>/<alias> embeds the alias and is
+// therefore unique by construction. A review tree records the PR itself, so it
+// keys on that instead — two members of one cross-repo change frequently carry
+// the same branch name in different repos, and would otherwise share an entry.
+func (m Member) CacheKey() string {
+	if m.Review != nil {
+		return fmt.Sprintf("pr:%s#%d", m.Review.Repo, m.Review.Number)
+	}
+	return m.Branch
 }
 
 // LoadInstance reconstructs the supatree rooted at root from its meta + spec
@@ -63,12 +87,23 @@ func LoadInstance(root string) (*Instance, error) {
 		sort.Strings(deps)
 		path := MemberPath(root, alias)
 		_, statErr := os.Stat(path)
+		// Only while the tree is still reviewing. A tree forked into an
+		// authoring one keeps meta.Review as provenance, but its members now
+		// own their own branches and their own pull requests — carrying the
+		// ref past the fork would key the cache on the *author's* PR forever,
+		// so the tree's own PRs would never appear in any status surface.
+		var ref *ReviewRef
+		if r, ok := meta.Review[alias]; ok && meta.Reviewing() {
+			ref = &r
+		}
 		members = append(members, Member{
 			Alias:     alias,
 			Path:      path,
 			Branch:    meta.MemberBranch(alias),
 			DependsOn: deps,
 			Exists:    statErr == nil,
+			Review:    ref,
+			Base:      meta.MemberBase(alias),
 		})
 	}
 
@@ -78,6 +113,7 @@ func LoadInstance(root string) (*Instance, error) {
 		Stack:   meta.Stack,
 		Root:    root,
 		Model:   meta.Model,
+		Mode:    meta.Mode,
 		Members: members,
 	}, nil
 }
@@ -160,7 +196,17 @@ func (inst *Instance) AgentEnv(agentName string) map[string]string {
 		"SUPATREE_MEMBERS":     strings.Join(inst.MemberAliases(), ","),
 		"SUPATREE_BRANCH_SLUG": inst.Slug,
 		"SUPATREE_AGENT":       agentName,
+		"SUPATREE_MODE":        string(inst.modeName()),
 	}
+}
+
+// modeName renders the mode for display and for the agent environment, where
+// the empty string would read as "unset" rather than "authoring".
+func (inst *Instance) modeName() Mode {
+	if inst.Mode == ModeAuthoring {
+		return "authoring"
+	}
+	return inst.Mode
 }
 
 // resolveRepos maps member aliases to their workbench repo definitions,

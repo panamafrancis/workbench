@@ -40,7 +40,7 @@ func lsPlain() error {
 		fmt.Printf("%s  (stack %s, slug st/%s)\n", inst.Name, inst.Stack, inst.Slug)
 		for _, m := range inst.Members {
 			status := "-"
-			if info := prCache.Get(m.Branch); info != nil && info.Status != github.PRNone {
+			if info := prCache.Get(m.CacheKey()); info != nil && info.Status != github.PRNone {
 				if info.Number > 0 {
 					status = fmt.Sprintf("%s #%d", info.Status, info.Number)
 				} else {
