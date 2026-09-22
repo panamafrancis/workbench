@@ -34,23 +34,39 @@ func BuildNonoArgs(worktreePath, modelKey string, cfg *config.Config) ([]string,
 // BuildNonoArgs semantics (append ResumeArgs iff a prior directory session
 // exists), which only supports a single directory-scoped agent.
 func BuildAgentNonoArgs(worktreePath, modelKey string, cfg *config.Config, sessionID string, resume bool) ([]string, error) {
+	return BuildNamedAgentNonoArgs(worktreePath, modelKey, cfg, sessionID, "", resume)
+}
+
+// BuildNamedAgentNonoArgs is BuildAgentNonoArgs plus a bus address: when
+// agentName is non-empty and the model defines AgentNameArgs, those are
+// appended with "{agent_name}" substituted, so sibling agents can address this
+// one by a name we chose rather than one derived from its directory.
+//
+// The directory-derived default is exactly what makes naming necessary here:
+// every agent in a supatree shares the tree root, so without this they would
+// all derive the same name and collide.
+func BuildNamedAgentNonoArgs(worktreePath, modelKey string, cfg *config.Config, sessionID, agentName string, resume bool) ([]string, error) {
 	m, ok := cfg.Models[modelKey]
 	if !ok {
 		return nil, fmt.Errorf("unknown model %q (add it under 'models:' in config)", modelKey)
 	}
+	tokens := map[string]string{"{session_id}": sessionID, "{agent_name}": agentName}
 	args := []string{"run", "--profile", m.NonoProfile, "--allow", worktreePath, "--"}
 	args = append(args, m.Binary)
 	args = append(args, m.Args...)
 	switch {
 	case sessionID != "" && resume && len(m.ResumeSessionArgs) > 0:
-		args = append(args, substituteSession(m.ResumeSessionArgs, sessionID)...)
+		args = append(args, substituteTokens(m.ResumeSessionArgs, tokens)...)
 	case sessionID != "" && !resume && len(m.NewSessionArgs) > 0:
-		args = append(args, substituteSession(m.NewSessionArgs, sessionID)...)
+		args = append(args, substituteTokens(m.NewSessionArgs, tokens)...)
 	case resume && len(m.ResumeArgs) > 0 && HasPriorSession(worktreePath):
 		// Fallback for models without session-ID args: directory-scoped resume
 		// (e.g. --continue). Only when actually resuming — a *new* agent must
 		// never inherit whatever ran last in a shared directory.
 		args = append(args, m.ResumeArgs...)
+	}
+	if agentName != "" && len(m.AgentNameArgs) > 0 {
+		args = append(args, substituteTokens(m.AgentNameArgs, tokens)...)
 	}
 	return args, nil
 }
@@ -81,10 +97,16 @@ func SupportsSessions(modelKey string, cfg *config.Config) bool {
 	return ok && len(m.NewSessionArgs) > 0
 }
 
-func substituteSession(args []string, id string) []string {
+// substituteTokens replaces every token in each argument. It is a whole-argv
+// pass rather than a per-flag one because a model entry may put the token
+// anywhere — "--name={agent_name}" is as valid as a separate argument.
+func substituteTokens(args []string, tokens map[string]string) []string {
 	out := make([]string, len(args))
 	for i, a := range args {
-		out[i] = strings.ReplaceAll(a, "{session_id}", id)
+		for tok, val := range tokens {
+			a = strings.ReplaceAll(a, tok, val)
+		}
+		out[i] = a
 	}
 	return out
 }
@@ -145,4 +167,111 @@ func encodeProjectPath(p string) string {
 		}
 	}
 	return b.String()
+}
+
+// Grants is a sandbox's filesystem reach. nono's -a/-r are both repeatable, so
+// a process can be given several writable roots and several read-only ones.
+//
+// It exists for the PM agent, whose threat model is close to the inverse of a
+// coding agent's: it executes nothing but reads text other people wrote, and it
+// needs to see every supatree while being able to write almost none of them.
+// The invariant to preserve is not "read-only on trees" — it may write
+// supatree's own state — but that it may never write a member repo's working
+// tree.
+type Grants struct {
+	Allow []string // read+write
+	Read  []string // read-only
+}
+
+// BuildGrantedNonoArgs builds nono args for a process with an explicit set of
+// filesystem grants rather than a single worktree.
+//
+// agentName, when the model defines AgentNameArgs, gives it a bus address the
+// same way a supatree agent gets one.
+func BuildGrantedNonoArgs(modelKey string, cfg *config.Config, g Grants, sessionDir, agentName string, resume bool) ([]string, error) {
+	m, ok := cfg.Models[modelKey]
+	if !ok {
+		return nil, fmt.Errorf("unknown model %q (add it under 'models:' in config)", modelKey)
+	}
+	if len(g.Allow) == 0 && len(g.Read) == 0 {
+		return nil, fmt.Errorf("refusing to build a sandbox with no filesystem grants")
+	}
+	args := []string{"run", "--profile", m.NonoProfile}
+	for _, p := range g.Allow {
+		args = append(args, "--allow", p)
+	}
+	for _, p := range g.Read {
+		args = append(args, "--read", p)
+	}
+	args = append(args, "--", m.Binary)
+	args = append(args, m.Args...)
+	if resume && len(m.ResumeArgs) > 0 && HasPriorSession(sessionDir) {
+		args = append(args, m.ResumeArgs...)
+	}
+	if agentName != "" && len(m.AgentNameArgs) > 0 {
+		args = append(args, substituteTokens(m.AgentNameArgs, map[string]string{"{agent_name}": agentName})...)
+	}
+	return args, nil
+}
+
+// ArchiveSessionCache moves a worktree's agent transcripts into destDir instead
+// of leaving them to be deleted, and reports how many it moved.
+//
+// It exists because ClearSessionCache is otherwise the largest source of
+// forgetting in the system: removing a worktree deletes every transcript of
+// every agent that ever worked in it, and everything they learned goes with it.
+// Archiving is deterministic and cheap, which is what makes it safe to put on
+// the removal path — distilling a transcript into something worth keeping is a
+// judgement call, and blocking a removal on an agent's round trip would be
+// worse than the leak it fixes. So: move now, distil later.
+//
+// Best effort by contract: a failed archive must never block a removal.
+func ArchiveSessionCache(worktreePath, destDir string) (int, error) {
+	if worktreePath == "" || destDir == "" {
+		return 0, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return 0, err
+	}
+	src := filepath.Join(home, ".claude", "projects", encodeProjectPath(worktreePath))
+	entries, readErr := os.ReadDir(src)
+	if readErr != nil {
+		// No transcript directory is the ordinary case for a worktree nobody
+		// opened an agent in. Reporting it as an error would make every removal
+		// of an unused worktree look like a failure, so it is deliberately not
+		// one.
+		return 0, nil //nolint:nilerr // absence of transcripts is not a failure
+	}
+	moved := 0
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
+			continue
+		}
+		if moved == 0 {
+			if err := os.MkdirAll(destDir, 0755); err != nil {
+				return 0, fmt.Errorf("create archive dir: %w", err)
+			}
+		}
+		from := filepath.Join(src, e.Name())
+		to := filepath.Join(destDir, e.Name())
+		if err := os.Rename(from, to); err != nil {
+			// Rename fails across filesystems; fall back to a copy so the
+			// transcript survives even when $HOME and the archive differ.
+			if err := copyFile(from, to); err != nil {
+				return moved, fmt.Errorf("archive %s: %w", e.Name(), err)
+			}
+			_ = os.Remove(from)
+		}
+		moved++
+	}
+	return moved, nil
+}
+
+func copyFile(from, to string) error {
+	data, err := os.ReadFile(from)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(to, data, 0644)
 }

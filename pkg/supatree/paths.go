@@ -42,6 +42,12 @@ func LayoutsDir() string {
 	return filepath.Join(Dir(), "layouts")
 }
 
+// ArchiveDir holds what a removed supatree left behind — agent transcripts
+// rescued from deletion so the PM can distil them at its own pace.
+func ArchiveDir(tree string) string {
+	return filepath.Join(Dir(), "archive", tree)
+}
+
 // LogsDir holds diagnostic logs.
 func LogsDir() string {
 	return filepath.Join(Dir(), "logs")
@@ -86,6 +92,14 @@ func AgentsPath(root string) string {
 	return filepath.Join(StateDir(root), "agents.yml")
 }
 
+// BoardPath returns the PM-maintained status board inside a tree root. Like
+// info.md it is generated and gitignored: status must not mean "read the PM's
+// chat log", because scrollback is a terrible status display and people stop
+// reading it by day three.
+func BoardPath(root string) string {
+	return filepath.Join(StateDir(root), "board.md")
+}
+
 // InfoPath returns the generated info file inside a tree root.
 func InfoPath(root string) string {
 	return filepath.Join(StateDir(root), "info.md")
@@ -109,3 +123,74 @@ func MemberPath(root, alias string) string {
 // not a plausible supatree name, since tab names key tab lookups and a
 // collision would focus the wrong tab.
 const DashTab = "supatree-dash"
+
+// EventsPath is the append-only activity ledger the watcher writes and the
+// dashboard, the PM's `events` tool and the sidebar's attention marker read.
+func EventsPath() string {
+	return filepath.Join(Dir(), "events.jsonl")
+}
+
+// EventsLockPath serializes appends to the ledger. Appends are O_APPEND and
+// line-sized, but the lock also covers the read-modify-write in the notifier's
+// dedupe state, which is written in the same step.
+func EventsLockPath() string {
+	return EventsPath() + ".lock"
+}
+
+// LastSummaryPath holds the previous round's Status summary. Events are the
+// diff between it and the current one, so it is the watcher's whole memory.
+func LastSummaryPath() string {
+	return filepath.Join(CacheDir(), "last-status.json")
+}
+
+// NotifyStatePath holds the notifier's per-key dedupe and dwell state. It sits
+// beside the summary because the two are written together and are equally
+// disposable: losing both re-seeds silently on the next round.
+func NotifyStatePath() string {
+	return filepath.Join(CacheDir(), "notify-state.json")
+}
+
+// WatchLockPath elects the single watcher process. It is held for the whole
+// life of the daemon, so a concurrent `watch --once` gets ErrLockBusy and
+// exits quietly — that is what stops a cron entry double-fetching.
+func WatchLockPath() string {
+	return filepath.Join(Dir(), "watch.lock")
+}
+
+// RequestsPath is the inbound queue anything can append to in order to reach
+// the PM agent: the sidebar, the watcher, the scheduler, a shell.
+func RequestsPath() string {
+	return filepath.Join(Dir(), "requests.jsonl")
+}
+
+// NotifyPath is the outbox for processes that cannot notify for themselves.
+// Only the watcher runs outside the nono sandbox, so it is the only process
+// that can reach the desktop; everything else appends here and the watcher
+// delivers it through the same tier policy as its own events.
+func NotifyPath() string {
+	return filepath.Join(Dir(), "notify.jsonl")
+}
+
+// PMDir is the PM agent's own root (~/.supatree/pm). It is deliberately not a
+// supatree: a PM that manages many of them cannot be rooted in one.
+func PMDir() string {
+	return filepath.Join(Dir(), "pm")
+}
+
+// PMOffsetPath records how far the PM has read into the request queue. It lives
+// with the PM rather than with the queue because it is the reader's position,
+// not a property of the history.
+func PMOffsetPath() string {
+	return filepath.Join(PMDir(), "requests.offset")
+}
+
+// RequestsLockPath serializes appends to the request queue.
+func RequestsLockPath() string {
+	return RequestsPath() + ".lock"
+}
+
+// PMTab is the Zellij tab name the PM opens into. Reserved the same way DashTab
+// is, so it can never collide with a supatree name — and, because
+// OpenOrFocusTab focuses a live tab rather than opening a second one, it is
+// also what makes the PM a singleton.
+const PMTab = "supatree-pm"

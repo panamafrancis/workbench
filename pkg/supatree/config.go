@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -14,11 +15,32 @@ import (
 // registered stack repos and defaults. Live supatrees are NOT stored here — they
 // are discovered by scanning the trees base for per-tree metadata.
 type Config struct {
-	Version      int     `yaml:"version"`
-	DefaultModel string  `yaml:"default_model,omitempty"`
-	SidebarWidth string  `yaml:"sidebar_width,omitempty"`
-	TreesBase    string  `yaml:"trees_base,omitempty"`
-	Stacks       []Stack `yaml:"stacks"`
+	Version      int    `yaml:"version"`
+	DefaultModel string `yaml:"default_model,omitempty"`
+	SidebarWidth string `yaml:"sidebar_width,omitempty"`
+	// PMModelKey is the models entry the PM agent runs under. It is separate
+	// from DefaultModel so the PM can point at a different nono profile: it
+	// executes no third-party code but reads text other people wrote and holds
+	// credentials that reach outside the machine, so it wants a profile that is
+	// narrow on egress rather than one that is wide on the filesystem.
+	PMModelKey string  `yaml:"pm_model,omitempty"`
+	TreesBase  string  `yaml:"trees_base,omitempty"`
+	Stacks     []Stack `yaml:"stacks"`
+	// NotifyCommand is the argv `supatree watch` runs to deliver a desktop
+	// notification, with {title} and {text} substituted. Empty uses the macOS
+	// default; Linux points it at notify-send without a code change.
+	NotifyCommand []string `yaml:"notify_command,omitempty"`
+	// WatchInterval is how often the watcher re-derives status. Empty uses
+	// DefaultWatchInterval. The GitHub fetch behind it stays gated on
+	// PRStaleAge, so shortening this does not spend more quota.
+	WatchInterval string `yaml:"watch_interval,omitempty"`
+	// DefaultAutonomy governs supatrees whose meta.yml says nothing, and — the
+	// reason it has to exist — actions with no tree to carry a level yet, such
+	// as creating one.
+	DefaultAutonomy string `yaml:"default_autonomy,omitempty"`
+	// DefaultOutward allows actions a third party sees. Off unless you say
+	// otherwise, at every autonomy level.
+	DefaultOutward bool `yaml:"default_outward,omitempty"`
 }
 
 // Stack is a registered stack repo.
@@ -138,4 +160,28 @@ func RemoveStack(alias string) error {
 		c.Stacks = out
 		return c.Save()
 	})
+}
+
+// ResolveNotifyCommand returns the configured notifier argv or the default.
+func (c *Config) ResolveNotifyCommand() []string {
+	if len(c.NotifyCommand) > 0 {
+		return c.NotifyCommand
+	}
+	return DefaultNotifyCommand()
+}
+
+// DefaultWatchInterval is how often `supatree watch` re-derives status. It
+// matches the sidebar's tick; the gh fetch behind it is separately gated on
+// PRStaleAge, so this controls responsiveness rather than quota.
+const DefaultWatchInterval = 30 * time.Second
+
+// ResolveWatchInterval returns the configured watch interval or the default. An
+// unparseable or absurdly short value falls back rather than failing: this is a
+// daemon, and a typo in a config file must not stop it polling.
+func (c *Config) ResolveWatchInterval() time.Duration {
+	d, err := time.ParseDuration(c.WatchInterval)
+	if err != nil || d < 5*time.Second {
+		return DefaultWatchInterval
+	}
+	return d
 }

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -34,11 +35,20 @@ func UIStateLockPath() string {
 type UIState struct {
 	CollapsedTrees map[string]bool `yaml:"collapsed_trees,omitempty"`
 	ExpandedRepos  map[string]bool `yaml:"expanded_repos,omitempty"`
+	// SeenEvents records when you last looked at each supatree, which is what
+	// makes the sidebar's attention marker mean "unacted" rather than merely
+	// "recent". It lives here rather than in the event ledger because it is a
+	// property of the reader, not of the history.
+	SeenEvents map[string]time.Time `yaml:"seen_events,omitempty"`
 }
 
 // NewUIState returns an empty (all-defaults) fold state.
 func NewUIState() *UIState {
-	return &UIState{CollapsedTrees: map[string]bool{}, ExpandedRepos: map[string]bool{}}
+	return &UIState{
+		CollapsedTrees: map[string]bool{},
+		ExpandedRepos:  map[string]bool{},
+		SeenEvents:     map[string]time.Time{},
+	}
 }
 
 // LoadUIState reads the fold state, returning the defaults when the file is
@@ -59,6 +69,9 @@ func LoadUIState() *UIState {
 	}
 	for k, v := range on.ExpandedRepos {
 		u.ExpandedRepos[k] = v
+	}
+	for k, v := range on.SeenEvents {
+		u.SeenEvents[k] = v
 	}
 	return u
 }
@@ -128,4 +141,39 @@ func (u *UIState) save() error {
 		return fmt.Errorf("write ui state: %w", err)
 	}
 	return os.Rename(tmp, UIStatePath())
+}
+
+// MarkSeen records that you have just looked at a supatree, clearing its
+// attention marker. Called when a tree's tab is opened or focused — a discrete
+// action, deliberately not every render, since one sidebar runs per Zellij tab
+// and a per-render write would have them all contending for the lock.
+func MarkSeen(tree string, at time.Time) {
+	_, _ = UpdateUIState(func(u *UIState) {
+		if u.SeenEvents == nil {
+			u.SeenEvents = map[string]time.Time{}
+		}
+		u.SeenEvents[tree] = at
+	})
+}
+
+// Attention reports, per supatree, whether the ledger holds an event worth your
+// attention that postdates the last time you looked at that tree.
+//
+// Only board- and desktop-tier events count: a glyph-tier event is already
+// visible in the row it changed, and marking the tree for it would leave the
+// marker permanently on.
+func Attention(evs []Event, u *UIState) map[string]bool {
+	out := make(map[string]bool)
+	for _, ev := range evs {
+		switch TierOf(ev.Kind) {
+		case TierBoard, TierDesktop:
+		case TierGlyph, TierNever:
+			continue
+		}
+		if seen, ok := u.SeenEvents[ev.Tree]; ok && !ev.At.After(seen) {
+			continue
+		}
+		out[ev.Tree] = true
+	}
+	return out
 }

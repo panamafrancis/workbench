@@ -58,6 +58,14 @@ type Model struct {
 	height   int
 	pending  string // half-typed multi-key sequence ("g")
 
+	// feed is the events pane toggled by `e`: the recent activity the watcher
+	// recorded, which the row table cannot show because it is a diff over time
+	// rather than a current state.
+	feed   bool
+	events []supatree.Event
+	// board shows the PM-maintained board for the selected supatree. Chat is
+	// where you negotiate; the board is where you check.
+	board    bool
 	loaded   bool
 	fetching bool
 	prHint   string
@@ -85,6 +93,7 @@ func (m *Model) Init() tea.Cmd {
 
 type tickMsg struct{}
 type summaryMsg struct{ summary supatree.Summary }
+type eventsMsg struct{ events []supatree.Event }
 type prMsg struct {
 	err     error
 	skipped bool
@@ -252,4 +261,28 @@ func (m *Model) setAllExpanded(expanded bool) {
 	}
 	m.rebuildRows()
 	m.follow = true
+}
+
+// feedWindow is how far back the events pane looks, and feedRows how many of
+// those it shows. The ledger is append-only and unbounded, so both are capped
+// here rather than by trusting it to stay small.
+const (
+	feedWindow = 48 * time.Hour
+	feedRows   = 8
+)
+
+// eventsCmd reads the activity ledger off the main loop. It is only issued
+// while the feed is open, so a dashboard nobody has pressed `e` in never reads
+// the file at all.
+func (m *Model) eventsCmd() tea.Cmd {
+	return func() tea.Msg {
+		evs, err := supatree.ReadEvents(time.Now().Add(-feedWindow))
+		if err != nil {
+			return eventsMsg{}
+		}
+		if len(evs) > feedRows {
+			evs = evs[len(evs)-feedRows:]
+		}
+		return eventsMsg{events: evs}
+	}
 }

@@ -36,7 +36,15 @@ func (m *Model) View() string {
 	b.WriteString("\n")
 
 	footer := m.footer()
+	feed := m.feedView()
+	board := m.boardView()
 	reserved := rowsTopOffset + 1 + strings.Count(footer, "\n") + 1
+	if feed != "" {
+		reserved += strings.Count(feed, "\n") + 1
+	}
+	if board != "" {
+		reserved += strings.Count(board, "\n") + 1
+	}
 	avail := m.height - reserved
 	if m.height > 0 && avail < 1 {
 		avail = 1
@@ -47,9 +55,60 @@ func (m *Model) View() string {
 		b.WriteString("\n")
 	}
 
+	if board != "" {
+		b.WriteString("\n")
+		b.WriteString(board)
+		b.WriteString("\n")
+	}
+	if feed != "" {
+		b.WriteString("\n")
+		b.WriteString(feed)
+		b.WriteString("\n")
+	}
 	b.WriteString("\n")
 	b.WriteString(footer)
 	return b.String()
+}
+
+// feedView renders the recent-activity pane, or "" when it is closed. It is a
+// timeline rather than a table: the row list above says where everything is
+// *now*, and this says what changed to get there.
+func (m *Model) feedView() string {
+	if !m.feed {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString(styleMuted.Render("recent activity"))
+	if len(m.events) == 0 {
+		b.WriteString("\n")
+		b.WriteString(styleMuted.Render("  nothing in the last 48h"))
+		return b.String()
+	}
+	now := m.summary.At
+	if now.IsZero() {
+		now = time.Now()
+	}
+	for _, ev := range m.events {
+		b.WriteString("\n")
+		line := fmt.Sprintf("  %-4s %s", ago(now.Sub(ev.At)), ev.Text)
+		b.WriteString(eventStyle(ev.Kind).Render(truncate(line, m.width)))
+	}
+	return b.String()
+}
+
+// eventStyle colours a feed line by how much it wants your attention, using the
+// same tier table the notifier does — so what shouts on the desktop also stands
+// out here.
+func eventStyle(k supatree.EventKind) lipgloss.Style {
+	switch supatree.TierOf(k) {
+	case supatree.TierDesktop:
+		return styleRed
+	case supatree.TierBoard:
+		return styleGreen
+	case supatree.TierGlyph, supatree.TierNever:
+		return styleMuted
+	}
+	return styleMuted
 }
 
 // viewport returns the [start, end) row range to render, recording the visible
@@ -289,7 +348,7 @@ func (m *Model) footer() string {
 	if m.err != nil {
 		return styleRed.Render("error: " + m.err.Error())
 	}
-	parts := []string{"j/k move", "space expand", "}/{ tree", "enter focus tab", "r refresh", "q quit"}
+	parts := []string{"j/k move", "space expand", "}/{ tree", "enter focus tab", "b board", "e events", "r refresh", "q quit"}
 	if m.msg != "" {
 		parts = append([]string{m.msg}, parts...)
 	}
@@ -337,4 +396,40 @@ func truncate(s string, width int) string {
 		return string(runes[:width])
 	}
 	return string(runes[:width-1]) + "…"
+}
+
+// boardRows caps how much of a board the pane shows. A board is written by an
+// agent and nothing stops it being long; the dashboard is a glance, not a
+// reader, and the file is there for anyone who wants all of it.
+const boardRows = 10
+
+// boardView renders the selected supatree's PM board, or "" when the pane is
+// closed or that tree has none.
+func (m *Model) boardView() string {
+	if !m.board {
+		return ""
+	}
+	t := m.selectedTree()
+	if t == nil {
+		return ""
+	}
+	body := supatree.ReadBoard(t.Root)
+	if strings.TrimSpace(body) == "" {
+		return styleMuted.Render(fmt.Sprintf("board · %s — none yet (the PM writes it)", t.Name))
+	}
+	var b strings.Builder
+	b.WriteString(styleMuted.Render("board · " + t.Name))
+	shown := 0
+	for _, line := range strings.Split(strings.TrimSpace(body), "\n") {
+		if strings.HasPrefix(line, "<!--") || strings.HasPrefix(line, "# ") {
+			continue
+		}
+		if shown >= boardRows {
+			b.WriteString("\n" + styleMuted.Render("  …"))
+			break
+		}
+		b.WriteString("\n  " + truncate(line, m.width-2))
+		shown++
+	}
+	return b.String()
 }

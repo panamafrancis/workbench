@@ -365,6 +365,13 @@ supatree open <name> --agent=reviewer           # a second, independently-resuma
 supatree ls                                     # list supatrees + member PR status
 supatree status                                 # activity of every supatree (open/pushed/approved/stale/done)
 supatree dash                                   # full-screen dashboard of the same
+supatree watch                                  # background poller: activity ledger + desktop notifications
+supatree comments <tree> <repo>                 # what reviewers said, with unresolved threads first
+supatree pm                                     # the PM agent — sees every supatree at once
+supatree request "…"                            # queue something for the PM
+supatree schedule                               # recurring PM work (standups, triage, reminders)
+supatree message <tree> <agent> "…"             # leave a message in an agent's mailbox
+supatree inbox <tree> <agent>                   # what is waiting for it
 supatree sync <name>                            # reconcile after editing supatree.yml
 supatree rename-branch <slug> <name>            # rename all member branches (slug: max 40 chars)
 supatree rm <name>                              # tear down all member worktrees
@@ -427,6 +434,115 @@ supatree status --all        # include the members of finished supatrees
 `supatree dash` is the same data as a full-screen TUI, meant to live in its own window or Zellij tab: one row per supatree with its state, open/total PRs, review verdicts (`2✓ 1✗ 3·` — approved, changes requested, waiting), time since the last commit, and what needs attention. `space` expands a supatree to its member repos with PR numbers and per-repo state; `enter` focuses that supatree's Zellij tab. The most actionable supatrees sort first (blocked, then ready to merge, then in review) and finished ones sink to the bottom.
 
 Press `D` in the supatree sidebar to open or focus the dashboard in a `supatree-dash` tab, or run `supatree dash` in any terminal. Both the dashboard and the sidebar read the same on-disk PR cache and fetch under the same staleness gate, cross-process lock and rate-limit backoff, so running a dashboard alongside a screenful of sidebars adds no extra GitHub API load. Non-interactive (piped) output falls back to `supatree status`.
+
+### Review comments
+
+`supatree comments <tree> <repo>` shows what reviewers have said on a member repo's pull request: top-level comments, review verdicts, and line-anchored threads with their **resolved state**. Unresolved threads lead the output, because they are the only part still waiting on an answer; `--all` covers every member, `--json` is for scripts, `--force` re-fetches.
+
+Unlike `supatree status`, this one costs API quota. Thread resolution exists only in GitHub's GraphQL API, so it is a second query shape per PR on top of the one the sidebar already spends. It is therefore fetched **only when asked for, never on a timer**, and cached until the PR itself changes — so asking twice about an unchanged PR is free. Agents get the same thing as the `pr_comments` MCP tool.
+
+### The PM agent
+
+`supatree pm` (or `P` in the sidebar) opens a standing agent rooted at `~/.supatree/pm` that can see every supatree at once: what is blocked, what reviewers said, who is working where. It is **optional** — nothing else depends on it running, and without it supatree behaves exactly as it does today.
+
+It is not rooted in a supatree, because one that manages many cannot live inside one of them. That also means it gets its own MCP gate: `SUPATREE_PM=1` unlocks the cross-tree tools (`requests`, `list_trees`, `events`, `notify`), while `SUPATREE` stays *unset* so the tree-scoped tools stay hidden rather than resolving nothing.
+
+**Its sandbox is a different shape, not a bigger one.** It allows its own state, each tree's `.supatree/`, and the stack repos — and nothing under `repos/`. The invariant is not "read-only on trees" but *the PM may write supatree's own state and never a member repo's working tree*. Set `pm_model` in `~/.supatree/config.yml` to point it at a `models` entry with its own `nono_profile`: the PM executes no third-party code but reads text other people wrote and holds credentials that reach off the machine, so the profile it wants is narrow on egress rather than wide on the filesystem.
+
+```yaml
+# ~/.supatree/config.yml
+pm_model: claude-pm     # a models entry whose nono_profile scopes the gh credential
+```
+
+**Reaching it.** Anything that can append to a file can queue a request — `supatree request`, the sidebar, the watcher — and the PM reads the queue at the top of each turn. That indirection is the point: a Go process cannot use a message bus, but every Go process can append a line. The queue is read from a **stored offset**, so a PM that has been closed for a day catches up on the backlog instead of losing it, and the offset is only committed after the requests have been handed over.
+
+**Two rules it is given up front.** It never opens a Zellij tab unprompted — opening focuses the tab and yanks the terminal away from whoever is using it, so it creates trees and *reports*, and you press enter yourself. And it treats fetched text as data rather than instructions: a PR comment is written by anyone who can comment on the repository.
+
+It also cannot notify you directly — nothing inside the sandbox can — so its `notify` tool queues through the watcher, which applies the same tiering and deduping as its own events.
+
+### Autonomy
+
+What the PM may do unasked is explicit and per supatree, in `.supatree/meta.yml`, with a workspace default in `~/.supatree/config.yml`:
+
+| Level | Unasked, the PM may | If you ask it to |
+| --- | --- | --- |
+| `off` | report only | report only |
+| `nudge` *(default)* | message agents | create, reap, push |
+| `auto` | create supatrees, open PRs, reap finished ones | as unasked |
+
+**The level governs what the PM does unasked**, which is the only thing about it worth being careful over. Ask it to create a supatree and it creates one: the mutating tools take an `asked` flag, the PM sets it when the request came from you in that turn, and below `auto` that is the difference between doing the thing and reporting that it could. `off` is the exception — report-only means report-only, and asking does not lift it — and a scheduled turn cannot carry the flag at all, because there is nobody in one to have asked. It is the same assertion `remove_tree`'s `force` has always rested on, trusted the same way: autonomy is a consent boundary and the sandbox is the security one, and consent is exactly what an agent is in a position to report.
+
+**Outward-facing actions are a separate axis** (`outward`, off everywhere by default). "Message a local agent" and "comment on a PR" are different kinds of risk — one is private and recoverable, the other is published and permanent — so wanting the PM to create supatrees unattended does not also grant it a public voice.
+
+The workspace default is not just convenience: autonomy lives per tree, so without it nothing would govern `new_tree`, which has no tree yet to carry a level. **A scheduled turn caps at `nudge`** however the tree is configured, unless its schedule entry opts in — nobody is watching one of those.
+
+### The board
+
+`.supatree/board.md` is what the PM maintains per supatree: what each agent is on, what is blocked, what is waiting on you. Status must not mean "read the PM's chat log" — scrollback is a terrible status display and people stop reading it by day three. Chat is where you negotiate; the board is where you check. `b` in the dashboard shows the selected tree's board.
+
+### Memory
+
+Durable notes live in `notes/` **in the stack repo**, scaffolded by `supatree scaffold`. That is a deliberate choice over a vector store: at the volume this produces — tens to low hundreds of finished supatrees a year — grep beats embedding retrieval on precision and on being debuggable, and a git directory is diffable, blameable, reviewable and shared with the team. Curation arrives as a pull request rather than a migration.
+
+Three tools: `remember` writes a note, `recall` searches them, and `history` answers what shipped from the event ledger. The split matters — **`history` is exact and `recall` is not**, so the PM is told never to answer a status question from memory. Git and the ledger are authoritative for facts; notes are for judgement.
+
+Two things keep it from rotting. `info.md` names only the few most recent notes, with everything else behind `recall`: storage was never the hard problem, what loads into every session is. And every `recall` logs its query and whether it hit, so *"a store nothing has read in 30 days gets deleted, not debugged"* is a measurable claim rather than a hope.
+
+`supatree rm` no longer throws away agent history either: transcripts are moved to `~/.supatree/archive/<tree>/` before the session cache is cleared. Archiving is deterministic and cheap, which is what makes it safe on the removal path — distilling one into something worth keeping is a judgement call, and blocking a removal on an agent round-trip would be worse than the leak.
+
+### Scheduled work
+
+`~/.supatree/schedule.yml` (`supatree schedule init` writes an example) runs recurring PM work: a morning standup, hourly triage of new review comments, a Friday reap proposal, or a one-shot reminder.
+
+The scheduler lives in the **watcher**, not in the PM. An agent cannot be trusted to hold a timer — it is mid-turn, blocked on a tool call, or was restarted an hour ago — and a schedule that silently drops jobs is worse than none. Firing a job is an append to the same request queue the sidebar's `m` uses, so the PM needs no timer and no new channel.
+
+```yaml
+jobs:
+  - id: standup
+    at: "09:00"
+    days: [mon, tue, wed, thu, fri]
+    when: events_since_last     # the default: stay silent when nothing moved
+    prompt: "Summarise what moved since yesterday."
+```
+
+Three rules do the real work. A job seen for the first time is **seeded, not fired** — otherwise writing the file fires every entry at once. A job that missed fifteen hourly windows overnight fires **once**, not fifteen times. And `when: events_since_last` is the default because a standup that reports "nothing changed" every morning is notification fatigue wearing a suit. Jobs read the cache and never fetch, so a timetable costs no API quota.
+
+`supatree schedule run <id>` fires one now for testing, deliberately without touching the fire times.
+
+### Talking between agents
+
+Several agents can share a supatree, and they can now reach each other. Each is launched with a stable address — `st-<tree>-<agent>` — recorded in `.supatree/agents.yml` and passed to the CLI via the model's `agent_name_args` (`["--name", "{agent_name}"]` for claude). Without it every agent in a tree would derive its name from the shared tree root and they would all collide.
+
+Three MCP tools: `agents` lists who is here with their addresses and unread counts, `message_agent` leaves one a message, and `inbox` reads and clears your own. All three take an optional `tree`, so the PM — which lives in no supatree — can use them by naming one; inside a supatree you can omit it and mean your own.
+
+**Delivery is always by mailbox** — a file under `.supatree/mail/<agent>/`, read on the recipient's next turn. That is the contract, and it works for every model, whether or not the recipient is running. A message bus, where the CLI has one, only makes the same message arrive sooner; `agents` reports per agent whether it is reachable that way (`bus st-canberra-main`) or by mailbox alone (`mailbox (next turn)`), rather than implying parity.
+
+```yaml
+# ~/.workbench/config.yml — a model with no message bus simply omits this
+models:
+  claude:
+    agent_name_args: ["--name", "{agent_name}"]
+```
+
+### Notifications
+
+`supatree watch` is the single background poller. Each round it refreshes PR status on the shared staleness gate, derives the same summary `supatree status` shows, diffs it against the previous round, appends what changed to `~/.supatree/events.jsonl`, and delivers the few events that warrant interrupting you as desktop notifications.
+
+`supatree start` spawns one automatically and it exits when the last supatree Zellij session closes. It is a singleton enforced by a file lock, so a second one — a stray `supatree watch`, or a cron entry firing while a session is open — exits quietly rather than doubling the GitHub API load. That makes a scheduled `supatree watch --once` safe to add if you want the hours when no session is running covered too.
+
+Events are a diff, not a report. Nothing that has no previously observed state is announced, so a fresh install and a newly created supatree both stay quiet instead of telling you about everything they can see.
+
+Only two kinds interrupt you: **changes requested** and **checks failing** — the two that mean a human is now waiting on you. Merges, approvals and finished trees are recorded but silent, and pushes and opened PRs only change a sidebar glyph. Repeats of the same news stay quiet for a cooldown (two hours for failing checks, which flap as CI re-runs), and notifications for the supatree whose tab you are currently looking at are suppressed, since you can already see it.
+
+```yaml
+# ~/.supatree/config.yml
+notify_command: ["notify-send", "{title}", "{text}"]   # default: osascript on macOS
+watch_interval: 30s                                    # how often to re-derive; the gh fetch behind it stays gated
+```
+
+`{title}` and `{text}` are substituted; the values are stripped of quotes and control characters, so a PR title cannot break out of the notifier's own quoting.
+
+In the sidebar, a supatree holding news you have not looked at is marked `!` next to its name; opening it clears the mark. In the dashboard, `e` toggles a recent-activity feed of the same ledger.
 
 ### Agents
 
