@@ -195,20 +195,22 @@ func MCPServer(version string) *mcp.Server {
 			},
 			{
 				Name:        "new_tree",
-				Description: "PM: create a supatree from a stack. Requires autonomy 'auto'. Returns the name; it does NOT open a tab — opening focuses it and takes the terminal away from whoever is using it.",
+				Description: "PM: create a supatree from a stack. Needs autonomy 'auto' to do unasked, or `asked` when the human has asked you to. Returns the name; it does NOT open a tab — opening focuses it and takes the terminal away from whoever is using it.",
 				InputSchema: mcp.ObjectSchema(map[string]any{
 					"stack":  mcp.StringProp("Stack alias (omit if only one is registered)"),
 					"name":   mcp.StringProp("Supatree name (omit to auto-generate)"),
 					"intent": mcp.StringProp("What this supatree is for — the issue or task. Recorded, and worth filling in: the branch rename discards the generated name."),
+					"asked":  mcp.BoolProp("The human asked for this in this turn. Set it only then — it is what distinguishes a request from your own initiative, and below autonomy 'auto' it is the difference between doing this and reporting that you could"),
 				}, nil),
 				Handler: handleNewTree,
 			},
 			{
 				Name:        "remove_tree",
-				Description: "PM: remove a finished supatree and its member worktrees. Requires autonomy 'auto', and refuses a tree that is not done unless forced.",
+				Description: "PM: remove a finished supatree and its member worktrees. Needs autonomy 'auto' to do unasked, or `asked` when the human has asked you to; refuses a tree that is not done unless forced.",
 				InputSchema: mcp.ObjectSchema(map[string]any{
 					"tree":  mcp.StringProp("Supatree name"),
 					"force": mcp.BoolProp("Remove even though it is not finished"),
+					"asked": mcp.BoolProp("The human asked for this in this turn. Set it only then — it is what distinguishes a request from your own initiative, and below autonomy 'auto' it is the difference between doing this and reporting that you could"),
 				}, []string{argTree}),
 				Handler: handleRemoveTree,
 			},
@@ -860,6 +862,13 @@ func handleBoard(args map[string]any) (string, bool) {
 	return "board updated for " + inst.Name, false
 }
 
+// argAsked reads the `asked` flag the mutating tools carry: the PM's assertion
+// that this action is one the human asked for in this turn, not its own idea.
+func argAsked(args map[string]any) bool {
+	asked, _ := args["asked"].(bool)
+	return asked
+}
+
 func handleAutonomy(args map[string]any) (string, bool) {
 	name, _ := args[argTree].(string)
 	cfg, err := Load()
@@ -883,7 +892,8 @@ func handleAutonomy(args map[string]any) (string, bool) {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s: autonomy %s\n", scope, p.Level)
 	fmt.Fprintf(&b, "  message agents:        %v\n", p.AllowsMessaging())
-	fmt.Fprintf(&b, "  create / remove / push: %v\n", p.AllowsMutation())
+	fmt.Fprintf(&b, "  create / remove / push unasked: %v\n", p.AllowsMutation())
+	fmt.Fprintf(&b, "  ... when the human asks:        %v\n", p.AsAsked(true).AllowsMutation())
 	fmt.Fprintf(&b, "  outward-facing (anything a third party sees): %v\n", p.Outward)
 	return b.String(), false
 }
@@ -900,7 +910,7 @@ func handleNewTree(args map[string]any) (string, bool) {
 	// No tree exists yet to carry a level, which is exactly why the workspace
 	// default has to exist: otherwise the most dangerous verb here would be the
 	// one verb the permission model did not cover.
-	if p := cfg.Resolve(nil); !p.AllowsMutation() {
+	if p := cfg.Resolve(nil).AsAsked(argAsked(args)); !p.AllowsMutation() {
 		return p.Deny("creating a supatree"), true
 	}
 	stack, _ := args["stack"].(string)
@@ -936,7 +946,7 @@ func handleRemoveTree(args map[string]any) (string, bool) {
 	if err != nil {
 		return err.Error(), true
 	}
-	if p := cfg.Resolve(meta); !p.AllowsMutation() {
+	if p := cfg.Resolve(meta).AsAsked(argAsked(args)); !p.AllowsMutation() {
 		return p.Deny("removing a supatree"), true
 	}
 	force, _ := args["force"].(bool)

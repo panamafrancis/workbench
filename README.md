@@ -464,11 +464,13 @@ It also cannot notify you directly — nothing inside the sandbox can — so its
 
 What the PM may do unasked is explicit and per supatree, in `.supatree/meta.yml`, with a workspace default in `~/.supatree/config.yml`:
 
-| Level | The PM may |
-| --- | --- |
-| `off` | report only |
-| `nudge` *(default)* | message agents; never create, delete or push |
-| `auto` | create supatrees, open PRs, reap finished ones |
+| Level | Unasked, the PM may | If you ask it to |
+| --- | --- | --- |
+| `off` | report only | report only |
+| `nudge` *(default)* | message agents | create, reap, push |
+| `auto` | create supatrees, open PRs, reap finished ones | as unasked |
+
+**The level governs what the PM does unasked**, which is the only thing about it worth being careful over. Ask it to create a supatree and it creates one: the mutating tools take an `asked` flag, the PM sets it when the request came from you in that turn, and below `auto` that is the difference between doing the thing and reporting that it could. `off` is the exception — report-only means report-only, and asking does not lift it — and a scheduled turn cannot carry the flag at all, because there is nobody in one to have asked. It is the same assertion `remove_tree`'s `force` has always rested on, trusted the same way: autonomy is a consent boundary and the sandbox is the security one, and consent is exactly what an agent is in a position to report.
 
 **Outward-facing actions are a separate axis** (`outward`, off everywhere by default). "Message a local agent" and "comment on a PR" are different kinds of risk — one is private and recoverable, the other is published and permanent — so wanting the PM to create supatrees unattended does not also grant it a public voice.
 

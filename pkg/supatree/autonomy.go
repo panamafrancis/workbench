@@ -12,9 +12,9 @@ type Autonomy string
 const (
 	// AutonomyOff: report only.
 	AutonomyOff Autonomy = "off"
-	// AutonomyNudge: message agents; never create, delete or push.
+	// AutonomyNudge: message agents; create, delete or push only when asked.
 	AutonomyNudge Autonomy = "nudge"
-	// AutonomyAuto: create trees, open PRs, reap finished trees.
+	// AutonomyAuto: create trees, open PRs and reap finished trees unasked.
 	AutonomyAuto Autonomy = "auto"
 )
 
@@ -48,6 +48,22 @@ type Permission struct {
 	// Scheduled marks a turn nobody is watching. A scheduled job caps at
 	// `nudge` however the tree is configured, unless its entry opts in.
 	Scheduled bool
+	// Asked marks an action the human asked for in this turn.
+	//
+	// The level governs what the PM does *unasked* — that is what the word in
+	// meta.yml has always meant — so an explicit request is not the thing it is
+	// there to stop. Without this, `nudge` (the default) refuses the most
+	// ordinary interactive verb there is: you type "create a supatree for this
+	// issue" into the PM's own tab and it tells you about a config key.
+	//
+	// It is the same assertion `remove_tree`'s force already relies on ("pass
+	// force only if the human asked"), and it is trusted the same way: autonomy
+	// is a consent boundary, not a security one — the sandbox is the security
+	// one — and consent is precisely the thing the agent is in a position to
+	// report. It does not lift `off`, which means report only, and it cannot
+	// hold on a Scheduled turn, where there is no human in the turn to have
+	// asked.
+	Asked bool
 }
 
 // Resolve returns the effective permission for a supatree. meta may be nil for
@@ -86,15 +102,40 @@ func (p Permission) AsScheduled(optIn bool) Permission {
 // AllowsMessaging reports whether the PM may nudge agents.
 func (p Permission) AllowsMessaging() bool { return p.Level != AutonomyOff }
 
+// AsAsked returns p as it applies to an action the human asked for in this
+// turn. A copy, like AsScheduled: the PM resolves one Permission per turn and
+// one asked-for action must not silently raise the rest of it.
+func (p Permission) AsAsked(asked bool) Permission {
+	p.Asked = asked
+	return p
+}
+
 // AllowsMutation reports whether the PM may create, remove or push.
-func (p Permission) AllowsMutation() bool { return p.Level == AutonomyAuto }
+//
+// `auto` is standing permission to do it unasked; below that it takes an
+// explicit request, which `off` does not accept and a scheduled turn cannot
+// carry.
+func (p Permission) AllowsMutation() bool {
+	if p.Level == AutonomyOff {
+		return false
+	}
+	return p.Level == AutonomyAuto || (p.Asked && !p.Scheduled)
+}
 
 // Deny renders why an action is not permitted, in terms of the setting the
 // human would change to permit it.
 func (p Permission) Deny(action string) string {
 	where := "`default_autonomy` in ~/.supatree/config.yml"
-	if p.Scheduled {
+	raise := fmt.Sprintf("raise the tree's `autonomy` in .supatree/meta.yml, or %s", where)
+	switch {
+	case p.Scheduled && p.Asked:
+		return fmt.Sprintf("%s is not permitted on a scheduled turn: nobody is in it to have asked for this, so `asked` does not carry here. Report it instead, or set autonomy: auto on the schedule entry", action)
+	case p.Scheduled:
 		return fmt.Sprintf("%s is not permitted on a scheduled turn (autonomy %s; a scheduled job caps at nudge unless its schedule entry sets autonomy: auto)", action, p.Level)
+	case p.Level == AutonomyOff:
+		return fmt.Sprintf("%s is not permitted at autonomy \"off\" — off is report-only and asking does not lift it. To allow it, %s", action, raise)
+	case !p.Asked:
+		return fmt.Sprintf("%s is not permitted at autonomy %q unless the human asked for it. If they did, pass `asked` and repeat the call; to allow it unasked, %s", action, p.Level, raise)
 	}
-	return fmt.Sprintf("%s is not permitted at autonomy %q — raise the tree's `autonomy` in .supatree/meta.yml, or %s", action, p.Level, where)
+	return fmt.Sprintf("%s is not permitted at autonomy %q — %s", action, p.Level, raise)
 }

@@ -63,6 +63,34 @@ func TestPermissionGates(t *testing.T) {
 	}
 }
 
+// The level governs what the PM does *unasked*. Below `auto` an explicit
+// request is what separates "create a supatree" from "decide to create one",
+// and refusing the first is how the default level came to block the most
+// ordinary interactive verb there is.
+func TestAskedLiftsTheLevel(t *testing.T) {
+	nudge := (&Config{}).Resolve(nil)
+	if !nudge.AsAsked(true).AllowsMutation() {
+		t.Error("an asked-for mutation was refused at nudge")
+	}
+	if nudge.AllowsMutation() {
+		t.Error("AsAsked mutated its receiver")
+	}
+	// off is report-only, and that is not something asking lifts.
+	offAsked := (&Config{DefaultAutonomy: string(AutonomyOff)}).Resolve(nil).AsAsked(true)
+	if offAsked.AllowsMutation() {
+		t.Error("asking lifted autonomy off")
+	}
+	// Nobody is in a scheduled turn to have asked, so the claim cannot hold
+	// there however the prompt that fired it was worded.
+	sched := (&Config{}).Resolve(nil).AsScheduled(false).AsAsked(true)
+	if sched.AllowsMutation() {
+		t.Error("a scheduled turn honoured an asked-for mutation")
+	}
+	if d := sched.Deny("creating a supatree"); !strings.Contains(d, "scheduled turn") {
+		t.Errorf("scheduled+asked Deny = %q, want it to explain that nobody asked", d)
+	}
+}
+
 // A turn nobody is watching caps at nudge however the tree is configured,
 // unless the schedule entry explicitly opts in.
 func TestScheduledCapsAtNudge(t *testing.T) {
@@ -92,5 +120,10 @@ func TestDenyNamesTheSetting(t *testing.T) {
 	sched := (&Config{DefaultAutonomy: string(AutonomyAuto)}).Resolve(nil).AsScheduled(false)
 	if d := sched.Deny("creating a supatree"); !strings.Contains(d, "schedule") {
 		t.Errorf("scheduled Deny = %q, want it to explain the scheduled cap", d)
+	}
+	// A refusal the human's own request would have satisfied has to say so, or
+	// the PM reports a config problem instead of asking the obvious question.
+	if d := (&Config{}).Resolve(nil).Deny("creating a supatree"); !strings.Contains(d, "asked") {
+		t.Errorf("unasked Deny = %q, want it to name the asked flag", d)
 	}
 }
