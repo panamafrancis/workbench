@@ -165,10 +165,8 @@ func NewReview(c *Config, wb *config.Config, opts ReviewOptions) (*Instance, *Sy
 	if err != nil {
 		return nil, report, err
 	}
-	// Seed the PR cache from what we already know. Without this a review tree
-	// never fetches at all: FetchTargets skips a member whose branch has no
-	// origin ref unless a PR is already known, and a review member's branch is
-	// tree-local by design, so it has none and never will.
+	// Seed the PR cache from what we already know, so the tree shows its PRs
+	// by number before the first round has run.
 	seedPRCache(byAlias)
 	return inst, report, nil
 }
@@ -232,23 +230,21 @@ func remoteRepo(localPath string) string {
 // seedPRCache writes what the review set already knows into the shared cache,
 // so the first status round resolves by number instead of finding nothing.
 func seedPRCache(byAlias map[string]ReviewRef) {
-	cache := github.NewCache(PRCachePath())
-	_ = config.WithFileLock(PRCacheLockPath(), func() error {
-		_ = cache.Load()
+	_ = github.NewCache(PRCachePath()).Mutate(func(w *github.Writable) error {
 		for _, ref := range byAlias {
 			key := fmt.Sprintf("pr:%s#%d", ref.Repo, ref.Number)
-			if cache.Get(key) != nil {
+			if w.Get(key) != nil {
 				continue
 			}
 			// The number and URL, and deliberately no status: what the seed is
 			// for is making the lookup resolvable, not reporting a state nobody
-			// has fetched. Cache.Rename takes the same line when a branch is
+			// has fetched. Writable.Rename takes the same line when a branch is
 			// renamed — it carries the number across and zeroes FetchedAt — and
-			// a zero timestamp is stale by construction, so the first round
-			// replaces this with a real answer.
-			cache.Set(key, &github.PRInfo{Number: ref.Number, URL: ref.URL, Status: github.PRNone})
+			// an entry that was never verified is looked up for real by the
+			// first round rather than confirmed by a poll.
+			w.Set(key, &github.PRInfo{Number: ref.Number, URL: ref.URL, Status: github.PRNone})
 		}
-		return cache.Save()
+		return nil
 	})
 }
 

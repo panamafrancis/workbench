@@ -113,7 +113,7 @@ func TestFetchTargetsIncludesReviewMembers(t *testing.T) {
 			Review: &ReviewRef{Repo: repoKeystone, Number: 600, URL: "https://github.com/fraud-zero/keystone-api/pull/600"},
 		}},
 	}
-	targets := FetchTargets([]*Instance{inst}, newEmptyCache(t), true, PRStaleAge)
+	targets := FetchTargets([]*Instance{inst})
 	if len(targets) != 1 {
 		t.Fatalf("got %d targets, want 1 — a review member was skipped as if it were an unpushed branch", len(targets))
 	}
@@ -125,23 +125,24 @@ func TestFetchTargetsIncludesReviewMembers(t *testing.T) {
 	}
 }
 
-// An authoring member with no origin ref and no known PR is still skipped: that
-// is the quota discipline this must not weaken.
-func TestFetchTargetsStillSkipsUnpushedAuthoringBranches(t *testing.T) {
+// An authoring member is not pinned: that is what makes github.Sync apply the
+// unpushed-branch skip to it (and match it by head), the quota discipline the
+// review-member exception must not weaken.
+func TestFetchTargetsLeavesAuthoringBranchesUnpinned(t *testing.T) {
 	inst := &Instance{
 		Name:    treeA,
 		Members: []Member{{Alias: aliasKeystone, Path: t.TempDir(), Branch: "st/canberra/keystone", Exists: true}},
 	}
-	if targets := FetchTargets([]*Instance{inst}, newEmptyCache(t), true, PRStaleAge); len(targets) != 0 {
-		t.Errorf("got %d targets, want 0", len(targets))
+	targets := FetchTargets([]*Instance{inst})
+	if len(targets) != 1 {
+		t.Fatalf("got %d targets, want 1", len(targets))
 	}
-}
-
-// newEmptyCache is a cache backed by a path that does not exist, i.e. the state
-// every fetch decision starts from on a fresh tree.
-func newEmptyCache(t *testing.T) *github.Cache {
-	t.Helper()
-	return github.NewCache(filepath.Join(t.TempDir(), "pr-status.json"))
+	if targets[0].Ref.Number != 0 {
+		t.Errorf("authoring target pinned to #%d, want it matched by head", targets[0].Ref.Number)
+	}
+	if targets[0].Key != "st/canberra/keystone" {
+		t.Errorf("target Key = %q, want the branch", targets[0].Key)
+	}
 }
 
 // The refusal has to redirect, not just refuse: the agent that reaches it was

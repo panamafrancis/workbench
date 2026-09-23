@@ -76,3 +76,15 @@ func UnpushedCommits(worktreePath, branch string) (n int, ok bool) {
 	}
 	return n, true
 }
+
+// OriginURL returns the repo's origin remote URL, or "" when it has no origin.
+// Callers derive the GitHub owner/name from it, which is free — asking the API
+// which repo a directory belongs to is not.
+func OriginURL(repoPath string) string {
+	cmd := exec.CommandContext(context.Background(), "git", "-C", repoPath, "remote", "get-url", "origin")
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}

@@ -53,6 +53,11 @@ type PRInfo struct {
 	HeadOID   string    `json:"head_oid,omitempty"`
 	UpdatedAt time.Time `json:"updated_at"`
 	FetchedAt time.Time `json:"fetched_at"`
+	// DetailedAt is when Review and Checks were last read. They come from a
+	// GraphQL lookup, while a repo poll (REST, free when unchanged) refreshes
+	// everything else, so the two age separately: FetchedAt says the PR's
+	// existence and state are current, DetailedAt says its verdicts are.
+	DetailedAt time.Time `json:"detailed_at,omitzero"`
 }
 
 // PRRef is what a previous round recorded about a branch's PR: the number that
@@ -69,8 +74,8 @@ var ErrGHRateLimited = errors.New("gh rate limited")
 // ErrRepoNotFound means GitHub cannot see the repository a worktree's origin
 // names: it was moved or renamed, or the gh account in use has no access.
 // Retrying it on the ordinary schedule changes nothing and spends quota every
-// round, so fetchers back that one branch off (Cache.MarkUnreachable) rather
-// than aborting the batch — every other repo still resolves.
+// round, so Sync backs that repo off (RepoState.UnavailableUntil) rather than
+// aborting the round — every other repo still resolves.
 var ErrRepoNotFound = errors.New("repository not visible to gh")
 
 // ErrPRNotFound means GitHub has no PR with the number we asked about — it was
@@ -102,11 +107,20 @@ type ghCheckNode struct {
 // unmarshal into ghPR, so they must stay in step.
 const prJSONFields = "number,state,title,url,isDraft,reviewDecision,statusCheckRollup,headRefOid,updatedAt"
 
+// lookupTimeout bounds a single gh invocation. The sidebar fetch round holds
+// the PR cache lock across its gh calls, so an unbounded call would not just
+// hang this sidebar — it would block every other tab's round behind the lock
+// until the process died. Mirrors the timeout pkg/zellij puts on its own CLI
+// calls for the same reason.
+const lookupTimeout = 20 * time.Second
+
 // LookupPR finds the PR whose head is branch. GitHub keys this on the current
 // head ref, so it returns nothing for a PR whose head has since moved or whose
-// branch was renamed after it merged — see ResolvePR.
+// branch was renamed after it merged — see resolvePR.
 func LookupPR(repoPath, branch string) (*PRInfo, error) {
-	cmd := exec.CommandContext(context.Background(), "gh", "pr", "list",
+	ctx, cancel := context.WithTimeout(context.Background(), lookupTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "gh", "pr", "list",
 		"--head", branch,
 		"--state", "all",
 		"--json", prJSONFields,
@@ -135,7 +149,9 @@ func LookupPR(repoPath, branch string) (*PRInfo, error) {
 // identity a PR has: it survives branch renames, merges, and deletion of the
 // head branch, all of which make a --head lookup come back empty.
 func LookupPRByNumber(repoPath string, number int) (*PRInfo, error) {
-	cmd := exec.CommandContext(context.Background(), "gh", "pr", "view",
+	ctx, cancel := context.WithTimeout(context.Background(), lookupTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "gh", "pr", "view",
 		strconv.Itoa(number),
 		"--json", prJSONFields,
 	)
@@ -156,42 +172,11 @@ func LookupPRByNumber(repoPath string, number int) (*PRInfo, error) {
 	return pr.toInfo(time.Now()), nil
 }
 
-// prLookup is the seam the resolution policy is tested against; the exported
-// ResolvePR binds it to the real gh calls.
+// prLookup is the seam the resolution policy is tested against; Sync binds it
+// to the real gh calls.
 type prLookup struct {
 	byHead   func(repoPath, branch string) (*PRInfo, error)
 	byNumber func(repoPath string, number int) (*PRInfo, error)
-}
-
-// ResolvePR refreshes the PR status for branch. prev is what a previous round
-// recorded for this branch, zero if nothing is known.
-//
-// The head ref is not the PR's identity. Renaming a local branch only retargets
-// a PR that is still open when the new branch is pushed; a PR that merged or
-// closed first keeps the old head forever, as does one whose push failed or was
-// never made (--push=false). Asking by head alone then returns nothing and the
-// PR silently disappears from the cache. So a head lookup that comes back empty
-// while we hold a number falls back to that number, which resolves the PR
-// wherever its head has ended up.
-//
-// Head first, not number first: a branch may have picked up a *new* PR since
-// the cached number was recorded (a reused worktree name), and that new PR is
-// the one worth reporting. prev carries the URL as well as the number so a
-// number recorded against a different repo (the cache is keyed on branch name
-// alone) can be rejected instead of resolving an unrelated PR.
-func ResolvePR(repoPath, branch string, prev PRRef) (*PRInfo, error) {
-	return resolvePR(prLookup{byHead: LookupPR, byNumber: LookupPRByNumber}, repoPath, branch, prev)
-}
-
-// ResolvePRByNumber looks a PR up by number alone, skipping the head lookup.
-//
-// It exists for callers that know the PR by construction rather than by having
-// found it from a branch — a review tree, whose members sit on a tree-local
-// branch that provably has no PR. Going through ResolvePR would spend a
-// guaranteed-empty `gh pr list --head` on every member of every round, which is
-// exactly the wasted quota the fetch discipline is built to avoid.
-func ResolvePRByNumber(repoPath string, ref PRRef) (*PRInfo, error) {
-	return resolveByNumber(LookupPRByNumber, repoPath, ref)
 }
 
 // resolveByNumber is the shared by-number path: not found means the PR is gone,
@@ -214,6 +199,22 @@ func resolveByNumber(byNumber func(string, int) (*PRInfo, error), repoPath strin
 	return info, nil
 }
 
+// resolvePR refreshes the PR status for branch. prev is what a previous round
+// recorded for this branch, zero if nothing is known.
+//
+// The head ref is not the PR's identity. Renaming a local branch only retargets
+// a PR that is still open when the new branch is pushed; a PR that merged or
+// closed first keeps the old head forever, as does one whose push failed or was
+// never made (--push=false). Asking by head alone then returns nothing and the
+// PR silently disappears from the cache. So a head lookup that comes back empty
+// while we hold a number falls back to that number, which resolves the PR
+// wherever its head has ended up.
+//
+// Head first, not number first: a branch may have picked up a *new* PR since
+// the cached number was recorded (a reused worktree name), and that new PR is
+// the one worth reporting. prev carries the URL as well as the number so a
+// number recorded against a different repo (the cache is keyed on branch name
+// alone) can be rejected instead of resolving an unrelated PR.
 func resolvePR(l prLookup, repoPath, branch string, prev PRRef) (*PRInfo, error) {
 	info, err := l.byHead(repoPath, branch)
 	if err != nil {
@@ -289,15 +290,16 @@ func classifyGHError(err error) error {
 
 func (pr ghPR) toInfo(now time.Time) *PRInfo {
 	return &PRInfo{
-		Number:    pr.Number,
-		Status:    mapStatus(pr.State, pr.IsDraft),
-		Title:     pr.Title,
-		URL:       pr.URL,
-		Review:    mapReview(pr.ReviewDecision),
-		Checks:    rollupChecks(pr.Checks),
-		HeadOID:   pr.HeadRefOid,
-		UpdatedAt: pr.UpdatedAt,
-		FetchedAt: now,
+		Number:     pr.Number,
+		Status:     mapStatus(pr.State, pr.IsDraft),
+		Title:      pr.Title,
+		URL:        pr.URL,
+		Review:     mapReview(pr.ReviewDecision),
+		Checks:     rollupChecks(pr.Checks),
+		HeadOID:    pr.HeadRefOid,
+		UpdatedAt:  pr.UpdatedAt,
+		FetchedAt:  now,
+		DetailedAt: now,
 	}
 }
 

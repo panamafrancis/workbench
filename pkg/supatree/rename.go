@@ -67,12 +67,12 @@ func RenameBranchSlug(c *Config, wb *config.Config, name, newSlug string, push b
 		return undoRenames(err, renamed)
 	}
 
-	prCache := github.NewCache(PRCachePath())
-	_ = prCache.Load()
-	for _, r := range renamed {
-		prCache.Rename(r.oldBranch, r.newBranch)
-	}
-	_ = prCache.Save()
+	_ = github.NewCache(PRCachePath()).Mutate(func(w *github.Writable) error {
+		for _, r := range renamed {
+			w.Rename(r.oldBranch, r.newBranch)
+		}
+		return nil
+	})
 
 	// info.md is generated convenience and the pushes are independent of it, so
 	// a failure to rewrite it is collected rather than returned: bailing here

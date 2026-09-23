@@ -4,153 +4,91 @@ import (
 	"errors"
 	"time"
 
-	"github.com/panamafrancis/workbench/pkg/config"
-	"github.com/panamafrancis/workbench/pkg/git"
 	"github.com/panamafrancis/workbench/pkg/github"
 )
 
-// Default fetch tuning shared by every supatree surface that talks to GitHub
-// (the sidebar and the dashboard). They are deliberately in one place: a second
-// poller with its own numbers is exactly how the shared GraphQL quota drains.
-const (
-	// PRStaleAge bounds how old a cached PR status may be before a fetch is
-	// allowed.
-	PRStaleAge = 10 * time.Minute
-	// RateLimitCooldown suppresses all GitHub fetches after a rate-limit
-	// response. Persisted via the cache so it survives process restarts.
-	RateLimitCooldown = 15 * time.Minute
-)
+// PRStaleAge bounds how old a cached PR status may be before a charged lookup
+// is allowed for it. Shared by every supatree surface that talks to GitHub (the
+// sidebar, the dashboard, the watcher, the MCP tools): a second poller with its
+// own numbers is exactly how the shared quota drains. Repo polls ignore it —
+// they are conditional and free when nothing changed.
+const PRStaleAge = 10 * time.Minute
 
-// FetchTarget is one member worth asking GitHub about.
-type FetchTarget struct {
-	Path   string
-	Branch string
-	// Key is the cache entry this target writes, which is the branch name for
-	// an authoring member and the PR reference for a review one.
-	Key string
-	// Ref pins a review member to its PR. When set, the lookup goes straight to
-	// the number instead of searching for a PR whose head is Branch — there is
-	// none, because the branch is tree-local.
-	Ref github.PRRef
-}
-
-// FetchTargets selects the member branches a fetch round should query. It skips
-// members that are not checked out, statuses that are still fresh (unless
-// forced), and branches with no origin ref that we have never seen a PR for —
-// an unpushed branch cannot have a PR, so asking is a guaranteed-empty round
-// trip and the dominant source of wasted quota.
-func FetchTargets(insts []*Instance, cache *github.Cache, force bool, staleAge time.Duration) []FetchTarget {
-	var targets []FetchTarget
+// FetchTargets lists every checked-out member branch for a fetch round. Which
+// of them actually costs a request is github.Sync's decision, not the caller's:
+// it polls each repo once, skips unpushed branches and fresh entries, and backs
+// off repos gh cannot see.
+//
+// A review member is pinned to its PR, and keyed by it: its branch is
+// tree-local, so it has no origin ref and no PR of its own *by design*, and
+// only the number finds the PR it is reviewing.
+func FetchTargets(insts []*Instance) []github.Target {
+	var targets []github.Target
 	for _, inst := range insts {
-		for _, mem := range inst.Members {
-			if !mem.Exists {
-				continue
+		for i := range inst.Members {
+			if inst.Members[i].Exists {
+				targets = append(targets, MemberTarget(&inst.Members[i]))
 			}
-			key := mem.CacheKey()
-			if !force && !cache.IsStale(key, staleAge) {
-				continue
-			}
-			// A review member's PR is known by construction, so the
-			// unpushed-branch skip below must not apply to it: its branch is
-			// tree-local and has no origin ref *by design*, and skipping on
-			// that would mean a review tree never asked about its own PRs.
-			if mem.Review != nil {
-				targets = append(targets, FetchTarget{
-					Path:   mem.Path,
-					Branch: mem.Branch,
-					Key:    key,
-					Ref:    github.PRRef{Number: mem.Review.Number, URL: mem.Review.URL},
-				})
-				continue
-			}
-			if !cache.KnowsPR(key) && !git.HasRemoteBranch(mem.Path, mem.Branch) {
-				continue
-			}
-			targets = append(targets, FetchTarget{Path: mem.Path, Branch: mem.Branch, Key: key})
 		}
 	}
 	return targets
 }
 
 // FetchOutcome reports what a fetch round did. Skipped means another process
-// owned the round (the cross-process try-lock was busy) and this one ceded —
-// distinct from an error, and from a successful but empty round.
+// owned the round (the cache lock was busy) and this one ceded — distinct from
+// an error, and from a successful but empty round. Deferred counts lookups held
+// back to stay above the shared rate-limit reserve, so a missing status has a
+// reason to show.
 type FetchOutcome struct {
-	Skipped bool
-	Err     error
+	Skipped  bool
+	Err      error
+	Deferred int
 }
 
-// FetchPRs looks up each target and writes the results to the cache. The gh
-// calls run under a cross-process try-lock (PRCacheLockPath): with one sidebar
-// per Zellij tab plus a dashboard all polling independently, only the process
-// that wins the lock fetches each round while the rest cede and pick up the
-// cache it writes. That, not per-process throttling alone, is what stops a
-// burst of concurrent gh calls from tripping GitHub's rate limit. A rate-limit
-// response arms a cooldown that survives restarts.
+// FetchPRs brings the cache up to date for targets. The round runs inside
+// Cache.TryMutate: with one sidebar per Zellij tab plus a dashboard and a
+// watcher all polling independently, only the process that wins the cache lock
+// fetches each round while the rest cede and pick up what it writes. Because
+// the mutation applies to the cache as it is on disk, a round can neither lose
+// a peer's statuses nor disarm a cooldown a peer armed.
 //
-// The caller is expected to have already re-read the cache and checked
-// InBackoff before building targets; FetchPRs re-checks both under the lock,
-// since a peer may have armed a backoff while this round queued.
-func FetchPRs(targets []FetchTarget, cache *github.Cache, force bool, staleAge time.Duration) FetchOutcome {
+// force re-polls unconditionally and ignores staleness, for a person waiting
+// on an explicit refresh; it still blocks on the lock rather than ceding.
+func FetchPRs(targets []github.Target, cache *github.Cache, force bool) FetchOutcome {
 	if len(targets) == 0 {
 		return FetchOutcome{}
 	}
-	outcome := FetchOutcome{Skipped: true}
-	lockErr := config.TryFileLock(PRCacheLockPath(), func() error {
-		// Under the lock, re-read the cache: while we queued to build targets
-		// another process may have populated statuses or armed a backoff.
-		_ = cache.Load()
-		if cache.InBackoff(time.Now()) {
-			return nil
-		}
-		var lastErr error
-		for _, t := range targets {
-			// A peer that just held the lock may have refreshed this entry;
-			// don't re-fetch what is already fresh.
-			if !force && !cache.IsStale(t.Key, staleAge) {
-				continue
-			}
-			info, err := resolveTarget(t, cache)
-			if err != nil {
-				lastErr = err
-				// Report it this round, then leave this branch alone: retrying
-				// a repository gh cannot see only spends quota and fills the
-				// watcher log once per round.
-				if github.IsRepoNotFound(err) {
-					cache.MarkUnreachable(t.Key, time.Now())
-					continue
-				}
-				if github.IsPermanentError(err) || github.IsRateLimited(err) {
-					if github.IsRateLimited(err) {
-						cache.SetRetryAfter(time.Now().Add(RateLimitCooldown))
-					}
-					_ = cache.Save()
-					outcome = FetchOutcome{Err: err}
-					return nil
-				}
-				continue
-			}
-			cache.Set(t.Key, info)
-		}
-		_ = cache.Save()
-		outcome = FetchOutcome{Err: lastErr}
+	var report github.SyncReport
+	round := func(w *github.Writable) error {
+		report = github.Sync(w, targets, github.SyncOptions{MaxAge: PRStaleAge, Force: force})
 		return nil
-	})
-	if errors.Is(lockErr, config.ErrLockBusy) {
-		// Another process owns this round; cede and pick up the cache it writes.
+	}
+	var err error
+	if force {
+		err = cache.Mutate(round)
+	} else {
+		err = cache.TryMutate(round)
+	}
+	if errors.Is(err, github.ErrLockBusy) {
 		return FetchOutcome{Skipped: true}
 	}
-	if lockErr != nil {
-		return FetchOutcome{Err: lockErr}
+	if err != nil {
+		return FetchOutcome{Err: err}
 	}
-	return outcome
+	if report.Paused && report.Err == nil {
+		// The core bucket is cooling down; report it the way a fresh rate-limit
+		// response would, so every surface shows the same hint.
+		return FetchOutcome{Err: github.ErrGHRateLimited, Deferred: report.Deferred}
+	}
+	return FetchOutcome{Err: report.Err, Deferred: report.Deferred}
 }
 
-// resolveTarget looks one target up, by number when it is pinned to a PR and by
-// branch head otherwise.
-func resolveTarget(t FetchTarget, cache *github.Cache) (*github.PRInfo, error) {
-	if t.Ref.Number != 0 {
-		return github.ResolvePRByNumber(t.Path, t.Ref)
+// MemberTarget is the fetch target for one member: keyed by its cache key, and
+// pinned to its PR when it is a review member.
+func MemberTarget(m *Member) github.Target {
+	t := github.Target{RepoPath: m.Path, Branch: m.Branch, Key: m.CacheKey()}
+	if m.Review != nil {
+		t.Ref = github.PRRef{Number: m.Review.Number, URL: m.Review.URL}
 	}
-	return github.ResolvePR(t.Path, t.Branch, cache.Ref(t.Key))
+	return t
 }

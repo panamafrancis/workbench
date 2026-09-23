@@ -7,93 +7,251 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/panamafrancis/workbench/pkg/config"
 )
 
 type cacheFile struct {
-	Entries     map[string]*PRInfo   `json:"entries"`
-	RetryAfter  time.Time            `json:"retry_after,omitzero"`
-	Unreachable map[string]time.Time `json:"unreachable,omitempty"`
+	Entries map[string]*PRInfo `json:"entries"`
+	// Repos keys a repo ("owner/name") to what we remember about its last
+	// PR-list poll.
+	Repos map[string]RepoState `json:"repos,omitempty"`
+	// Budget is the most recent rate-limit observation any process made, shared
+	// so every sidebar throttles against one picture rather than its own.
+	Budget Budget `json:"budget,omitzero"`
+	// RetryAfter holds one cooldown deadline per rate-limit bucket. It is keyed
+	// because the buckets run out independently: an exhausted graphql bucket
+	// must not pause the conditional core-bucket polls, which cost nothing and
+	// are the main way status stays current. The key is deliberately a new field
+	// name — an older cache's scalar retry_after is simply ignored, and a
+	// forgotten cooldown of at most a few minutes is harmless.
+	RetryAfter map[string]time.Time `json:"retry_after_by_resource,omitempty"`
 }
+
+// RepoState is what a poll of one repo leaves behind for the next round. The
+// ETag is what makes the next poll free when nothing changed; PolledAt is how a
+// caller decides whether one page of results still covers everything that has
+// happened since it last looked.
+type RepoState struct {
+	ETag     string    `json:"etag,omitempty"`
+	PolledAt time.Time `json:"polled_at,omitzero"`
+	// UnavailableUntil backs off a repo the authenticated account cannot see
+	// (private to another org, renamed, deleted, or reached through the wrong gh
+	// account). Polling it again would fail again, once per round, so it is
+	// skipped until the window passes or a forced refresh asks anyway.
+	UnavailableUntil time.Time `json:"unavailable_until,omitzero"`
+	// Truncated records whether the last listing was only the first page. A 304
+	// says nothing has changed, not that the listing covered the repo's whole
+	// history, so this has to be remembered across rounds — without it a
+	// not-modified poll would read as proof that a branch has no PR.
+	Truncated bool `json:"truncated,omitempty"`
+}
+
+// Cache is a process-local snapshot of the on-disk PR status cache, used by the
+// render path (sidebars read it every tick) and refreshed with Load.
+//
+// The cache is shared by every workbench and supatree process on the machine —
+// a sidebar per Zellij tab, the CLI, the MCP server. It is therefore read-only
+// here: the snapshot can go stale but never diverge destructively, because the
+// only way to change the file is Mutate/TryMutate, which re-read it under an
+// advisory lock. That matters more than it sounds: a whole-file write from a
+// stale snapshot silently reverts every entry another process wrote since this
+// one loaded, including the rate-limit cooldown, which is how a single
+// `pr_status` call used to un-pause every sidebar on a drained quota.
+// Unavailable reports whether the repo is still backed off as of now.
+func (s RepoState) Unavailable(now time.Time) bool { return now.Before(s.UnavailableUntil) }
+
+// UnreachableBackoff is how long a repo gh cannot see is left alone. Long,
+// because the fix is a human changing a remote or an account, and short enough
+// that a fixed remote is noticed the same day.
+const UnreachableBackoff = 6 * time.Hour
 
 type Cache struct {
 	path       string
 	entries    map[string]*PRInfo
-	retryAfter time.Time
-	// unreachable maps a key to when its repository may next be tried. It is
-	// persisted with the entries, because the pollers that would otherwise
-	// retry it every round are separate processes.
-	unreachable map[string]time.Time
-	mu          sync.RWMutex
+	repos      map[string]RepoState
+	budget     Budget
+	retryAfter map[string]time.Time
+	mu         sync.RWMutex
 }
+
+// ErrLockBusy is returned by TryMutate when another process holds the cache
+// lock, so a caller can cede its round instead of blocking.
+var ErrLockBusy = config.ErrLockBusy
 
 func NewCache(path string) *Cache {
 	return &Cache{
-		path:        path,
-		entries:     make(map[string]*PRInfo),
-		unreachable: make(map[string]time.Time),
+		path:       path,
+		entries:    make(map[string]*PRInfo),
+		repos:      make(map[string]RepoState),
+		retryAfter: make(map[string]time.Time),
 	}
 }
 
-// UnreachableBackoff is how long a branch whose repository gh cannot see is
-// left alone. Long, because the fix is a human changing a remote or an
-// account, and short enough that a fixed remote is noticed the same day.
-const UnreachableBackoff = 6 * time.Hour
-
-// MarkUnreachable backs key off for UnreachableBackoff: its repository is not
-// visible to gh, so IsStale reports it fresh until the window passes. A forced
-// refresh bypasses IsStale and still tries.
-func (c *Cache) MarkUnreachable(key string, now time.Time) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	for k, until := range c.unreachable {
-		if !now.Before(until) {
-			delete(c.unreachable, k)
-		}
-	}
-	c.unreachable[key] = now.Add(UnreachableBackoff)
-}
+// lockPath is the advisory lock serializing cache mutations across processes.
+// Deriving it from the cache path keeps the two in step by construction; no
+// caller needs to know (or agree on) the convention.
+func (c *Cache) lockPath() string { return c.path + ".lock" }
 
 func (c *Cache) Load() error {
-	data, err := os.ReadFile(c.path)
-	if os.IsNotExist(err) {
-		return nil
-	}
+	f, err := readCacheFile(c.path)
 	if err != nil {
-		return fmt.Errorf("read pr cache: %w", err)
-	}
-	var f cacheFile
-	if err := json.Unmarshal(data, &f); err != nil {
-		return fmt.Errorf("parse pr cache: %w", err)
+		return err
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if f.Entries != nil {
-		c.entries = f.Entries
-	}
+	c.entries = f.Entries
+	c.repos = f.Repos
+	c.budget = f.Budget
 	c.retryAfter = f.RetryAfter
-	if f.Unreachable != nil {
-		c.unreachable = f.Unreachable
-	}
 	return nil
 }
 
-func (c *Cache) Save() error {
-	c.mu.RLock()
-	f := cacheFile{Entries: c.entries, RetryAfter: c.retryAfter, Unreachable: c.unreachable}
+// Writable is the mutable view of the cache passed to Mutate's callback. It is
+// loaded from disk while the lock is held, so mutations always apply to the
+// newest state: nothing another process wrote can be lost, and nothing it armed
+// can be cleared.
+type Writable struct {
+	entries    map[string]*PRInfo
+	repos      map[string]RepoState
+	budget     Budget
+	retryAfter map[string]time.Time
+}
+
+// Mutate runs fn against the current on-disk cache while holding the cache
+// lock, then writes the result atomically. It is the only way to change the
+// cache — there is deliberately no exported Save, so a read-modify-write from a
+// stale snapshot cannot be expressed.
+//
+// This process's snapshot is refreshed to the written state on success, so a
+// caller that also renders from the cache sees its own writes immediately.
+func (c *Cache) Mutate(fn func(*Writable) error) error {
+	return c.mutate(config.WithFileLock, fn)
+}
+
+// TryMutate behaves like Mutate but takes the lock non-blockingly, returning
+// ErrLockBusy without running fn when another process holds it. Independent
+// pollers (one sidebar per Zellij tab) use this to elect a single worker per
+// round: the winner fetches and writes, the rest cede and pick up its results.
+// fn may therefore be long-running — it holds the lock for the whole round.
+func (c *Cache) TryMutate(fn func(*Writable) error) error {
+	return c.mutate(config.TryFileLock, fn)
+}
+
+func (c *Cache) mutate(lock func(string, func() error) error, fn func(*Writable) error) error {
+	return lock(c.lockPath(), func() error {
+		f, err := readCacheFile(c.path)
+		if err != nil {
+			return err
+		}
+		w := &Writable{entries: f.Entries, repos: f.Repos, budget: f.Budget, retryAfter: f.RetryAfter}
+		if err := fn(w); err != nil {
+			return err
+		}
+		if err := writeCacheFile(c.path, cacheFile{
+			Entries:    w.entries,
+			Repos:      w.repos,
+			Budget:     w.budget,
+			RetryAfter: w.retryAfter,
+		}); err != nil {
+			return err
+		}
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		c.entries = w.entries
+		c.repos = w.repos
+		c.budget = w.budget
+		c.retryAfter = w.retryAfter
+		return nil
+	})
+}
+
+func readCacheFile(path string) (cacheFile, error) {
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return cacheFile{
+			Entries:    make(map[string]*PRInfo),
+			Repos:      make(map[string]RepoState),
+			RetryAfter: make(map[string]time.Time),
+		}, nil
+	}
+	if err != nil {
+		return cacheFile{}, fmt.Errorf("read pr cache: %w", err)
+	}
+	var f cacheFile
+	if err := json.Unmarshal(data, &f); err != nil {
+		return cacheFile{}, fmt.Errorf("parse pr cache: %w", err)
+	}
+	if f.Entries == nil {
+		f.Entries = make(map[string]*PRInfo)
+	}
+	if f.Repos == nil {
+		f.Repos = make(map[string]RepoState)
+	}
+	if f.RetryAfter == nil {
+		f.RetryAfter = make(map[string]time.Time)
+	}
+	return f, nil
+}
+
+func writeCacheFile(path string, f cacheFile) error {
 	data, err := json.MarshalIndent(f, "", "  ")
-	c.mu.RUnlock()
 	if err != nil {
 		return fmt.Errorf("marshal pr cache: %w", err)
 	}
-
-	if err := os.MkdirAll(filepath.Dir(c.path), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return fmt.Errorf("create cache dir: %w", err)
 	}
-	tmp := c.path + ".tmp"
+	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, data, 0644); err != nil {
 		return fmt.Errorf("write pr cache: %w", err)
 	}
-	return os.Rename(tmp, c.path)
+	return os.Rename(tmp, path)
+}
+
+// RepoState returns what the last poll of repo left behind, zero when the repo
+// has never been polled.
+func (c *Cache) RepoState(repo string) RepoState {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.repos[repo]
+}
+
+func (w *Writable) RepoState(repo string) RepoState { return w.repos[repo] }
+
+func (w *Writable) SetRepoState(repo string, state RepoState) { w.repos[repo] = state }
+
+// Budget is the most recent rate-limit observation, zero when none was made.
+func (c *Cache) Budget() Budget {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.budget
+}
+
+func (w *Writable) Budget() Budget { return w.budget }
+
+// SetBudget records a rate-limit observation, keeping the newest one. Ordering
+// by observation time rather than by arrival matters because rounds overlap:
+// a slow request must not overwrite a fresher reading with its stale one.
+func (w *Writable) SetBudget(b Budget) {
+	if !b.Known() {
+		return
+	}
+	if w.budget.Known() && w.budget.ObservedAt.After(b.ObservedAt) {
+		return
+	}
+	w.budget = b
+}
+
+// Touch marks an entry as confirmed current as of at, without changing what it
+// says. A repo poll that comes back without a given branch has established that
+// the branch's PR did not change — which is just as good as re-fetching it, and
+// free. Without this the entry would age out and be re-fetched one branch at a
+// time, which is the cost this design exists to avoid.
+func (w *Writable) Touch(branch string, at time.Time) {
+	if info, ok := w.entries[branch]; ok {
+		info.FetchedAt = at
+	}
 }
 
 func (c *Cache) Get(branch string) *PRInfo {
@@ -102,13 +260,13 @@ func (c *Cache) Get(branch string) *PRInfo {
 	return c.entries[branch]
 }
 
-func (c *Cache) Set(branch string, info *PRInfo) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.entries[branch] = info
-	// It resolved, so whatever made it unreachable has been fixed.
-	delete(c.unreachable, branch)
-}
+// Get reads an entry from the mutation's view of the cache, which includes both
+// what other processes have written and this mutation's own changes so far.
+func (w *Writable) Get(branch string) *PRInfo { return w.entries[branch] }
+
+func (w *Writable) Set(branch string, info *PRInfo) { w.entries[branch] = info }
+
+func (w *Writable) Delete(branch string) { delete(w.entries, branch) }
 
 // Rename moves a cached entry to a new branch key after a local branch rename.
 // The PR itself does not necessarily move: GitHub keys a PR on its head ref,
@@ -117,44 +275,61 @@ func (c *Cache) Set(branch string, info *PRInfo) {
 // one whose push failed or was never made (--push=false).
 //
 // So the entry keeps its Number — the identity that survives a rename, and what
-// ResolvePR uses to find the PR again — but its FetchedAt is zeroed. That
-// status was verified against a different key and must not be trusted (or held
-// for TerminalMaxAge) until the next round re-verifies it under the new one.
-func (c *Cache) Rename(oldBranch, newBranch string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	info, ok := c.entries[oldBranch]
+// Sync matches on when the head no longer does — but its FetchedAt is zeroed.
+// That status was verified against a different key and must not be trusted (or
+// held for TerminalMaxAge) until the next round re-verifies it under the new one.
+func (w *Writable) Rename(oldBranch, newBranch string) {
+	info, ok := w.entries[oldBranch]
+	delete(w.entries, oldBranch)
 	if !ok || info == nil {
-		delete(c.entries, oldBranch)
 		return
 	}
 	moved := *info
 	moved.FetchedAt = time.Time{}
-	c.entries[newBranch] = &moved
-	delete(c.entries, oldBranch)
+	moved.DetailedAt = time.Time{}
+	w.entries[newBranch] = &moved
 }
 
-func (c *Cache) Delete(branch string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	delete(c.entries, branch)
+// SetRetryAfter records a deadline before which no request against resource
+// should be attempted, so a rate-limit response pauses every process rather
+// than just the one that hit it. Pass ResourceAll for a limit that applies to
+// every request (the secondary/burst limit).
+//
+// It only ever moves a deadline later: a mutation that started before a peer
+// armed a longer cooldown must not shorten it, and there is no way to clear one
+// early — the window simply expires.
+func (w *Writable) SetRetryAfter(resource string, t time.Time) {
+	if t.After(w.retryAfter[resource]) {
+		w.retryAfter[resource] = t
+	}
 }
 
-// SetRetryAfter records a timestamp before which no GitHub fetches should be
-// attempted. It persists via Save so the backoff survives process restarts —
-// important for the sidebar's restart loop.
-func (c *Cache) SetRetryAfter(t time.Time) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.retryAfter = t
-}
-
-// InBackoff reports whether the fetch backoff window (set by SetRetryAfter) is
-// still active as of now.
-func (c *Cache) InBackoff(now time.Time) bool {
+// InBackoff reports whether requests against resource are currently paused,
+// either by that bucket's own cooldown or by an account-wide one.
+func (c *Cache) InBackoff(resource string, now time.Time) bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return now.Before(c.retryAfter)
+	return inBackoff(c.retryAfter, resource, now)
+}
+
+func (w *Writable) InBackoff(resource string, now time.Time) bool {
+	return inBackoff(w.retryAfter, resource, now)
+}
+
+func inBackoff(deadlines map[string]time.Time, resource string, now time.Time) bool {
+	return now.Before(deadlines[resource]) || now.Before(deadlines[ResourceAll])
+}
+
+// RetryAfter is the deadline that currently pauses resource, zero when nothing
+// does. Callers use it to report when fetches resume.
+func (c *Cache) RetryAfter(resource string) time.Time {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	deadline := c.retryAfter[resource]
+	if all := c.retryAfter[ResourceAll]; all.After(deadline) {
+		return all
+	}
+	return deadline
 }
 
 // TerminalMaxAge is the floor on how long a merged or closed PR status is
@@ -174,18 +349,31 @@ func isTerminal(s PRStatus) bool {
 // when the local repo has no remote-tracking ref for its branch (e.g. it was
 // pushed from another clone and never fetched here).
 func (c *Cache) KnowsPR(branch string) bool {
-	return c.Ref(branch).Number != 0
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return knowsPR(c.entries, branch)
+}
+
+func (w *Writable) KnowsPR(branch string) bool { return knowsPR(w.entries, branch) }
+
+func knowsPR(entries map[string]*PRInfo, branch string) bool {
+	return refOf(entries, branch).Number != 0
 }
 
 // Ref returns what the cache knows about branch's PR — its number and URL, both
-// zero if the branch is uncached or names no PR. Fetchers hand it to
-// github.ResolvePR so a PR whose head ref has moved away from branch can still
-// be resolved by its stable number, and so a number recorded against a
-// different repo is not mistaken for this one's.
+// zero if the branch is uncached or names no PR. The number is what finds a PR
+// again after its head ref has moved away from branch, and the URL keeps a
+// number recorded against one repo from resolving an unrelated PR in another.
 func (c *Cache) Ref(branch string) PRRef {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	if info := c.entries[branch]; info != nil {
+	return refOf(c.entries, branch)
+}
+
+func (w *Writable) Ref(branch string) PRRef { return refOf(w.entries, branch) }
+
+func refOf(entries map[string]*PRInfo, branch string) PRRef {
+	if info := entries[branch]; info != nil {
 		return PRRef{Number: info.Number, URL: info.URL}
 	}
 	return PRRef{}
@@ -194,10 +382,15 @@ func (c *Cache) Ref(branch string) PRRef {
 func (c *Cache) IsStale(branch string, maxAge time.Duration) bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	if until, ok := c.unreachable[branch]; ok && time.Now().Before(until) {
-		return false
-	}
-	info, ok := c.entries[branch]
+	return isStale(c.entries, branch, maxAge)
+}
+
+func (w *Writable) IsStale(branch string, maxAge time.Duration) bool {
+	return isStale(w.entries, branch, maxAge)
+}
+
+func isStale(entries map[string]*PRInfo, branch string, maxAge time.Duration) bool {
+	info, ok := entries[branch]
 	if !ok {
 		return true
 	}
