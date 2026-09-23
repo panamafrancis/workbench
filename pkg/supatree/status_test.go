@@ -22,7 +22,7 @@ func TestMemberStateLocal(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := memberState(tc.local, nil); got != tc.want {
+			if got := memberState(tc.local, nil, tc.local.CheckedOut, ModeAuthoring, false); got != tc.want {
 				t.Errorf("memberState = %q, want %q", got, tc.want)
 			}
 		})
@@ -47,7 +47,7 @@ func TestMemberStatePR(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			pr := tc.pr
-			if got := memberState(local, &pr); got != tc.want {
+			if got := memberState(local, &pr, local.CheckedOut, ModeAuthoring, false); got != tc.want {
 				t.Errorf("memberState = %q, want %q", got, tc.want)
 			}
 		})
@@ -58,7 +58,8 @@ func TestMemberStatePR(t *testing.T) {
 // the more advanced fact, and the dirt shows up as the tree's dirty flag.
 func TestMemberStatePRWinsOverDirt(t *testing.T) {
 	pr := github.PRInfo{Status: github.PROpen, Review: github.ReviewApproved}
-	if got := memberState(MemberLocal{Exists: true, Dirty: true, HasRemote: true}, &pr); got != MemberApproved {
+	local := MemberLocal{Exists: true, Dirty: true, HasRemote: true}
+	if got := memberState(local, &pr, local.CheckedOut, ModeAuthoring, false); got != MemberApproved {
 		t.Errorf("memberState = %q, want %q", got, MemberApproved)
 	}
 }
@@ -80,7 +81,8 @@ func treeWith(states ...MemberState) *TreeStatus {
 			ms.PR = &github.PRInfo{Status: github.PRMerged}
 		case MemberClosed:
 			ms.PR = &github.PRInfo{Status: github.PRClosed}
-		case MemberAbsent, MemberIdle, MemberWIP, MemberPushed:
+		case MemberAbsent, MemberIdle, MemberWIP, MemberPushed,
+			MemberInReview, MemberForeign:
 		}
 		t.Members = append(t.Members, ms)
 	}
@@ -199,5 +201,136 @@ func TestTreeOrderPutsActionableFirst(t *testing.T) {
 	}
 	if treeOrder(TreeStatus{State: TreeDone}) <= treeOrder(TreeStatus{State: TreeWIP}) {
 		t.Error("done trees must sort last")
+	}
+}
+
+// A member sitting on a branch its tree does not own is reported as such, in
+// either mode and whatever the local git numbers say. Before this, a manual
+// `gh pr checkout` in a member worktree read as ordinary work in progress —
+// which is also the state teardown would have deleted the branch from.
+func TestMemberStateForeignBranch(t *testing.T) {
+	local := MemberLocal{Exists: true, CheckedOut: "feat/someone-elses-work", Ahead: 7}
+	for _, mode := range []Mode{ModeAuthoring, ModeReviewing} {
+		if got := memberState(local, nil, "st/canberra/keystone", mode, false); got != MemberForeign {
+			t.Errorf("mode %q: memberState = %q, want %q", mode, got, MemberForeign)
+		}
+	}
+}
+
+// A review tree's members have no local ladder to climb: the commits are the
+// author's. Until the PR status lands they are simply under review, never `wip`.
+func TestMemberStateReviewingHasNoLocalLadder(t *testing.T) {
+	const branch = "review/refunds/keystone"
+	tests := []struct {
+		name  string
+		local MemberLocal
+	}{
+		{"checked out at the head", MemberLocal{Exists: true, CheckedOut: branch, Ahead: 12}},
+		{"with review notes uncommitted", MemberLocal{Exists: true, CheckedOut: branch, Ahead: 12, Dirty: true}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := memberState(tc.local, nil, branch, ModeReviewing, true); got != MemberInReview {
+				t.Errorf("memberState = %q, want %q", got, MemberInReview)
+			}
+		})
+	}
+}
+
+// The PR still decides in a review tree — it is the author's PR, and tracking it
+// is the whole point.
+func TestMemberStateReviewingPRStillDecides(t *testing.T) {
+	const branch = "review/refunds/keystone"
+	local := MemberLocal{Exists: true, CheckedOut: branch}
+	pr := github.PRInfo{Status: github.PROpen, Review: github.ReviewChanges}
+	if got := memberState(local, &pr, branch, ModeReviewing, true); got != MemberChanges {
+		t.Errorf("memberState = %q, want %q", got, MemberChanges)
+	}
+}
+
+// Blocked means "you must act". On a review tree, requested changes are your own
+// review landing and failing checks are the author's problem — so neither may
+// raise the flag that every attention-ordered surface sorts on.
+func TestRollupReviewingIsNeverBlocked(t *testing.T) {
+	mk := func(mode Mode) TreeStatus {
+		return TreeStatus{
+			Mode: mode,
+			Members: []MemberStatus{{
+				Alias: aliasKeystone,
+				State: MemberChanges,
+				PR:    &github.PRInfo{Status: github.PROpen, Review: github.ReviewChanges, Checks: github.CheckFailing},
+			}},
+		}
+	}
+	authoring := mk(ModeAuthoring)
+	rollup(&authoring, time.Now(), DefaultStaleAfter)
+	if !authoring.Blocked {
+		t.Error("authoring tree with changes requested and failing checks should be blocked")
+	}
+	reviewing := mk(ModeReviewing)
+	rollup(&reviewing, time.Now(), DefaultStaleAfter)
+	if reviewing.Blocked {
+		t.Error("review tree must not be blocked by the author's failing checks or by its own review")
+	}
+}
+
+// `done` means "safe to reap". The author merging is their milestone, not the
+// reviewer's, so a review tree must never reach it — nothing should reap a tree
+// whose replies you have not read.
+func TestRollupReviewingNeverDone(t *testing.T) {
+	t.Run("authoring reaches done", func(t *testing.T) {
+		tree := TreeStatus{Members: []MemberStatus{{State: MemberMerged, PR: &github.PRInfo{Status: github.PRMerged}}}}
+		rollup(&tree, time.Now(), DefaultStaleAfter)
+		if tree.State != TreeDone {
+			t.Errorf("State = %q, want %q", tree.State, TreeDone)
+		}
+	})
+	// A review tree reaches its own terminal state instead. It is reapable —
+	// every PR has landed, so there is nothing left to review — but it is never
+	// `done`, because `done` is what the ledger counts as work you shipped.
+	t.Run("reviewing reaches reviewed, not done", func(t *testing.T) {
+		tree := TreeStatus{Mode: ModeReviewing, Members: []MemberStatus{{State: MemberMerged, PR: &github.PRInfo{Status: github.PRMerged}}}}
+		rollup(&tree, time.Now(), DefaultStaleAfter)
+		if tree.State == TreeDone {
+			t.Error("review tree reached done on the author's merge")
+		}
+		if tree.State != TreeReviewed {
+			t.Errorf("State = %q, want %q", tree.State, TreeReviewed)
+		}
+	})
+}
+
+// A foreign member is a fault to surface, not a rung on the ladder.
+func TestRollupFlagsForeign(t *testing.T) {
+	tree := TreeStatus{Members: []MemberStatus{
+		{Alias: aliasKeystone, State: MemberForeign},
+		{Alias: aliasAdmin, State: MemberIdle},
+	}}
+	rollup(&tree, time.Now(), DefaultStaleAfter)
+	if !tree.Foreign {
+		t.Error("tree with a foreign member did not set Foreign")
+	}
+}
+
+// A review tree whose pull requests have all landed is finished and reapable —
+// but under its own name, so the ledger never counts someone else's merge as
+// work this tree shipped.
+func TestRollupReviewedIsReapableButNotDone(t *testing.T) {
+	tree := TreeStatus{Mode: ModeReviewing, Members: []MemberStatus{
+		{Alias: aliasKeystone, State: MemberMerged, PR: &github.PRInfo{Status: github.PRMerged}},
+		{Alias: aliasAdmin, State: MemberClosed, PR: &github.PRInfo{Status: github.PRClosed}},
+	}}
+	rollup(&tree, time.Now(), DefaultStaleAfter)
+	if tree.State != TreeReviewed {
+		t.Errorf("State = %q, want %q", tree.State, TreeReviewed)
+	}
+	if tree.State == TreeDone {
+		t.Error("a review tree must never report done")
+	}
+	if !tree.Reap() {
+		t.Error("a finished review tree should be reapable")
+	}
+	if tree.Stale {
+		t.Error("a finished tree is not stale, it is finished")
 	}
 }

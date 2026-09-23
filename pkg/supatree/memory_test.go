@@ -116,3 +116,30 @@ func TestMemorySummaryIsCapped(t *testing.T) {
 		t.Error("MemorySummary on a stack with no notes should be empty, not a heading with nothing under it")
 	}
 }
+
+// A merge on a review tree is the author's. Counting it as shipped work would
+// make "what did we ship this month" answer with other people's changes.
+func TestHistorySeparatesReviewFromShipped(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	now := time.Now().UTC()
+	if err := AppendEvents([]Event{
+		{At: now, Kind: EventMerged, Tree: "ours", Member: "keystone", PR: 1, Text: "merged"},
+		{At: now, Kind: EventMerged, Tree: "theirs", Mode: ModeReviewing, Member: "keystone", PR: 600, Text: "merged"},
+	}); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	entries, err := History(time.Time{}, "")
+	if err != nil {
+		t.Fatalf("history: %v", err)
+	}
+	byTree := map[string]HistoryEntry{}
+	for _, e := range entries {
+		byTree[e.Tree] = e
+	}
+	if got := byTree["ours"]; got.Merged != 1 || got.Reviewed != 0 || got.Reviewing {
+		t.Errorf("authoring tree = %+v, want Merged 1 and no review counters", got)
+	}
+	if got := byTree["theirs"]; got.Merged != 0 || got.Reviewed != 1 || !got.Reviewing {
+		t.Errorf("review tree = %+v, want Reviewed 1 and Merged 0 — its merge was the author's", got)
+	}
+}

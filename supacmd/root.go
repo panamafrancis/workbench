@@ -70,6 +70,7 @@ func Execute() {
 func init() {
 	rootCmd.AddCommand(scaffoldCmd)
 	rootCmd.AddCommand(newCmd)
+	rootCmd.AddCommand(reviewCmd)
 	rootCmd.AddCommand(syncCmd)
 	rootCmd.AddCommand(lsCmd)
 	rootCmd.AddCommand(statusCmd)

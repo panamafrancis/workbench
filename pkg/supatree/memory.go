@@ -71,6 +71,13 @@ type HistoryEntry struct {
 	Last   time.Time
 	Merged int
 	Closed int
+	// Reviewing marks a review tree: its pull requests were someone else's, so
+	// nothing it touched is work this tree shipped.
+	Reviewing bool
+	// Reviewed counts pull requests that landed while under review here. It is
+	// deliberately not added to Merged — "what shipped" and "what I reviewed"
+	// are different questions and summing them answers neither.
+	Reviewed int
 }
 
 // History reconstructs what has shipped from the event ledger.
@@ -101,14 +108,20 @@ func History(since time.Time, repo string) ([]HistoryEntry, error) {
 		if ev.PR > 0 && !containsInt(e.PRs, ev.PR) {
 			e.PRs = append(e.PRs, ev.PR)
 		}
-		switch ev.Kind {
-		case EventMerged:
+		// A merge on a review tree is the *author's*; counting it here would
+		// credit this tree with shipping someone else's change. Reviews are
+		// counted on their own axis instead, which is also the honest answer to
+		// "what did I review this month".
+		switch {
+		case ev.Mode == ModeReviewing:
+			e.Reviewing = true
+			if ev.Kind == EventMerged || ev.Kind == EventClosed {
+				e.Reviewed++
+			}
+		case ev.Kind == EventMerged:
 			e.Merged++
-		case EventClosed:
+		case ev.Kind == EventClosed:
 			e.Closed++
-		case EventPushed, EventPROpened, EventChangesRequested, EventApproved,
-			EventChecksFailed, EventChecksPassed, EventTreeDone, EventStale:
-			// Counted only as activity, via First/Last above.
 		}
 	}
 	out := make([]HistoryEntry, 0, len(byTree))

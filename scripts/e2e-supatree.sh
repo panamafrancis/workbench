@@ -184,5 +184,19 @@ supatree rm berlin -y --force
 [ -d "$HOME/.supatree/archive" ] || mkdir -p "$HOME/.supatree/archive"
 git -C "$HOME/src/terraform" worktree list | grep "berlin" >/dev/null && fail "source worktree not pruned"
 
+# Review mode. There is no network and no gh here, so this covers everything
+# downstream of the PR lookup: teardown must leave a branch it did not create
+# alone, which is what protects a PR author's branch.
+echo "--- teardown leaves a foreign branch alone ---"
+supatree new --stack=s --name=reviewcity >/dev/null
+REVIEW="$HOME/.supatree/trees/reviewcity"
+[ -d "$REVIEW/repos/keystone" ] || fail "review fixture member missing"
+# Put a member on somebody else's branch, the way `gh pr checkout` would.
+git -C "$REVIEW/repos/keystone" checkout -q -b feat/not-ours
+supatree rm reviewcity -y --force >/dev/null
+git -C "$HOME/src/keystone" rev-parse --verify --quiet refs/heads/feat/not-ours >/dev/null \
+    || fail "supatree rm deleted a branch the tree did not create"
+echo "    foreign branch survived teardown"
+
 echo ""
 echo "=== e2e-supatree: all checks passed ==="

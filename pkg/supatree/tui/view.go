@@ -148,20 +148,26 @@ func (m *Model) renderRow(r row, selected bool) string {
 func (m *Model) renderMember(r row) string {
 	inst := m.instance(r.tree)
 	dirtyMark := " "
-	branch := ""
+	key := ""
+	reviewed := ""
 	if inst != nil {
 		if mem := inst.FindMember(r.alias); mem != nil {
-			branch = mem.Branch
+			// Keyed on the member, not its branch: a review member's branch is
+			// tree-local and its status lives under the pull request instead.
+			key = mem.CacheKey()
 			if m.dirty[mem.Path] {
 				dirtyMark = styleDirty.Render("*")
 			}
 			if !mem.Exists {
 				dirtyMark = styleMuted.Render("·")
 			}
+			if mem.Review != nil {
+				reviewed = styleMuted.Render(" " + mem.Review.HeadRef)
+			}
 		}
 	}
 	pr := ""
-	if info := m.prCache.Get(branch); info != nil {
+	if info := m.prCache.Get(key); info != nil {
 		if icon := prIcon(info.Status); icon != "" {
 			pr = "  " + icon
 			if info.Number > 0 {
@@ -169,7 +175,7 @@ func (m *Model) renderMember(r row) string {
 			}
 		}
 	}
-	return fmt.Sprintf("      %s %-18s%s", dirtyMark, r.alias, pr)
+	return fmt.Sprintf("      %s %-18s%s%s", dirtyMark, r.alias, pr, reviewed)
 }
 
 // prCountStatuses is the order counts are rendered in: roughly the order a PR
@@ -190,7 +196,7 @@ func (m *Model) prCounts(tree string) string {
 	counts := make(map[github.PRStatus]int, len(prCountStatuses))
 	for _, mem := range inst.Members {
 		status := github.PRNone
-		if info := m.prCache.Get(mem.Branch); info != nil {
+		if info := m.prCache.Get(mem.CacheKey()); info != nil {
 			status = info.Status
 		}
 		counts[status]++

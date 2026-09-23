@@ -16,6 +16,11 @@ type CreateOptions struct {
 	Model       string    // model override
 	KeepPartial bool      // skip rollback on failure (for debugging)
 	Now         time.Time // creation timestamp (injected for determinism)
+	Intent      string    // what this supatree is for
+	// Review, when set, makes this a review tree: each entry maps a member
+	// alias to the pull request its worktree is checked out at. It must be set
+	// before the members are created, since it is what decides where they start.
+	Review map[string]ReviewRef
 }
 
 // New creates a supatree: a worktree of the chosen stack repo at
@@ -71,6 +76,11 @@ func finishCreate(c *Config, wb *config.Config, stack *Stack, root, name string,
 		Stack:     stack.Alias,
 		Model:     resolveModel(opts.Model, spec, c, wb),
 		CreatedAt: now,
+		Intent:    opts.Intent,
+		Review:    opts.Review,
+	}
+	if len(opts.Review) > 0 {
+		meta.Mode = ModeReviewing
 	}
 	if err := meta.Save(root); err != nil {
 		return nil, nil, err
@@ -96,7 +106,7 @@ func rollback(stackPath, root, name string, wb *config.Config) {
 			if !m.Exists {
 				continue
 			}
-			removeMember(root, m.Alias, wb, &SyncReport{})
+			removeMember(root, m.Alias, m.Branch, wb, &SyncReport{})
 		}
 	}
 	_ = git.RemoveWorktree(stackPath, root)

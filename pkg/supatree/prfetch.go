@@ -21,10 +21,17 @@ const (
 	RateLimitCooldown = 15 * time.Minute
 )
 
-// FetchTarget is one member branch worth asking GitHub about.
+// FetchTarget is one member worth asking GitHub about.
 type FetchTarget struct {
 	Path   string
 	Branch string
+	// Key is the cache entry this target writes, which is the branch name for
+	// an authoring member and the PR reference for a review one.
+	Key string
+	// Ref pins a review member to its PR. When set, the lookup goes straight to
+	// the number instead of searching for a PR whose head is Branch — there is
+	// none, because the branch is tree-local.
+	Ref github.PRRef
 }
 
 // FetchTargets selects the member branches a fetch round should query. It skips
@@ -39,13 +46,27 @@ func FetchTargets(insts []*Instance, cache *github.Cache, force bool, staleAge t
 			if !mem.Exists {
 				continue
 			}
-			if !force && !cache.IsStale(mem.Branch, staleAge) {
+			key := mem.CacheKey()
+			if !force && !cache.IsStale(key, staleAge) {
 				continue
 			}
-			if !cache.KnowsPR(mem.Branch) && !git.HasRemoteBranch(mem.Path, mem.Branch) {
+			// A review member's PR is known by construction, so the
+			// unpushed-branch skip below must not apply to it: its branch is
+			// tree-local and has no origin ref *by design*, and skipping on
+			// that would mean a review tree never asked about its own PRs.
+			if mem.Review != nil {
+				targets = append(targets, FetchTarget{
+					Path:   mem.Path,
+					Branch: mem.Branch,
+					Key:    key,
+					Ref:    github.PRRef{Number: mem.Review.Number, URL: mem.Review.URL},
+				})
 				continue
 			}
-			targets = append(targets, FetchTarget{Path: mem.Path, Branch: mem.Branch})
+			if !cache.KnowsPR(key) && !git.HasRemoteBranch(mem.Path, mem.Branch) {
+				continue
+			}
+			targets = append(targets, FetchTarget{Path: mem.Path, Branch: mem.Branch, Key: key})
 		}
 	}
 	return targets
@@ -84,12 +105,12 @@ func FetchPRs(targets []FetchTarget, cache *github.Cache, force bool, staleAge t
 		}
 		var lastErr error
 		for _, t := range targets {
-			// A peer that just held the lock may have refreshed this branch;
+			// A peer that just held the lock may have refreshed this entry;
 			// don't re-fetch what is already fresh.
-			if !force && !cache.IsStale(t.Branch, staleAge) {
+			if !force && !cache.IsStale(t.Key, staleAge) {
 				continue
 			}
-			info, err := github.ResolvePR(t.Path, t.Branch, cache.Ref(t.Branch))
+			info, err := resolveTarget(t, cache)
 			if err != nil {
 				lastErr = err
 				if github.IsPermanentError(err) || github.IsRateLimited(err) {
@@ -102,7 +123,7 @@ func FetchPRs(targets []FetchTarget, cache *github.Cache, force bool, staleAge t
 				}
 				continue
 			}
-			cache.Set(t.Branch, info)
+			cache.Set(t.Key, info)
 		}
 		_ = cache.Save()
 		outcome = FetchOutcome{Err: lastErr}
@@ -116,4 +137,13 @@ func FetchPRs(targets []FetchTarget, cache *github.Cache, force bool, staleAge t
 		return FetchOutcome{Err: lockErr}
 	}
 	return outcome
+}
+
+// resolveTarget looks one target up, by number when it is pinned to a PR and by
+// branch head otherwise.
+func resolveTarget(t FetchTarget, cache *github.Cache) (*github.PRInfo, error) {
+	if t.Ref.Number != 0 {
+		return github.ResolvePRByNumber(t.Path, t.Ref)
+	}
+	return github.ResolvePR(t.Path, t.Branch, cache.Ref(t.Key))
 }

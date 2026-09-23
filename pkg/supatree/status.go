@@ -28,6 +28,21 @@ const (
 	MemberApproved MemberState = "approved" // PR open and approved
 	MemberMerged   MemberState = "merged"
 	MemberClosed   MemberState = "closed" // PR closed without merging
+	// MemberInReview is a review tree's member: checked out at someone
+	// else's PR head, with no status for it yet. The local-git ladder above
+	// does not apply — you are not the one committing here.
+	//
+	// Kept to nine characters because the dashboard pads this column to ten and
+	// truncates anything longer, which would render a state nobody can read.
+	MemberInReview MemberState = "in-review"
+	// MemberForeign is a member sitting on a branch that is not its tree's.
+	//
+	// It is its own state because the alternative is silence: a manual
+	// `gh pr checkout` in a member worktree reads as `wip` forever, since the
+	// tree's own branch has no remote ref and HEAD is ahead of the base. That
+	// is also the state in which teardown would delete a branch it does not
+	// own, so naming it is what lets every other surface refuse.
+	MemberForeign MemberState = "foreign"
 )
 
 // TreeState is the rolled-up state of a whole supatree: how far the least
@@ -42,12 +57,21 @@ const (
 	TreeReview   TreeState = "review"   // PRs open, awaiting review
 	TreeApproved TreeState = "approved" // every open PR is approved — ready to merge
 	TreeDone     TreeState = "done"     // every PR merged or closed — safe to remove
+	// TreeReviewed is a review tree whose pull requests have all landed or been
+	// abandoned. Reapable, like TreeDone, but deliberately a different state:
+	// `done` means work *you* shipped, and the ledger counts it that way.
+	TreeReviewed TreeState = "reviewed"
 )
 
 // MemberLocal is the local git snapshot of one member worktree. It is split out
 // from the derivation so the state machine stays pure and testable.
 type MemberLocal struct {
-	Exists     bool      `json:"exists"`
+	Exists bool `json:"exists"`
+	// CheckedOut is the branch actually checked out, which is not always the
+	// one the tree derives. Observing it is the only way to notice a member
+	// pointed somewhere else — and it is deliberately not called Branch, which
+	// MemberStatus already uses for the branch the tree *expects*.
+	CheckedOut string    `json:"checked_out,omitempty"`
 	Dirty      bool      `json:"dirty"`
 	Ahead      int       `json:"ahead"`      // commits ahead of origin/<default branch>
 	Unpushed   int       `json:"unpushed"`   // commits HEAD has that origin/<branch> does not
@@ -64,12 +88,19 @@ type MemberStatus struct {
 	State MemberState    `json:"state"`
 	PR    *github.PRInfo `json:"pr,omitempty"`
 	Deps  []string       `json:"depends_on,omitempty"`
+	// AuthorPushed reports that the PR's head has moved since this worktree was
+	// checked out — i.e. you are reading an older commit than the one under
+	// discussion. Review trees only.
+	AuthorPushed bool `json:"author_pushed,omitempty"`
+	// Reviewing is the pull request this member tracks, when it tracks one.
+	Reviewing *ReviewRef `json:"reviewing,omitempty"`
 }
 
 // TreeStatus is one supatree's rolled-up activity.
 type TreeStatus struct {
 	Name         string         `json:"name"`
 	Slug         string         `json:"slug"`
+	Mode         Mode           `json:"mode,omitempty"`
 	Stack        string         `json:"stack"`
 	Root         string         `json:"root"`
 	State        TreeState      `json:"state"`
@@ -78,16 +109,17 @@ type TreeStatus struct {
 	ApprovedPRs  int            `json:"approved_prs"`
 	MergedPRs    int            `json:"merged_prs"`
 	TotalPRs     int            `json:"total_prs"`
-	Dirty        bool           `json:"dirty"`   // uncommitted changes in some member
-	Blocked      bool           `json:"blocked"` // changes requested or failing checks
-	Stale        bool           `json:"stale"`   // no commit anywhere within StaleAfter
+	Dirty        bool           `json:"dirty"`             // uncommitted changes in some member
+	Blocked      bool           `json:"blocked"`           // changes requested or failing checks
+	Foreign      bool           `json:"foreign,omitempty"` // a member is on a branch this tree does not own
+	Stale        bool           `json:"stale"`             // no commit anywhere within StaleAfter
 	LastActivity time.Time      `json:"last_activity,omitzero"`
 	CreatedAt    time.Time      `json:"created_at,omitzero"`
 }
 
 // Reap reports whether the supatree has nothing left to ship and is only
 // occupying disk — the cue to run `supatree rm`.
-func (t TreeStatus) Reap() bool { return t.State == TreeDone }
+func (t TreeStatus) Reap() bool { return t.State == TreeDone || t.State == TreeReviewed }
 
 // Summary is the whole picture: every supatree plus the roll-up counters a
 // dashboard header shows.
@@ -142,6 +174,7 @@ func Status(insts []*Instance, cache *github.Cache, opts StatusOptions) Summary 
 		sum.Trees[i] = TreeStatus{
 			Name:    inst.Name,
 			Slug:    inst.Slug,
+			Mode:    inst.Mode,
 			Stack:   inst.Stack,
 			Root:    inst.Root,
 			Members: make([]MemberStatus, len(inst.Members)),
@@ -178,11 +211,18 @@ func Status(insts []*Instance, cache *github.Cache, opts StatusOptions) Summary 
 		t := &sum.Trees[i]
 		for j := range t.Members {
 			ms := &t.Members[j]
-			ms.PR = cache.Get(ms.Branch)
+			ms.PR = cache.Get(insts[i].Members[j].CacheKey())
 			if ms.PR != nil && ms.PR.Status == github.PRNone {
 				ms.PR = nil
 			}
-			ms.State = memberState(ms.MemberLocal, ms.PR)
+			mem := insts[i].Members[j]
+			ms.State = memberState(ms.MemberLocal, ms.PR, mem.Branch, t.Mode, mem.Review != nil)
+			ms.Reviewing = mem.Review
+			// The head we checked out against the head the PR now has. Both
+			// come from data already in hand, so this costs nothing.
+			if mem.Review != nil && ms.PR != nil && ms.PR.HeadOID != "" {
+				ms.AuthorPushed = ms.PR.HeadOID != mem.Review.Head
+			}
 			if ms.PR != nil && ms.PR.FetchedAt.After(sum.LastFetch) {
 				sum.LastFetch = ms.PR.FetchedAt
 			}
@@ -222,7 +262,8 @@ func treeOrder(t TreeStatus) int {
 		return 5
 	case TreeNew:
 		return 6
-	case TreeDone:
+	case TreeDone, TreeReviewed:
+		// Finished, either way: nothing here needs a human push.
 		return 7
 	}
 	return 8
@@ -235,17 +276,37 @@ func localState(mem Member) MemberLocal {
 		return MemberLocal{}
 	}
 	l := MemberLocal{Exists: true, Dirty: git.IsDirty(mem.Path)}
+	l.CheckedOut, _ = git.CurrentBranch(mem.Path)
+	l.LastCommit, _ = git.LastCommitTime(mem.Path)
+	if l.CheckedOut != mem.Branch {
+		// Nothing below means anything for a member pointed somewhere else:
+		// "ahead of the base" and "unpushed" are measured against a branch this
+		// worktree is not on. Collecting them anyway is what made a manual
+		// checkout read as ordinary work in progress.
+		return l
+	}
 	l.Ahead, _ = git.CommitsAhead(mem.Path)
 	l.Unpushed, l.HasRemote = git.UnpushedCommits(mem.Path, mem.Branch)
-	l.LastCommit, _ = git.LastCommitTime(mem.Path)
 	return l
 }
 
 // memberState is the pure lifecycle derivation: the PR (when there is one)
 // decides, otherwise local git does.
-func memberState(l MemberLocal, pr *github.PRInfo) MemberState {
+//
+// want is the branch this member is supposed to be on, and mode says whose work
+// it is. A member on the wrong branch is reported as such before anything else,
+// because every other answer would be measured against a branch it is not on.
+//
+// tracked says the member is checked out at a pull request. A review tree holds
+// every member of its stack, not only the repos the change touched, so the ones
+// with no pull request are bystanders: calling them `in-review` would park them
+// on the review rung forever, and the tree could never roll up to `reviewed`.
+func memberState(l MemberLocal, pr *github.PRInfo, want string, mode Mode, tracked bool) MemberState {
 	if !l.Exists {
 		return MemberAbsent
+	}
+	if l.CheckedOut != want {
+		return MemberForeign
 	}
 	if pr != nil {
 		switch pr.Status {
@@ -267,6 +328,15 @@ func memberState(l MemberLocal, pr *github.PRInfo) MemberState {
 			return MemberOpen
 		case github.PRNone:
 		}
+	}
+	// A review tree has no local ladder to climb: the commits are the author's
+	// and the reviewer opens nothing. Until the PR status arrives, the honest
+	// answer is simply "this is checked out and being reviewed".
+	if mode == ModeReviewing {
+		if !tracked {
+			return MemberIdle
+		}
+		return MemberInReview
 	}
 	// No PR: unpushed work outranks a pushed branch, which outranks idle.
 	if l.Dirty || (!l.HasRemote && l.Ahead > 0) || l.Unpushed > 0 {
@@ -295,7 +365,13 @@ func memberRank(s MemberState) int {
 		return 5
 	case MemberMerged, MemberClosed:
 		return 6
-	case MemberAbsent, MemberIdle:
+	case MemberInReview:
+		// Alongside an open PR: a review tree whose members are all still
+		// waiting on their status rolls up as work in review, not as nothing.
+		return 4
+	case MemberAbsent, MemberIdle, MemberForeign:
+		// Foreign carries no position in the ladder — it is a fault to report,
+		// not a rung — and the caller flags it separately.
 		return 0
 	}
 	return 0
@@ -321,7 +397,12 @@ func rollup(t *TreeStatus, now time.Time, staleAfter time.Duration) {
 				t.MergedPRs++
 			case github.PRClosed, github.PRNone:
 			}
-			if ms.PR.Checks == github.CheckFailing {
+			// Blocked means "you are the one who has to act", which on a review
+			// tree is false twice over: failing checks are the author's problem
+			// and requested changes are your own review landing. Left in, a
+			// review tree doing its job would sort to the top of every queue
+			// that orders by attention.
+			if ms.PR.Checks == github.CheckFailing && t.Mode != ModeReviewing {
 				t.Blocked = true
 			}
 		}
@@ -329,13 +410,19 @@ func rollup(t *TreeStatus, now time.Time, staleAfter time.Duration) {
 		case MemberAbsent:
 			absent = true
 			continue
+		case MemberForeign:
+			t.Foreign = true
+			continue
 		case MemberIdle:
 			continue
 		case MemberApproved:
 			t.ApprovedPRs++
 		case MemberChanges:
-			t.Blocked = true
-		case MemberWIP, MemberPushed, MemberDraft, MemberOpen, MemberMerged, MemberClosed:
+			if t.Mode != ModeReviewing {
+				t.Blocked = true
+			}
+		case MemberWIP, MemberPushed, MemberDraft, MemberOpen, MemberMerged,
+			MemberClosed, MemberInReview:
 		}
 		shipping++
 		if r := memberRank(ms.State); r < minRank {
@@ -348,6 +435,12 @@ func rollup(t *TreeStatus, now time.Time, staleAfter time.Duration) {
 		t.State = TreeSetup
 	case shipping == 0:
 		t.State = TreeNew
+	case minRank >= 6 && t.Mode == ModeReviewing:
+		// Not `done`: that word means work you shipped, and the ledger and
+		// History count it that way. Every pull request here has landed or been
+		// abandoned, which ends the review's purpose — so the tree is reapable,
+		// under its own name.
+		t.State = TreeReviewed
 	case minRank >= 6:
 		t.State = TreeDone
 	case minRank <= 1:
@@ -361,8 +454,11 @@ func rollup(t *TreeStatus, now time.Time, staleAfter time.Duration) {
 	}
 
 	// A finished supatree is not "stale", it is done — only unfinished work goes
-	// quiet. A tree with no commits at all falls back to its creation time.
-	if t.State != TreeDone {
+	// quiet. A tree with no commits at all falls back to its creation time. On a
+	// review tree the last commit is the *author's*, so the same derivation
+	// reads as "this pull request has gone quiet", which is if anything more
+	// useful to a reviewer than to an author.
+	if t.State != TreeDone && t.State != TreeReviewed {
 		last := t.LastActivity
 		if last.IsZero() {
 			last = t.CreatedAt

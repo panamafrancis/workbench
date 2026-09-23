@@ -504,7 +504,7 @@ func (m *Model) handToPM() tea.Cmd {
 	if ctx.kind == rowMember {
 		if inst := m.instance(ctx.tree); inst != nil {
 			if mem := inst.FindMember(ctx.alias); mem != nil {
-				if pr := m.prCache.Get(mem.Branch); pr != nil {
+				if pr := m.prCache.Get(mem.CacheKey()); pr != nil {
 					prNumber = pr.Number
 				}
 			}

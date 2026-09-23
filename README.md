@@ -347,6 +347,9 @@ The MCP server gates on the `WORKBENCH` env var — tools return an error outsid
 - A **supatree** is a worktree of that stack repo at `~/.supatree/trees/<name>/`, with each member repo checked out under `repos/<alias>/`. It is named with a city name, like workbench worktrees.
 - Member repos are referenced by their **workbench alias** — supatree reuses workbench's registered repo definitions (path, `copy_files`, scripts). Register repos with `workbench add repo` first.
 - Member branches are `st/<slug>/<alias>` (the slug starts as the city name; rename it before opening PRs). The stack worktree itself is on `st/<name>`.
+- A **review tree** (`supatree review`) is the same thing pointed at someone else's work: each member is checked out at a pull request's head on a tree-local `review/<slug>/<alias>` branch, and the tree records the PRs rather than deriving them from the branch name. The authoring commands (`rename-branch`, `create_pr`, `create_prs`) refuse there — the branches belong to the PRs' authors — and `.supatree/info.md` carries review instructions instead. The `docs` MCP tool with `topic: review` explains how to review in one. A review tree finishes as `reviewed` rather than `done` — the author's merge is their milestone, not work you shipped, and `history` counts the two separately.
+- **Review tooling.** `review_refresh` (MCP, or `supatree review refresh`) re-fetches the PR heads when an author pushes; `review_post` submits one batched review with inline comments anchored to the checked-out commit, and refuses if the head has moved since. Posting publishes in your name, so it requires the `outward` permission (off by default at every autonomy level). `supatree review fork` converts a review tree into an authoring one whose PRs target the authors' branches.
+- Teardown (`supatree rm`, and `sync --prune`) deletes only the branch the tree itself created. A member left on some other branch — after a manual `gh pr checkout`, say — is reported and left alone, because the delete is `git branch -D`.
 - Dependencies between repos (`deps:` in `supatree.yml`) drive creation order, the merge order shown in `.supatree/info.md`, and `create_prs` ordering.
 
 ### Quickstart
@@ -375,6 +378,12 @@ supatree inbox <tree> <agent>                   # what is waiting for it
 supatree sync <name>                            # reconcile after editing supatree.yml
 supatree rename-branch <slug> <name>            # rename all member branches (slug: max 40 chars)
 supatree rm <name>                              # tear down all member worktrees
+
+# Reviewing someone else's cross-repo change
+supatree review <pr-url> <pr-url> ...           # review tree: each repo at its PR head
+supatree review fraud-zero/api#600 fraud-zero/web#988   # or owner/repo#number
+supatree review refresh <name>                  # authors pushed — re-fetch the heads
+supatree review fork <name>                     # turn the review into a proposal
 ```
 
 `rename-branch` renames every member or none: if a member fails, the renames already made are rolled back, so the tree's recorded slug never points at a name only some members are on. With `--push` the pushes run after every local rename has landed, and a push failure is reported per repo without undoing the rename.

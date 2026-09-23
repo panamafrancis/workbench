@@ -265,11 +265,25 @@ func notes(t supatree.TreeStatus) []string {
 	if t.Blocked {
 		out = append(out, "blocked")
 	}
+	if t.Mode == supatree.ModeReviewing {
+		out = append(out, "reviewing")
+	}
+	if t.Foreign {
+		out = append(out, "member off its branch")
+	}
+	if authorPushed(t) {
+		out = append(out, "author pushed")
+	}
 	if t.State == supatree.TreeSetup {
 		out = append(out, "run sync")
 	}
 	if t.Stale {
-		out = append(out, "stale")
+		// On a review tree the quiet is the author's, not yours.
+		if t.Mode == supatree.ModeReviewing {
+			out = append(out, "PRs quiet")
+		} else {
+			out = append(out, "stale")
+		}
 	}
 	if t.Dirty {
 		out = append(out, "uncommitted")
@@ -316,10 +330,21 @@ func memberNotes(mem supatree.MemberStatus) string {
 	if mem.Dirty {
 		out = append(out, "uncommitted")
 	}
-	if mem.Unpushed > 0 {
+	// A review member's local git counters are meaningless — the commits are
+	// the author's — so the notes say what a reviewer actually needs instead.
+	switch {
+	case mem.Reviewing != nil:
+		if mem.AuthorPushed {
+			out = append(out, "author pushed since checkout")
+		}
+		out = append(out, mem.Reviewing.HeadRef)
+	case mem.Unpushed > 0:
 		out = append(out, fmt.Sprintf("%d unpushed", mem.Unpushed))
-	} else if mem.PR == nil && mem.Ahead > 0 {
+	case mem.PR == nil && mem.Ahead > 0:
 		out = append(out, fmt.Sprintf("%d commits", mem.Ahead))
+	}
+	if mem.State == supatree.MemberForeign {
+		out = append(out, fmt.Sprintf("on %q, not this tree's branch", mem.CheckedOut))
 	}
 	if !mem.Exists {
 		out = append(out, "not checked out")
@@ -335,7 +360,7 @@ func stateStyle(t supatree.TreeStatus) lipgloss.Style {
 		return styleRed
 	case t.State == supatree.TreeApproved:
 		return styleGreen
-	case t.State == supatree.TreeDone:
+	case t.State == supatree.TreeDone, t.State == supatree.TreeReviewed:
 		return styleMagenta
 	case t.Stale:
 		return styleYellow
@@ -432,4 +457,16 @@ func (m *Model) boardView() string {
 		shown++
 	}
 	return b.String()
+}
+
+// authorPushed reports whether any reviewed pull request has moved since its
+// worktree was checked out — the one thing that invalidates a review already in
+// progress, so it belongs on the tree row and not only on the member's.
+func authorPushed(t supatree.TreeStatus) bool {
+	for _, m := range t.Members {
+		if m.AuthorPushed {
+			return true
+		}
+	}
+	return false
 }

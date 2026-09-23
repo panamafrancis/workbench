@@ -74,12 +74,12 @@ func Comments(inst *Instance, alias string, cache *github.Cache, force bool) (*g
 	if member == nil {
 		return nil, fmt.Errorf("%q is not a member of supatree %q", alias, inst.Name)
 	}
-	pr := cache.Get(member.Branch)
+	pr := cache.Get(member.CacheKey())
 	if pr == nil || pr.Number == 0 {
 		return nil, ErrNoPR
 	}
 
-	key := commentsKey(member.Branch, pr.Number)
+	key := commentsKey(member.CacheKey(), pr.Number)
 	cc := loadCommentsCache()
 	if e, ok := cc.Entries[key]; ok && !force && e.PRUpdatedAt.Equal(pr.UpdatedAt) {
 		fb := e.Feedback
