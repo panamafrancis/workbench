@@ -54,7 +54,23 @@ const (
 	rowRepos // the "repositories" section header — selectable and foldable
 	rowAgent
 	rowMember
+	rowPM      // the PM agent, pinned above every supatree
+	rowDivider // the rule separating the PM section from the supatrees
 )
+
+// selectable reports whether the cursor may rest on a row of this kind. The
+// headings and the divider are decoration; everything else is something enter
+// acts on.
+func (k rowKind) selectable() bool {
+	return k != rowSubheader && k != rowDivider
+}
+
+// pmLabel is the PM row's text and its row identity for selectRow.
+const pmLabel = "PM"
+
+// pmSectionRows is how many rows the PM section occupies above the first
+// supatree (the PM row and its divider).
+const pmSectionRows = 2
 
 // reposLabel is the text of the repositories section header. It is also the row
 // identity setReposCollapse re-selects on, so the two must agree.
@@ -94,6 +110,7 @@ type Model struct {
 	stackCursor int             // cursor within the modeNewTree stack picker
 	activeTree  string          // supatree whose Zellij tab this sidebar belongs to ("you are here")
 	attention   map[string]bool // supatrees with an event you have not looked at yet
+	pmPending   int             // requests queued for the PM that it has not read yet
 	fetching    bool            // a PR fetch is in flight
 	ghAvailable bool            // gh usable; false after a permanent error suppresses tick fetches
 	prHint      string          // persistent PR-fetch hint (e.g. "gh rate limited")
@@ -286,10 +303,11 @@ func (m *Model) scrollBy(delta int) {
 }
 
 // selectByRow moves the cursor to the row at a viewport-relative offset (a mouse
-// click). Subheaders are not selectable, so a click on one is ignored.
+// click). Subheaders and the divider are not selectable, so a click on one is
+// ignored.
 func (m *Model) selectByRow(visible int) {
 	i := m.scroll + visible
-	if i < 0 || i >= len(m.rows) || m.rows[i].kind == rowSubheader {
+	if i < 0 || i >= len(m.rows) || !m.rows[i].kind.selectable() {
 		return
 	}
 	m.cursor = i
@@ -304,7 +322,10 @@ func treeFromTab(tab string) string {
 }
 
 func (m *Model) rebuildRows() {
-	var rows []row
+	// The PM comes first and is always there, even with no supatrees: it is the
+	// one agent that is not inside any of them, so it gets a section of its own
+	// rather than being mistaken for one more tree.
+	rows := []row{{kind: rowPM, label: pmLabel}, {kind: rowDivider}}
 	for _, inst := range m.insts {
 		rows = append(rows, row{kind: rowTree, tree: inst.Name, label: inst.Name})
 		if m.ui.TreeCollapsed(inst.Name) {
@@ -347,7 +368,7 @@ func (m *Model) Init() tea.Cmd {
 	// loop, so forcing here would re-hit the gh API for every member on every
 	// restart and exhaust the rate limit.
 	return tea.Batch(m.tickCmd(), m.refreshDirtyCmd(), m.refreshRunningCmd(),
-		m.refreshAttentionCmd(), m.fetchPRCmd(false))
+		m.refreshAttentionCmd(), m.refreshPMPendingCmd(), m.fetchPRCmd(false))
 }
 
 func (m *Model) clampCursor() {
@@ -357,12 +378,12 @@ func (m *Model) clampCursor() {
 	if m.cursor < 0 {
 		m.cursor = 0
 	}
-	// Never rest on a subheader.
-	for m.cursor < len(m.rows) && m.rows[m.cursor].kind == rowSubheader {
+	// Never rest on a subheader or the divider.
+	for m.cursor < len(m.rows) && !m.rows[m.cursor].kind.selectable() {
 		m.cursor++
 	}
 	if m.cursor >= len(m.rows) {
-		for m.cursor >= 0 && (m.cursor >= len(m.rows) || m.rows[m.cursor].kind == rowSubheader) {
+		for m.cursor >= 0 && (m.cursor >= len(m.rows) || !m.rows[m.cursor].kind.selectable()) {
 			m.cursor--
 		}
 	}
@@ -375,6 +396,16 @@ func (m *Model) selected() *row {
 	return nil
 }
 
+// selectedInTree is the selected row when it belongs to a supatree, and nil on
+// the PM row — so the tree-scoped keys (fold, sync, delete, new agent, hand to
+// the PM) do nothing there instead of acting on a supatree named "".
+func (m *Model) selectedInTree() *row {
+	if r := m.selected(); r != nil && r.tree != "" {
+		return r
+	}
+	return nil
+}
+
 func (m *Model) tickCmd() tea.Cmd {
 	return tea.Tick(tickInterval, func(t time.Time) tea.Msg { return tickMsg{} })
 }
@@ -382,6 +413,7 @@ func (m *Model) tickCmd() tea.Cmd {
 type tickMsg struct{}
 type dirtyMsg struct{ dirty map[string]bool }
 type attentionMsg struct{ attention map[string]bool }
+type pmPendingMsg struct{ n int }
 type runningMsg struct{ tabs map[string]bool }
 type prMsg struct{ err error }
 

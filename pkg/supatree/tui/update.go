@@ -34,6 +34,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.dirty = msg.dirty
 	case attentionMsg:
 		m.attention = msg.attention
+	case pmPendingMsg:
+		m.pmPending = msg.n
 	case runningMsg:
 		m.openTabs = msg.tabs
 	case prSkippedMsg:
@@ -67,7 +69,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// it, rather than leaving it pinned to the prior selection off-screen.
 			m.selectRow(row{kind: rowTree, tree: msg.reveal, label: msg.reveal})
 		}
-		return m, tea.Batch(m.refreshDirtyCmd(), m.refreshRunningCmd(), m.refreshAttentionCmd())
+		return m, tea.Batch(m.refreshDirtyCmd(), m.refreshRunningCmd(), m.refreshAttentionCmd(), m.refreshPMPendingCmd())
 	case tea.MouseMsg:
 		return m.updateMouse(msg)
 	case tea.KeyMsg:
@@ -156,11 +158,11 @@ func (m *Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.moveCursor(-m.halfPage())
 	case "r":
 		m.reloadWithSelection()
-		return m, tea.Batch(m.refreshDirtyCmd(), m.refreshRunningCmd(), m.fetchPRCmd(true))
+		return m, tea.Batch(m.refreshDirtyCmd(), m.refreshRunningCmd(), m.refreshPMPendingCmd(), m.fetchPRCmd(true))
 	case " ":
 		// Fold the innermost section the cursor is in: the repositories list on a
 		// repo or section row, the whole supatree anywhere else.
-		if r := m.selected(); r != nil {
+		if r := m.selectedInTree(); r != nil {
 			if inRepos(r.kind) {
 				m.setReposCollapse(r.tree, !m.ui.ReposCollapsed(r.tree))
 			} else {
@@ -170,7 +172,7 @@ func (m *Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "h", "left":
 		// Vim's fold-close: shut the repositories section first, and only once it
 		// is already shut does another h close the supatree around it.
-		if r := m.selected(); r != nil {
+		if r := m.selectedInTree(); r != nil {
 			if inRepos(r.kind) && !m.ui.ReposCollapsed(r.tree) {
 				m.setReposCollapse(r.tree, true)
 			} else {
@@ -178,7 +180,7 @@ func (m *Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 	case "l", "right":
-		if r := m.selected(); r != nil {
+		if r := m.selectedInTree(); r != nil {
 			if inRepos(r.kind) {
 				m.setReposCollapse(r.tree, false)
 			} else {
@@ -194,7 +196,7 @@ func (m *Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.openSelected()
 	case "a":
-		if r := m.selected(); r != nil {
+		if r := m.selectedInTree(); r != nil {
 			// `a` reads the same everywhere — "give me an agent here" — so on a
 			// member row it opens that repo's scoped agent (nono allows only that
 			// repo) instead of prompting for a name at the tree root.
@@ -222,7 +224,7 @@ func (m *Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.input.Focus()
 		}
 	case "s":
-		if r := m.selected(); r != nil {
+		if r := m.selectedInTree(); r != nil {
 			return m, m.syncTree(r.tree)
 		}
 	case "?":
@@ -234,7 +236,7 @@ func (m *Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "m":
 		return m, m.handToPM()
 	case "d":
-		if r := m.selected(); r != nil {
+		if r := m.selectedInTree(); r != nil {
 			m.mode = modeConfirmDelete
 			m.actionTree = r.tree
 		}
@@ -366,7 +368,7 @@ func (m *Model) updateStackPick(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m *Model) moveCursor(delta int) {
 	m.follow = true
 	m.cursor += delta
-	for m.cursor >= 0 && m.cursor < len(m.rows) && m.rows[m.cursor].kind == rowSubheader {
+	for m.cursor >= 0 && m.cursor < len(m.rows) && !m.rows[m.cursor].kind.selectable() {
 		m.cursor += delta
 	}
 	if m.cursor < 0 {
@@ -387,6 +389,10 @@ func (m *Model) openSelected() tea.Cmd {
 		return nil
 	}
 	switch r.kind {
+	case rowPM:
+		return m.openPM()
+	case rowDivider:
+		// Never selectable, so never reached.
 	case rowMember:
 		// A member row is a place, not a process: enter stands in it. The
 		// repo-scoped agent lives on `a`, alongside the tree-level one.
@@ -495,7 +501,9 @@ func (m *Model) openDashboard() tea.Cmd {
 // running — the request waits in the queue, which is the whole point of the
 // queue being read from a stored offset.
 func (m *Model) handToPM() tea.Cmd {
-	r := m.selected()
+	// On the PM row there is nothing to hand over — you are already pointing at
+	// the PM itself.
+	r := m.selectedInTree()
 	if r == nil {
 		return nil
 	}
@@ -538,7 +546,7 @@ func handoffText(r row) string {
 		return fmt.Sprintf("Look at %s/%s.", r.tree, r.alias)
 	case rowAgent:
 		return fmt.Sprintf("Look at the %s agent in %s.", r.label, r.tree)
-	case rowTree, rowSubheader, rowRepos:
+	case rowTree, rowSubheader, rowRepos, rowPM, rowDivider:
 		return fmt.Sprintf("Look at %s.", r.tree)
 	}
 	return "Look at " + r.tree + "."
@@ -589,6 +597,19 @@ func (m *Model) refreshAttentionCmd() tea.Cmd {
 	}
 }
 
+// refreshPMPendingCmd counts the requests the PM has not read yet, for the badge
+// on the PM row. Off the main loop because it scans the unread tail of the
+// queue; an unreadable queue shows no badge rather than an error.
+func (m *Model) refreshPMPendingCmd() tea.Cmd {
+	return func() tea.Msg {
+		reqs, _, err := supatree.PendingRequests()
+		if err != nil {
+			return pmPendingMsg{}
+		}
+		return pmPendingMsg{n: len(reqs)}
+	}
+}
+
 func (m *Model) refreshDirtyCmd() tea.Cmd {
 	insts := m.insts
 	return func() tea.Msg {
@@ -618,7 +639,7 @@ func (m *Model) refreshRunningCmd() tea.Cmd {
 // tick handlers. The PR fetch is skipped while gh is known-unavailable (a
 // permanent error), so a broken auth doesn't spawn a fetch every tick forever.
 func (m *Model) backgroundCmds() []tea.Cmd {
-	cmds := []tea.Cmd{m.refreshDirtyCmd(), m.refreshRunningCmd(), m.refreshAttentionCmd()}
+	cmds := []tea.Cmd{m.refreshDirtyCmd(), m.refreshRunningCmd(), m.refreshAttentionCmd(), m.refreshPMPendingCmd()}
 	if m.ghAvailable {
 		cmds = append(cmds, m.fetchPRCmd(false))
 	}

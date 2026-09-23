@@ -22,6 +22,8 @@ var (
 	styleDirty    = lipgloss.NewStyle().Foreground(colorDirty)
 	styleStatus   = lipgloss.NewStyle().Foreground(colorMuted)
 	styleRunning  = lipgloss.NewStyle().Foreground(colorGreen)
+	// stylePM sets the PM row apart from the supatrees below it.
+	stylePM = lipgloss.NewStyle().Bold(true).Foreground(colorMagenta)
 	// styleAttention marks a supatree holding news you have not looked at.
 	styleAttention = lipgloss.NewStyle().Bold(true).Foreground(colorRed)
 

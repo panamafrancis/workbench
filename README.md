@@ -392,6 +392,8 @@ supatree review fork <name>                     # turn the review into a proposa
 
 `supatree ls` (the sidebar in each supatree tab, and `supatree start`'s pane) is a TUI listing every supatree with its agents and member repos.
 
+The **PM** has a section of its own pinned at the very top, above a divider — `◆ PM`, with `●` while its tab is open and `✉N` for requests it has not read yet. It is there even before any supatree exists; `gg` then `enter` (or `P` from anywhere) opens or focuses it.
+
 | Key | Action |
 | --- | --- |
 | `j` / `k` (or `↓` / `↑`) | Move down/up (skips subheaders) |
@@ -401,12 +403,14 @@ supatree review fork <name>                     # turn the review into a proposa
 | `Space` | Fold/unfold the innermost section — the repositories list on a repo row, otherwise the supatree |
 | `h` / `l` (or `←` / `→`) | Collapse / expand; `h` closes the repositories section first, then the supatree |
 | `zM` / `zR` | Fold / unfold **every** supatree |
-| `Enter` / `o` | Open the selected agent, or a shell in the selected member repo |
+| `Enter` / `o` | Open the selected agent, a shell in the selected member repo, or the PM on the PM row |
 | `a` | Add an agent to the selected supatree — on a member row, open that repo's agent |
 | `n` | New supatree |
 | `s` | Sync the selected supatree |
 | `d` | Delete the selected supatree |
 | `D` | Open (or focus) the dashboard tab |
+| `P` | Open (or focus) the PM agent |
+| `m` | Hand the selected row to the PM |
 | `r` | Refresh (forces a PR status fetch) |
 | `?` | Keybinding reference (any key closes it) |
 | `q` | Quit (confirms in sidebar mode) |
