@@ -24,7 +24,13 @@ func (m *Model) View() string {
 	}
 
 	footer := m.footer()
-	if len(m.rows) == 0 {
+	if len(m.insts) == 0 {
+		// The PM section is still there with no supatrees — it is reachable (and
+		// can create one) before anything else exists.
+		for i, r := range m.rows {
+			b.WriteString(m.renderRow(r, i == m.cursor && m.mode == modeNormal))
+			b.WriteString("\n")
+		}
 		b.WriteString(styleMuted.Render("no supatrees — press n to create one"))
 		b.WriteString("\n\n")
 		b.WriteString(footer)
@@ -83,6 +89,10 @@ func (m *Model) viewport(avail int) (int, int) {
 
 func (m *Model) renderRow(r row, selected bool) string {
 	switch r.kind {
+	case rowPM:
+		return m.renderPM(selected)
+	case rowDivider:
+		return styleMuted.Render(strings.Repeat("─", m.dividerWidth()))
 	case rowTree:
 		// The PR summary belongs to the repositories section; it is lifted onto
 		// the supatree row only when that section is out of sight, so a folded
@@ -143,6 +153,31 @@ func (m *Model) renderRow(r row, selected bool) string {
 		return sel(selected, m.renderMember(r))
 	}
 	return ""
+}
+
+// renderPM draws the PM row. It is styled apart from the supatrees on purpose —
+// a filled glyph and its own colour instead of a fold arrow — because it is not
+// a tree and nothing folds under it.
+func (m *Model) renderPM(selected bool) string {
+	line := stylePM.Render("◆ " + pmLabel)
+	if m.openTabs[supatree.PMTab] {
+		line += styleRunning.Render(" ●")
+	}
+	if m.pmPending > 0 {
+		// Requests the PM has not read yet: queued with m, by the watcher, the
+		// scheduler or `supatree request`.
+		line += styleDirty.Render(fmt.Sprintf("  ✉%d", m.pmPending))
+	}
+	return "  " + sel(selected, line)
+}
+
+// dividerWidth is the PM section's rule: the pane width once it is known, and a
+// short fixed rule before that.
+func (m *Model) dividerWidth() int {
+	if m.width > 0 {
+		return m.width
+	}
+	return 20
 }
 
 func (m *Model) renderMember(r row) string {
@@ -248,8 +283,14 @@ func (m *Model) footer() string {
 	// Enter is contextual (a member row is a place, an agent row is a process),
 	// so the hint says which one the cursor is on rather than a generic "open".
 	openHint := "enter open"
-	if r := m.selected(); r != nil && r.kind == rowMember {
-		openHint = "enter shell"
+	if r := m.selected(); r != nil {
+		switch r.kind {
+		case rowMember:
+			openHint = "enter shell"
+		case rowPM:
+			openHint = "enter PM"
+		case rowTree, rowSubheader, rowRepos, rowAgent, rowDivider:
+		}
 	}
 	// The motions moved into `?` — the footer keeps the actions, which are the
 	// ones that are not guessable from vim habits.
@@ -372,7 +413,8 @@ func helpView() string {
 		"",
 		styleHeader.Render("Open"),
 		"  enter/o  agent, or shell",
-		"           on a repo row",
+		"           on a repo row,",
+		"           PM on the PM row",
 		"  a        new named agent,",
 		"           repo agent on a repo",
 		"  D        dashboard",

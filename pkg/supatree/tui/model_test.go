@@ -52,24 +52,27 @@ func TestRebuildRowsStructure(t *testing.T) {
 		},
 	}}
 	m.rebuildRows()
-	// Repositories start folded, so out of the box: tree, "agents" subheader,
-	// main agent, "repositories" header — and no member rows.
-	want := []rowKind{rowTree, rowSubheader, rowAgent, rowRepos}
+	// The PM section always leads. Repositories start folded, so out of the
+	// box: tree, "agents" subheader, main agent, "repositories" header — and no
+	// member rows.
+	want := []rowKind{rowPM, rowDivider, rowTree, rowSubheader, rowAgent, rowRepos}
 	if got := rowKinds(m); !slices.Equal(got, want) {
 		t.Fatalf("folded rows = %v, want %v", got, want)
 	}
 
 	// Unfolding the section adds the members under it.
 	expandRepos(m)
-	want = []rowKind{rowTree, rowSubheader, rowAgent, rowRepos, rowMember, rowMember}
+	want = []rowKind{rowPM, rowDivider, rowTree, rowSubheader, rowAgent, rowRepos, rowMember, rowMember}
 	if got := rowKinds(m); !slices.Equal(got, want) {
 		t.Fatalf("unfolded rows = %v, want %v", got, want)
 	}
-	// Cursor must never rest on a subheader.
-	m.cursor = 1
-	m.clampCursor()
-	if m.rows[m.cursor].kind == rowSubheader {
-		t.Error("cursor rested on subheader after clamp")
+	// Cursor must never rest on a subheader or the divider.
+	for _, i := range []int{1, pmSectionRows + 1} {
+		m.cursor = i
+		m.clampCursor()
+		if !m.rows[m.cursor].kind.selectable() {
+			t.Errorf("cursor rested on %v after clamp from %d", m.rows[m.cursor].kind, i)
+		}
 	}
 }
 
@@ -177,8 +180,8 @@ func TestCollapseHidesChildrenAndKeepsCursor(t *testing.T) {
 	// Fold via the tree row; children vanish, cursor stays on the tree row.
 	m.cursor = rowIndex(m, rowTree)
 	m.updateNormal(key(" "))
-	if len(m.rows) != 1 || m.rows[0].kind != rowTree {
-		t.Fatalf("collapsed rows = %d, want 1 tree row", len(m.rows))
+	if len(m.rows) != pmSectionRows+1 || m.rows[pmSectionRows].kind != rowTree {
+		t.Fatalf("collapsed rows = %d, want the PM section and 1 tree row", len(m.rows))
 	}
 	if sel := m.selected(); sel == nil || sel.kind != rowTree || sel.tree != "oslo" {
 		t.Fatalf("cursor not on tree row after collapse: %+v", sel)
@@ -478,7 +481,7 @@ func TestPendingPrefixFallsThrough(t *testing.T) {
 
 func TestJumpTreeMovesBetweenSupatrees(t *testing.T) {
 	m := threeTrees(t)
-	m.cursor = 0 // berlin's tree row
+	m.cursor = rowIndex(m, rowTree) // berlin's tree row
 
 	_, _ = m.Update(key("}"))
 	if got := treeAt(m, m.cursor); got != cairo || m.rows[m.cursor].kind != rowTree {
@@ -516,8 +519,8 @@ func TestFoldAllAndUnfoldAll(t *testing.T) {
 
 	_, _ = m.Update(key("z"))
 	_, _ = m.Update(key("M"))
-	if len(m.rows) != 3 {
-		t.Fatalf("zM: %d rows, want 3 (one per collapsed tree)", len(m.rows))
+	if len(m.rows) != pmSectionRows+3 {
+		t.Fatalf("zM: %d rows, want the PM section and 3 (one per collapsed tree)", len(m.rows))
 	}
 	for _, name := range []string{berlin, cairo, delhi} {
 		if !m.ui.TreeCollapsed(name) {
@@ -573,20 +576,25 @@ func TestClickSelectsRow(t *testing.T) {
 	m.cursor = 0
 	m.viewport(50) // everything visible, scroll 0
 
-	// Row index 4 is berlin's first member (tree, agents, main, repositories, ...).
+	// berlin's first member follows the PM section, then tree, agents, main,
+	// repositories.
+	member := pmSectionRows + 4
 	_, _ = m.Update(tea.MouseMsg{
-		Button: tea.MouseButtonLeft, Action: tea.MouseActionRelease, Y: 4 + rowsTopOffset,
+		Button: tea.MouseButtonLeft, Action: tea.MouseActionRelease, Y: member + rowsTopOffset,
 	})
-	if m.cursor != 4 {
-		t.Fatalf("click selected row %d, want 4", m.cursor)
+	if m.cursor != member || m.rows[m.cursor].kind != rowMember {
+		t.Fatalf("click selected row %d, want member row %d", m.cursor, member)
 	}
 
-	// Clicking a subheader is ignored — the cursor never rests on one.
-	_, _ = m.Update(tea.MouseMsg{
-		Button: tea.MouseButtonLeft, Action: tea.MouseActionRelease, Y: 1 + rowsTopOffset,
-	})
-	if m.cursor != 4 {
-		t.Fatalf("click on a subheader moved the cursor to %d", m.cursor)
+	// Clicking a subheader or the divider is ignored — the cursor never rests on
+	// either.
+	for _, y := range []int{1, pmSectionRows + 1} {
+		_, _ = m.Update(tea.MouseMsg{
+			Button: tea.MouseButtonLeft, Action: tea.MouseActionRelease, Y: y + rowsTopOffset,
+		})
+		if m.cursor != member {
+			t.Fatalf("click on non-selectable row %d moved the cursor to %d", y, m.cursor)
+		}
 	}
 }
 
@@ -791,5 +799,53 @@ func TestHelpOpensAndCloses(t *testing.T) {
 	}
 	if strings.Contains(m.View(), "press any key to close") {
 		t.Error("help still rendered after being dismissed")
+	}
+}
+
+// The PM section leads the list even with no supatrees, is where gg lands, and
+// the tree-scoped keys do nothing on it rather than acting on a tree named "".
+func TestPMRowPinnedAtTop(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	m := New(supatree.DefaultConfig(), config.DefaultConfig(), zellij.Workspace{})
+	if got := rowKinds(m); !slices.Equal(got, []rowKind{rowPM, rowDivider}) {
+		t.Fatalf("empty rows = %v, want the PM section alone", got)
+	}
+	if out := m.View(); !strings.Contains(out, "◆ PM") {
+		t.Errorf("empty view missing the PM row:\n%s", out)
+	}
+
+	m = threeTrees(t)
+	m.cursor = rowIndex(m, rowTree)
+	_, _ = m.Update(key("k"))
+	if sel := m.selected(); sel == nil || sel.kind != rowPM {
+		t.Fatalf("k from the first tree landed on %+v, want the PM row (skipping the divider)", sel)
+	}
+	if !strings.Contains(m.footer(), "enter PM") {
+		t.Errorf("footer on the PM row = %q, want the PM hint", m.footer())
+	}
+
+	before := len(m.rows)
+	for _, k := range []string{" ", "h", "l", "a", "d", "s"} {
+		_, cmd := m.Update(key(k))
+		if m.mode != modeNormal || cmd != nil || len(m.rows) != before {
+			t.Fatalf("%q on the PM row acted: mode %v, cmd %v, rows %d→%d", k, m.mode, cmd != nil, before, len(m.rows))
+		}
+	}
+	if cmd := m.handToPM(); cmd != nil {
+		t.Error("m on the PM row queued a request about no supatree")
+	}
+}
+
+func TestPMRowShowsPendingAndRunning(t *testing.T) {
+	m := threeTrees(t)
+	pm := m.renderPM(false)
+	if strings.Contains(pm, "✉") || strings.Contains(pm, "●") {
+		t.Fatalf("idle PM row has badges: %q", pm)
+	}
+	_, _ = m.Update(pmPendingMsg{n: 2})
+	_, _ = m.Update(runningMsg{tabs: map[string]bool{supatree.PMTab: true}})
+	pm = m.renderPM(false)
+	if !strings.Contains(pm, "✉2") || !strings.Contains(pm, "●") {
+		t.Fatalf("PM row = %q, want the pending count and the running dot", pm)
 	}
 }
