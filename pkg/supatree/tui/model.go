@@ -19,11 +19,6 @@ import (
 
 const (
 	tickInterval = 30 * time.Second
-	// prStaleAge bounds how old a cached PR status may be before a fetch is
-	// allowed. Combined with the on-disk cache and InBackoff, it stops the
-	// sidebar's restart loop (and per-tab sidebars) from exhausting the gh
-	// rate limit.
-	prStaleAge = supatree.PRStaleAge
 	// wheelStep is how many rows one mouse-wheel notch scrolls.
 	wheelStep = 3
 	// fallbackPage is the half-page distance used by ctrl+d/ctrl+u before the
@@ -415,7 +410,12 @@ type dirtyMsg struct{ dirty map[string]bool }
 type attentionMsg struct{ attention map[string]bool }
 type pmPendingMsg struct{ n int }
 type runningMsg struct{ tabs map[string]bool }
-type prMsg struct{ err error }
+type prMsg struct {
+	err error
+	// deferred counts branches held back to stay above the shared rate-limit
+	// reserve; the footer surfaces it so a missing status has a reason.
+	deferred int
+}
 
 // prSkippedMsg is emitted when a fetch round was ceded to another sidebar
 // process (the shared fetch lock was busy); it only clears the in-flight flag,

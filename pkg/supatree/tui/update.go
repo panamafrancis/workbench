@@ -46,6 +46,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case msg.err == nil:
 			m.ghAvailable = true
 			m.prHint = ""
+			if msg.deferred > 0 {
+				m.prHint = "gh quota low"
+			}
 		case github.IsRateLimited(msg.err):
 			// Leave ghAvailable true: the persisted backoff (InBackoff) gates
 			// retries and lifts on its own.
@@ -646,15 +649,14 @@ func (m *Model) backgroundCmds() []tea.Cmd {
 	return cmds
 }
 
-// fetchPRCmd fetches PR status for member branches. When force is false it only
-// fetches entries older than prStaleAge, and it always respects the persisted
-// backoff window. Target selection and the locked gh calls live in
-// supatree.FetchTargets/FetchPRs so the sidebar and the dashboard share one
-// implementation of the quota discipline — see the comments there.
+// fetchPRCmd fetches PR status for member branches through supatree.FetchPRs,
+// so the sidebar, the dashboard and the watcher share one implementation of the
+// quota discipline — see the comments there. It always respects the persisted
+// backoff window; force re-polls unconditionally instead of letting the ETags
+// answer.
 //
-// All of it runs inside the returned command: selecting targets asks git
-// whether each member branch has been pushed (one process per member), which
-// would otherwise stall the sidebar on every tick.
+// All of it runs inside the returned command: a round shells out to git and gh,
+// which would otherwise stall the sidebar on every tick.
 func (m *Model) fetchPRCmd(force bool) tea.Cmd {
 	if m.fetching {
 		return nil
@@ -665,23 +667,21 @@ func (m *Model) fetchPRCmd(force bool) tea.Cmd {
 		// Re-read the on-disk cache first so this long-lived sidebar picks up the
 		// backoff (and freshly cached statuses) another tab's sidebar persisted —
 		// otherwise each tab would independently keep hitting a rate-limited API.
-		// Safe here because the m.fetching guard above rules out an in-flight
-		// writer.
 		_ = cache.Load()
-		if cache.InBackoff(time.Now()) {
+		if cache.InBackoff(github.ResourceCore, time.Now()) {
 			// A peer tab may have armed the backoff; report it here too so every
 			// tab (not just the one that hit the limit) signals that fetches are
 			// paused.
 			return prMsg{err: github.ErrGHRateLimited}
 		}
-		targets := supatree.FetchTargets(insts, cache, force, prStaleAge)
+		targets := supatree.FetchTargets(insts)
 		if len(targets) == 0 {
 			return prSkippedMsg{}
 		}
-		out := supatree.FetchPRs(targets, cache, force, prStaleAge)
+		out := supatree.FetchPRs(targets, cache, force)
 		if out.Skipped {
 			return prSkippedMsg{}
 		}
-		return prMsg{err: out.Err}
+		return prMsg{err: out.Err, deferred: out.Deferred}
 	}
 }

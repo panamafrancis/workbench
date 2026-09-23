@@ -116,9 +116,8 @@ func watchRound(ctx context.Context) error {
 
 	cache := github.NewCache(supatree.PRCachePath())
 	_ = cache.Load()
-	if !cache.InBackoff(time.Now()) {
-		targets := supatree.FetchTargets(insts, cache, false, supatree.PRStaleAge)
-		if out := supatree.FetchPRs(targets, cache, false, supatree.PRStaleAge); out.Err != nil {
+	if !cache.InBackoff(github.ResourceCore, time.Now()) {
+		if out := supatree.FetchPRs(supatree.FetchTargets(insts), cache, false); out.Err != nil {
 			// A failed fetch is not a failed round: the summary below is still
 			// derivable from local git plus whatever the cache already holds.
 			logWatch("PR fetch incomplete: %v", out.Err)

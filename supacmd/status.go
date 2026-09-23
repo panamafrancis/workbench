@@ -35,11 +35,10 @@ var statusCmd = &cobra.Command{
 		_ = cache.Load()
 
 		if statusRefresh {
-			if cache.InBackoff(time.Now()) {
+			if cache.InBackoff(github.ResourceCore, time.Now()) {
 				fmt.Fprintln(os.Stderr, "gh fetches are paused (rate limited) — showing cached status")
 			} else {
-				targets := supatree.FetchTargets(insts, cache, true, supatree.PRStaleAge)
-				out := supatree.FetchPRs(targets, cache, true, supatree.PRStaleAge)
+				out := supatree.FetchPRs(supatree.FetchTargets(insts), cache, true)
 				switch {
 				case out.Skipped:
 					fmt.Fprintln(os.Stderr, "another supatree process is fetching — showing cached status")

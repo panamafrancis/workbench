@@ -4,9 +4,9 @@
 // and only occupying disk.
 //
 // It shares the sidebar's GitHub quota discipline (supatree.FetchTargets /
-// FetchPRs): the dashboard reads the on-disk PR cache and only fetches on the
-// same staleness gate, under the same cross-process try-lock, so running one
-// alongside a screenful of sidebars adds no extra load on the API.
+// FetchPRs): the dashboard reads the on-disk PR cache and fetches through the
+// same conditional repo polls, under the same cross-process cache lock, so
+// running one alongside a screenful of sidebars adds no extra load on the API.
 package dash
 
 import (
@@ -137,16 +137,16 @@ func (m *Model) fetchCmd(force bool) tea.Cmd {
 	stCfg, cache := m.stCfg, m.cache
 	return func() tea.Msg {
 		_ = cache.Load()
-		if cache.InBackoff(time.Now()) {
+		if cache.InBackoff(github.ResourceCore, time.Now()) {
 			// A peer process armed the backoff; surface it here too.
 			return prMsg{backoff: true}
 		}
 		insts, _ := supatree.List(stCfg)
-		targets := supatree.FetchTargets(insts, cache, force, supatree.PRStaleAge)
+		targets := supatree.FetchTargets(insts)
 		if len(targets) == 0 {
 			return prMsg{skipped: true}
 		}
-		out := supatree.FetchPRs(targets, cache, force, supatree.PRStaleAge)
+		out := supatree.FetchPRs(targets, cache, force)
 		return prMsg{err: out.Err, skipped: out.Skipped}
 	}
 }

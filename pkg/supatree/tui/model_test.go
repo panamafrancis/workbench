@@ -232,8 +232,13 @@ func TestReposFoldedByDefaultWithCountBadge(t *testing.T) {
 			{Alias: "db", Branch: "st/oslo/db"},
 		},
 	}}
-	m.prCache.Set("st/oslo/web", &github.PRInfo{Status: github.PROpen, Number: 1})
-	m.prCache.Set("st/oslo/api", &github.PRInfo{Status: github.PRMerged, Number: 2})
+	if err := m.prCache.Mutate(func(w *github.Writable) error {
+		w.Set("st/oslo/web", &github.PRInfo{Status: github.PROpen, Number: 1})
+		w.Set("st/oslo/api", &github.PRInfo{Status: github.PRMerged, Number: 2})
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
 	m.rebuildRows()
 
 	if rowIndex(m, rowMember) != -1 {

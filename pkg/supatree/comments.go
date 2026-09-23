@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/panamafrancis/workbench/pkg/config"
 	"github.com/panamafrancis/workbench/pkg/github"
 )
 
@@ -49,7 +48,7 @@ func (c commentsCache) save() error {
 
 // commentsKey identifies a PR's feedback. It carries the branch as well as the
 // number because the PR cache is keyed on branch name alone and two member
-// repos can share one — the same reasoning that makes ResolvePR check the URL.
+// repos can share one — the same reasoning that makes Sync check a PR number against its URL.
 func commentsKey(branch string, number int) string {
 	return fmt.Sprintf("%s#%d", branch, number)
 }
@@ -85,33 +84,37 @@ func Comments(inst *Instance, alias string, cache *github.Cache, force bool) (*g
 		fb := e.Feedback
 		return &fb, nil
 	}
-	if cache.InBackoff(time.Now()) {
-		return nil, fmt.Errorf("gh fetches are paused (rate limited)")
+	if cache.InBackoff(github.ResourceGraphQL, time.Now()) {
+		return nil, fmt.Errorf("gh GraphQL fetches are paused until %s (rate limited)",
+			cache.RetryAfter(github.ResourceGraphQL).Format(time.Kitchen))
 	}
 
 	var fb *github.PRFeedback
-	// The blocking lock, not the try-lock the pollers use: somebody explicitly
-	// asked for this, so waiting out another process's round is right where
-	// returning nothing would not be.
-	err := config.WithFileLock(PRCacheLockPath(), func() error {
-		var err error
-		fb, err = github.PRComments(member.Path, pr.Number)
-		if err != nil {
-			if github.IsRateLimited(err) {
-				// Arm the same persisted cooldown every other fetch path
-				// observes, so one rate-limited comment fetch does not leave the
-				// sidebars hammering away.
-				cache.SetRetryAfter(time.Now().Add(RateLimitCooldown))
-				_ = cache.Save()
-			}
-			return err
+	var fetchErr error
+	// The blocking mutation, not the try-lock the pollers use: somebody
+	// explicitly asked for this, so waiting out another process's round is
+	// right where returning nothing would not be. Holding the cache lock also
+	// serializes this burst with the pollers', and guards the comments cache.
+	err := cache.Mutate(func(w *github.Writable) error {
+		fb, fetchErr = github.PRComments(member.Path, pr.Number)
+		if fetchErr == nil {
+			cc := loadCommentsCache()
+			cc.Entries[key] = commentsEntry{PRUpdatedAt: pr.UpdatedAt, Feedback: *fb}
+			return cc.save()
 		}
-		cc := loadCommentsCache()
-		cc.Entries[key] = commentsEntry{PRUpdatedAt: pr.UpdatedAt, Feedback: *fb}
-		return cc.save()
+		// Arm the same persisted cooldown every other fetch path observes,
+		// against the GraphQL bucket this query spends, so one rate-limited
+		// comment fetch does not leave the sidebars hammering away. The
+		// mutation itself must succeed for the cooldown to be written; the
+		// fetch error is reported after it.
+		github.ArmCooldown(w, fetchErr, time.Now(), github.ResourceGraphQL)
+		return nil
 	})
 	if err != nil {
 		return nil, err
+	}
+	if fetchErr != nil {
+		return nil, fetchErr
 	}
 	return fb, nil
 }

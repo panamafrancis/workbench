@@ -404,7 +404,7 @@ func handleCreatePR(args map[string]any) (string, bool) {
 			return fmt.Sprintf("dependencies without PRs yet: %s (pass force=true to override)", strings.Join(missing, ", ")), true
 		}
 	}
-	out, err := createOnePR(m.Path, m.Base, args)
+	out, err := createOnePR(m.Path, m.Base, m.CacheKey(), args)
 	if err != nil {
 		return out, true
 	}
@@ -433,7 +433,7 @@ func handleCreatePRs(args map[string]any) (string, bool) {
 			fmt.Fprintf(&b, "%s: skipped (no commits ahead)\n", m.Alias)
 			continue
 		}
-		out, err := createOnePR(m.Path, m.Base, args)
+		out, err := createOnePR(m.Path, m.Base, m.CacheKey(), args)
 		if err != nil {
 			fmt.Fprintf(&b, "%s: ERROR %s\n", m.Alias, strings.TrimSpace(out))
 			continue
@@ -573,6 +573,42 @@ func shortSHA(sha string) string {
 	return sha
 }
 
+const (
+	// prStatusMaxAge bounds how stale a cached status may be before an explicit
+	// pr_status call re-fetches it. Short, because the tool is interactive — but
+	// non-zero, so an agent calling it repeatedly in one turn (or right after
+	// create_prs) reads the cache the sidebars already filled instead of
+	// re-asking GitHub for every member.
+	prStatusMaxAge = 2 * time.Minute
+)
+
+// syncMembers brings the cache up to date for the given member branches using
+// the same path the sidebars use: one conditional poll per repo, free when
+// nothing changed, with a per-branch REST lookup only for what a poll cannot
+// settle. Going through github.Sync is what keeps an agent's tool call from
+// costing a GraphQL request per member — and what makes it observe (and arm)
+// the same shared cooldown every sidebar observes.
+func syncMembers(cache *github.Cache, members []*Member) (github.SyncReport, error) {
+	targets := make([]github.Target, 0, len(members))
+	for _, m := range members {
+		if m.Exists {
+			targets = append(targets, MemberTarget(m))
+		}
+	}
+	var report github.SyncReport
+	if len(targets) == 0 {
+		return report, nil
+	}
+	err := cache.Mutate(func(w *github.Writable) error {
+		report = github.Sync(w, targets, github.SyncOptions{
+			MaxAge:     prStatusMaxAge,
+			MaxLookups: len(targets),
+		})
+		return nil
+	})
+	return report, err
+}
+
 func handlePRStatus(map[string]any) (string, bool) {
 	_, _, inst, err := currentInstance()
 	if err != nil {
@@ -582,14 +618,23 @@ func handlePRStatus(map[string]any) (string, bool) {
 	_ = cache.Load()
 	insts := []*Instance{inst}
 
-	// An agent asking for status wants a current answer, so force past the
-	// staleness gate — but still go through the shared locked fetch, which skips
-	// unpushed branches and honors a rate-limit backoff.
+	// Through the same Sync the sidebars use: one conditional poll per repo,
+	// free when nothing changed, so an agent calling this repeatedly costs
+	// nothing — and it observes (and arms) the shared cooldown.
+	members := make([]*Member, 0, len(inst.Members))
+	for i := range inst.Members {
+		members = append(members, &inst.Members[i])
+	}
 	note := ""
-	if cache.InBackoff(time.Now()) {
-		note = "\n(GitHub fetches are paused after a rate limit — this is cached status.)"
-	} else if out := FetchPRs(FetchTargets(insts, cache, true, PRStaleAge), cache, true, PRStaleAge); out.Err != nil {
-		note = fmt.Sprintf("\n(PR fetch incomplete: %v — some entries may be cached.)", out.Err)
+	report, syncErr := syncMembers(cache, members)
+	switch {
+	case syncErr != nil:
+		note = fmt.Sprintf("\n(PR fetch failed: %v — this is cached status.)", syncErr)
+	case report.Paused:
+		note = fmt.Sprintf("\n(GitHub fetches are paused until %s after a rate limit — this is cached status.)",
+			cache.RetryAfter(github.ResourceCore).Format(time.Kitchen))
+	case report.Err != nil:
+		note = fmt.Sprintf("\n(PR fetch incomplete: %v — some entries may be cached.)", report.Err)
 	}
 
 	sum := Status(insts, cache, StatusOptions{})
@@ -623,41 +668,65 @@ func handlePRStatus(map[string]any) (string, bool) {
 	return b.String(), false
 }
 
-// depsWithoutPRs returns dependency aliases of m that have no open/merged PR. A
-// lookup that fails is reported as an error rather than counted as "no PR":
-// that distinction is what the caller refuses on, and a rate-limited or
-// unauthenticated gh would otherwise read as every dependency missing its PR.
+// depsWithoutPRs returns dependency aliases of m that have no open/merged PR.
+// A failed lookup is reported as an error rather than folded into the missing
+// list: treating a rate-limited or unauthenticated gh as "this dependency has
+// no PR" blocks stacking on a fact that was never established.
 func depsWithoutPRs(inst *Instance, m *Member) ([]string, error) {
-	// The cache supplies known PR refs so a dependency whose PR merged under a
-	// previous branch slug still resolves (see github.ResolvePR) instead of
-	// reading as "no PR yet" and blocking the create.
+	deps := make([]*Member, 0, len(m.DependsOn))
+	for _, alias := range m.DependsOn {
+		if dm := inst.FindMember(alias); dm != nil {
+			deps = append(deps, dm)
+		}
+	}
+	if len(deps) == 0 {
+		return nil, nil
+	}
+
 	cache := github.NewCache(PRCachePath())
 	_ = cache.Load()
+	report, err := syncMembers(cache, deps)
+	if err != nil {
+		return nil, err
+	}
+	if report.Paused {
+		return nil, fmt.Errorf("gh fetches are paused until %s after a rate limit",
+			cache.RetryAfter(github.ResourceCore).Format(time.Kitchen))
+	}
+
 	var missing []string
-	for _, dep := range m.DependsOn {
-		dm := inst.FindMember(dep)
-		if dm == nil {
+	for _, dm := range deps {
+		info := cache.Get(dm.CacheKey())
+		if info == nil && dm.Review == nil && !git.HasRemoteBranch(dm.Path, dm.Branch) {
+			// Sync skips a branch that was never pushed, since it cannot have a
+			// PR — which is exactly the answer this check is asking for.
+			missing = append(missing, dm.Alias)
 			continue
 		}
-		info, err := github.ResolvePR(dm.Path, dm.Branch, cache.Ref(dm.Branch))
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", dep, err)
+		if info == nil {
+			// No answer at all — say so rather than calling it "no PR". Sync's
+			// own error, if it had one, explains why.
+			if report.Err != nil {
+				return nil, fmt.Errorf("%s: %w", dm.Alias, report.Err)
+			}
+			return nil, fmt.Errorf("%s: could not determine PR status", dm.Alias)
 		}
-		if info == nil || info.Status == github.PRNone {
-			missing = append(missing, dep)
+		if info.Status == github.PRNone {
+			missing = append(missing, dm.Alias)
 		}
 	}
 	sort.Strings(missing)
 	return missing, nil
 }
 
-// createOnePR pushes HEAD and runs gh pr create in worktreePath.
+// createOnePR pushes HEAD and runs gh pr create in worktreePath, caching the
+// PR it just created under key.
 //
 // base is the branch the pull request targets, empty for the repository
 // default. A tree forked from a review sets it to the author's branch, so the
 // change arrives as a proposal on their pull request rather than as a rival one
 // against main.
-func createOnePR(worktreePath, base string, args map[string]any) (string, error) {
+func createOnePR(worktreePath, base, key string, args map[string]any) (string, error) {
 	pushCtx, pushCancel := mcp.ToolContext()
 	defer pushCancel()
 	if out, err := exec.CommandContext(pushCtx, "git", "-C", worktreePath, "push", "-u", "origin", "HEAD").CombinedOutput(); err != nil {
@@ -687,7 +756,12 @@ func createOnePR(worktreePath, base string, args map[string]any) (string, error)
 	if err != nil {
 		return fmt.Sprintf("gh pr create failed: %s", strings.TrimSpace(string(out))), err
 	}
-	return strings.TrimSpace(string(out)), nil
+	text := strings.TrimSpace(string(out))
+	// We know this PR exists without asking anyone: cache it now so the sidebar
+	// shows it immediately instead of on the next poll.
+	draft, _ := args["draft"].(bool)
+	github.RecordCreatedPR(PRCachePath(), key, text, draft)
+	return text, nil
 }
 
 const supatreeDocs = `Supatree — multi-repo worktrees for one issue.

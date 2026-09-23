@@ -6,8 +6,10 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/panamafrancis/workbench/pkg/config"
 	"github.com/panamafrancis/workbench/pkg/docs"
 	"github.com/panamafrancis/workbench/pkg/git"
+	"github.com/panamafrancis/workbench/pkg/github"
 )
 
 // Run starts the workbench MCP server on stdio.
@@ -145,6 +147,13 @@ func handleCreatePR(args map[string]any) (string, bool) {
 	ghOut, err := exec.CommandContext(ghCtx, "gh", ghArgs...).CombinedOutput()
 	if err != nil {
 		return fmt.Sprintf("gh pr create failed: %s\n%s", err, string(ghOut)), true
+	}
+
+	// The PR is known to exist right now, so cache it rather than making the
+	// sidebar discover it on a later poll.
+	if branch != "" {
+		draft, _ := args["draft"].(bool)
+		github.RecordCreatedPR(config.PRCachePath(), branch, string(ghOut), draft)
 	}
 
 	return strings.TrimSpace(string(pushOut)) + "\n" + strings.TrimSpace(string(ghOut)), false

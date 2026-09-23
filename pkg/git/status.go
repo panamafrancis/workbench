@@ -27,6 +27,31 @@ func BranchName(worktreePath string) string {
 	return strings.TrimSpace(string(out))
 }
 
+// BaseRemoteURL returns the URL of the remote gh treats as the repo's base:
+// the one `gh repo set-default` marked (remote.<name>.gh-resolved = base),
+// falling back to origin. In a fork clone origin is the fork, which holds none
+// of the PRs; gh's own commands query the default repo instead, and so must
+// anything that polls on their behalf.
+func BaseRemoteURL(repoPath string) string {
+	cmd := exec.CommandContext(context.Background(), "git", "-C", repoPath,
+		"config", "--get-regexp", `^remote\..*\.gh-resolved$`)
+	if out, err := cmd.Output(); err == nil {
+		for _, line := range strings.Split(string(out), "\n") {
+			key, value, ok := strings.Cut(strings.TrimSpace(line), " ")
+			if !ok || strings.TrimSpace(value) != "base" {
+				continue
+			}
+			name := strings.TrimSuffix(strings.TrimPrefix(key, "remote."), ".gh-resolved")
+			url, err := exec.CommandContext(context.Background(), "git", "-C", repoPath,
+				"remote", "get-url", name).Output()
+			if err == nil {
+				return strings.TrimSpace(string(url))
+			}
+		}
+	}
+	return OriginURL(repoPath)
+}
+
 // HasRemoteBranch reports whether refs/remotes/origin/<branch> exists in the
 // repo. A branch that was never pushed cannot have a PR, so callers use this to
 // skip a guaranteed-empty `gh pr list` — the dominant source of wasted GitHub
@@ -75,4 +100,16 @@ func UnpushedCommits(worktreePath, branch string) (n int, ok bool) {
 		return 0, false
 	}
 	return n, true
+}
+
+// OriginURL returns the repo's origin remote URL, or "" when it has no origin.
+// Callers derive the GitHub owner/name from it, which is free — asking the API
+// which repo a directory belongs to is not.
+func OriginURL(repoPath string) string {
+	cmd := exec.CommandContext(context.Background(), "git", "-C", repoPath, "remote", "get-url", "origin")
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
