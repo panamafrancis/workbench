@@ -41,7 +41,7 @@ func QueueLaunch(r LaunchRequest) error {
 		return fmt.Errorf("launch request has no tree")
 	}
 	if r.Agent == "" {
-		r.Agent = "main"
+		r.Agent = MainAgent
 	}
 	if err := ValidateAgentName(r.Agent); err != nil {
 		return err

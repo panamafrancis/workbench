@@ -1127,7 +1127,7 @@ func handleNewTree(args map[string]any) (string, bool) {
 		if isErr || !start {
 			return out, isErr
 		}
-		return out + "\n" + startAgentReport(inst, "main", brief), false
+		return out + "\n" + startAgentReport(inst, MainAgent, brief), false
 	}
 
 	// Intent goes in at creation rather than being written back afterwards:
@@ -1144,7 +1144,7 @@ func handleNewTree(args map[string]any) (string, bool) {
 	if strings.TrimSpace(brief) == "" && intent != "" {
 		brief = intent
 	}
-	return out + "\n" + startAgentReport(inst, "main", brief), false
+	return out + "\n" + startAgentReport(inst, MainAgent, brief), false
 }
 
 func handleStartAgent(args map[string]any) (string, bool) {
@@ -1189,7 +1189,7 @@ func startAgentReport(inst *Instance, agent, brief string) string {
 // session id registered here.
 func startAgent(inst *Instance, agent, brief string) (string, error) {
 	if agent == "" {
-		agent = "main"
+		agent = MainAgent
 	}
 	if _, _, err := EnsureAgent(inst.Root, inst.Name, agent, inst.Model, time.Now()); err != nil {
 		return "", err

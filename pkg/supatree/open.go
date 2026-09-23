@@ -10,10 +10,14 @@ import (
 	"github.com/panamafrancis/workbench/pkg/zellij"
 )
 
+// MainAgent is the primary agent every supatree has: the one `enter` opens, and
+// the one a bare tab named after the tree belongs to.
+const MainAgent = "main"
+
 // TabName is the Zellij tab identity for an agent: "<name>" for the primary
 // "main" agent, "<name>:<agent>" otherwise.
 func TabName(tree, agent string) string {
-	if agent == "main" {
+	if agent == MainAgent {
 		return tree
 	}
 	return tree + ":" + agent
@@ -25,7 +29,7 @@ func TabName(tree, agent string) string {
 // (member repos + the stack's scripts/startup), reporting failures to startupW.
 func OpenRootAgent(inst *Instance, wb *config.Config, ws zellij.Workspace, sidebarWidth, agentName, modelOverride string, startupW io.Writer) (bool, error) {
 	if agentName == "" {
-		agentName = "main"
+		agentName = MainAgent
 	}
 	model := inst.Model
 	if modelOverride != "" {
