@@ -10,22 +10,47 @@ import (
 )
 
 type cacheFile struct {
-	Entries    map[string]*PRInfo `json:"entries"`
-	RetryAfter time.Time          `json:"retry_after,omitzero"`
+	Entries     map[string]*PRInfo   `json:"entries"`
+	RetryAfter  time.Time            `json:"retry_after,omitzero"`
+	Unreachable map[string]time.Time `json:"unreachable,omitempty"`
 }
 
 type Cache struct {
 	path       string
 	entries    map[string]*PRInfo
 	retryAfter time.Time
-	mu         sync.RWMutex
+	// unreachable maps a key to when its repository may next be tried. It is
+	// persisted with the entries, because the pollers that would otherwise
+	// retry it every round are separate processes.
+	unreachable map[string]time.Time
+	mu          sync.RWMutex
 }
 
 func NewCache(path string) *Cache {
 	return &Cache{
-		path:    path,
-		entries: make(map[string]*PRInfo),
+		path:        path,
+		entries:     make(map[string]*PRInfo),
+		unreachable: make(map[string]time.Time),
 	}
+}
+
+// UnreachableBackoff is how long a branch whose repository gh cannot see is
+// left alone. Long, because the fix is a human changing a remote or an
+// account, and short enough that a fixed remote is noticed the same day.
+const UnreachableBackoff = 6 * time.Hour
+
+// MarkUnreachable backs key off for UnreachableBackoff: its repository is not
+// visible to gh, so IsStale reports it fresh until the window passes. A forced
+// refresh bypasses IsStale and still tries.
+func (c *Cache) MarkUnreachable(key string, now time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for k, until := range c.unreachable {
+		if !now.Before(until) {
+			delete(c.unreachable, k)
+		}
+	}
+	c.unreachable[key] = now.Add(UnreachableBackoff)
 }
 
 func (c *Cache) Load() error {
@@ -46,12 +71,15 @@ func (c *Cache) Load() error {
 		c.entries = f.Entries
 	}
 	c.retryAfter = f.RetryAfter
+	if f.Unreachable != nil {
+		c.unreachable = f.Unreachable
+	}
 	return nil
 }
 
 func (c *Cache) Save() error {
 	c.mu.RLock()
-	f := cacheFile{Entries: c.entries, RetryAfter: c.retryAfter}
+	f := cacheFile{Entries: c.entries, RetryAfter: c.retryAfter, Unreachable: c.unreachable}
 	data, err := json.MarshalIndent(f, "", "  ")
 	c.mu.RUnlock()
 	if err != nil {
@@ -78,6 +106,8 @@ func (c *Cache) Set(branch string, info *PRInfo) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.entries[branch] = info
+	// It resolved, so whatever made it unreachable has been fixed.
+	delete(c.unreachable, branch)
 }
 
 // Rename moves a cached entry to a new branch key after a local branch rename.
@@ -164,6 +194,9 @@ func (c *Cache) Ref(branch string) PRRef {
 func (c *Cache) IsStale(branch string, maxAge time.Duration) bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
+	if until, ok := c.unreachable[branch]; ok && time.Now().Before(until) {
+		return false
+	}
 	info, ok := c.entries[branch]
 	if !ok {
 		return true

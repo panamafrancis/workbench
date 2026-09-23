@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -38,6 +40,12 @@ var watchCmd = &cobra.Command{
 		"session is open.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		err := config.TryFileLock(supatree.WatchLockPath(), func() error {
+			// Only the winner owns the log: a loser rotating it would move the
+			// file out from under the watcher that is actually running.
+			if !watchOnce {
+				openWatchLog()
+				defer closeWatchLog()
+			}
 			return runWatch(cmd.Context())
 		})
 		// Losing the election is the designed outcome, not a failure: it is what
@@ -63,6 +71,10 @@ func runWatch(ctx context.Context) error {
 	interval := stCfg.ResolveWatchInterval()
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+	// Launches have their own, much faster tick: someone is waiting to see the
+	// agent appear, and checking is one stat of a file, not a GitHub round.
+	launchTicker := time.NewTicker(launchPollInterval)
+	defer launchTicker.Stop()
 
 	if err := watchRound(ctx); err != nil {
 		logWatch("round failed: %v", err)
@@ -71,6 +83,8 @@ func runWatch(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return nil
+		case <-launchTicker.C:
+			runLaunches(ctx)
 		case <-ticker.C:
 			// The daemon is spawned by `supatree start` and outlives its parent
 			// (start execs into zellij), so nothing else will ever reap it. Its
@@ -131,7 +145,62 @@ func watchRound(ctx context.Context) error {
 
 	deliver(ctx, cfg, evs, cur.At)
 	runSchedule(cur.At)
+	if _, err := supatree.ForwardPMMail(insts); err != nil {
+		logWatch("forward PM mail: %v", err)
+	}
+	runLaunches(ctx)
 	return nil
+}
+
+// launchPollInterval is how often the watcher checks the launch queue.
+const launchPollInterval = 2 * time.Second
+
+// runLaunches opens the agents the PM has asked to have started.
+//
+// The PM cannot open a tab itself: it runs inside nono, and the watcher is the
+// only supatree process outside it. Each launch runs as a child `supatree open
+// --background`, which reuses the ordinary open path unchanged — the child is
+// pointed at the session through ZELLIJ_SESSION_NAME, exactly as `--session`
+// already does — and keeps one failed launch from touching the daemon.
+func runLaunches(ctx context.Context) {
+	if _, err := os.Stat(supatree.LaunchPath()); err != nil {
+		return
+	}
+	reqs, err := supatree.DrainLaunches()
+	if err != nil {
+		logWatch("drain launches: %v", err)
+		return
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		logWatch("launch: %v", err)
+		return
+	}
+	for _, r := range reqs {
+		session := r.Session
+		if session == "" {
+			session = watchSession
+		}
+		if session == "" {
+			logWatch("launch %s:%s: no zellij session to open it in (start the watcher with --session)", r.Tree, r.Agent)
+			continue
+		}
+		// An unreadable session list is not proof the session is gone, so only
+		// a definite "not running" skips the launch.
+		if alive, err := zellij.SessionAlive(session); err == nil && !alive {
+			logWatch("launch %s:%s: zellij session %s is not running — open the agent from the sidebar instead", r.Tree, r.Agent, session)
+			continue
+		}
+		lctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+		cmd := exec.CommandContext(lctx, exe, "open", r.Tree, "--agent", r.Agent, "--session", session, "--background")
+		out, err := cmd.CombinedOutput()
+		cancel()
+		if err != nil {
+			logWatch("launch %s:%s: %v: %s", r.Tree, r.Agent, err, strings.TrimSpace(string(out)))
+			continue
+		}
+		logWatch("launched %s:%s in %s", r.Tree, r.Agent, session)
+	}
 }
 
 // runSchedule fires any due jobs by queueing them for the PM.
@@ -250,6 +319,12 @@ func focusedTree() string {
 	if watchSession == "" {
 		return ""
 	}
+	// dump-layout sent to a session that is shutting down makes zellij's
+	// server panic ("Failed to dump layout"). The watcher only notices a dead
+	// session on its next tick, so check before asking.
+	if alive, err := zellij.SessionAlive(watchSession); err != nil || !alive {
+		return ""
+	}
 	tab := zellij.FocusedTab(watchSession)
 	if tab == "" {
 		return ""
@@ -276,10 +351,68 @@ func watchSessionsAlive() bool {
 	return false
 }
 
-// logWatch writes a diagnostic line. The daemon's stdio is redirected to a log
-// file by whoever spawned it, so this is simply stderr.
+// watchLogMax is the size at which watch.log is rotated to watch.log.1. One
+// generation, like the event ledger: enough to see what led up to a problem,
+// bounded so a repeating error cannot fill the disk.
+const watchLogMax = 1 << 20
+
+var watchLog struct {
+	f    *os.File
+	size int64
+}
+
+// openWatchLog points logWatch at ~/.supatree/logs/watch.log. Best effort: if
+// it cannot be opened, lines go to stderr as before.
+func openWatchLog() {
+	if err := os.MkdirAll(supatree.LogsDir(), 0755); err != nil {
+		return
+	}
+	path := watchLogPath()
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		return
+	}
+	watchLog.f = f
+	if st, err := f.Stat(); err == nil {
+		watchLog.size = st.Size()
+	}
+}
+
+func closeWatchLog() {
+	if watchLog.f != nil {
+		_ = watchLog.f.Close()
+		watchLog.f = nil
+	}
+}
+
+func watchLogPath() string { return filepath.Join(supatree.LogsDir(), "watch.log") }
+
+// rotateWatchLog moves a full log aside and starts a fresh one. Rotating
+// before the write, not after, so the line that tripped it lands in the new
+// file rather than the one being renamed away.
+func rotateWatchLog() {
+	closeWatchLog()
+	_ = os.Rename(watchLogPath(), watchLogPath()+".1")
+	openWatchLog()
+}
+
+// logWatch writes a diagnostic line to watch.log, or to stderr when the
+// watcher has no log of its own (a --once run from a shell or cron).
 func logWatch(format string, args ...any) {
-	fmt.Fprintf(os.Stderr, "[%s] "+format+"\n", append([]any{time.Now().Format(time.RFC3339)}, args...)...)
+	line := fmt.Sprintf("[%s] "+format+"\n", append([]any{time.Now().Format(time.RFC3339)}, args...)...)
+	if watchLog.f == nil {
+		fmt.Fprint(os.Stderr, line)
+		return
+	}
+	if watchLog.size+int64(len(line)) > watchLogMax {
+		rotateWatchLog()
+		if watchLog.f == nil {
+			fmt.Fprint(os.Stderr, line)
+			return
+		}
+	}
+	n, _ := watchLog.f.WriteString(line)
+	watchLog.size += int64(n)
 }
 
 func init() {

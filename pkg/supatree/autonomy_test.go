@@ -25,6 +25,15 @@ func TestResolveAutonomy(t *testing.T) {
 		{name: "outward inherits", cfg: Config{DefaultOutward: true}, wantLevel: AutonomyNudge, wantOutward: true},
 		{name: "tree can revoke outward", cfg: Config{DefaultOutward: true},
 			meta: &Meta{Outward: boolPtr(false)}, wantLevel: AutonomyNudge},
+		// Posting the review is what a review tree is for.
+		{name: "review tree may post by default",
+			meta: &Meta{Mode: ModeReviewing}, wantLevel: AutonomyNudge, wantOutward: true},
+		{name: "review_outward false withholds it", cfg: Config{ReviewOutward: boolPtr(false)},
+			meta: &Meta{Mode: ModeReviewing}, wantLevel: AutonomyNudge},
+		{name: "review tree can still revoke outward",
+			meta: &Meta{Mode: ModeReviewing, Outward: boolPtr(false)}, wantLevel: AutonomyNudge},
+		{name: "review default does not leak to authoring trees",
+			meta: &Meta{}, wantLevel: AutonomyNudge},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

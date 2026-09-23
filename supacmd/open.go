@@ -11,10 +11,11 @@ import (
 )
 
 var (
-	openAgent   string
-	openModel   string
-	openRepo    string
-	openSession string
+	openAgent      string
+	openModel      string
+	openRepo       string
+	openSession    string
+	openBackground bool
 )
 
 var openCmd = &cobra.Command{
@@ -40,7 +41,17 @@ var openCmd = &cobra.Command{
 // openRootAgent opens or resumes a named agent running at the supatree root.
 func openRootAgent(inst *supatree.Instance) error {
 	ensureZellij()
+	// Opening a tab focuses it. A launch nobody at the keyboard asked for — the
+	// watcher acting on the PM's start_agent — must not take the terminal away
+	// from whoever is typing, so put the focus back where it was.
+	prev := ""
+	if openBackground {
+		prev = zellij.FocusedTab("")
+	}
 	_, err := supatree.OpenRootAgent(inst, wbCfg, supatreeWorkspace(), stCfg.ResolveSidebarWidth(), openAgent, openModel, os.Stderr)
+	if err == nil && prev != "" && prev != supatree.TabName(inst.Name, openAgent) {
+		_ = zellij.GoToTab(prev)
+	}
 	return err
 }
 
@@ -70,4 +81,5 @@ func init() {
 	openCmd.Flags().StringVar(&openModel, "model", "", "model override (default: supatree's model)")
 	openCmd.Flags().StringVar(&openRepo, "repo", "", "open an agent scoped to a single member repo instead of the root")
 	openCmd.Flags().StringVar(&openSession, "session", "", "target a specific Zellij session")
+	openCmd.Flags().BoolVar(&openBackground, "background", false, "return focus to the previously focused tab after opening")
 }

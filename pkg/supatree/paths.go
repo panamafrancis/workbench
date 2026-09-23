@@ -194,3 +194,16 @@ func RequestsLockPath() string {
 // OpenOrFocusTab focuses a live tab rather than opening a second one, it is
 // also what makes the PM a singleton.
 const PMTab = "supatree-pm"
+
+// LaunchPath is the queue of agents the PM has asked to have started. It lives
+// in the PM's own directory because that is the one place its sandbox is
+// guaranteed to write; the watcher, outside the sandbox, drains it and opens
+// the tabs.
+func LaunchPath() string {
+	return filepath.Join(PMDir(), "launch.jsonl")
+}
+
+// LaunchLockPath serializes appends to and drains of the launch queue.
+func LaunchLockPath() string {
+	return LaunchPath() + ".lock"
+}

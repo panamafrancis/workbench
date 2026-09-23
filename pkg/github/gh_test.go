@@ -218,6 +218,7 @@ func TestClassifyGHError(t *testing.T) {
 		{"rate limit", 1, "API rate limit exceeded", ErrGHRateLimited},
 		{"unknown pr number", 1, "GraphQL: Could not resolve to a PullRequest with the number of 999999.", ErrPRNotFound},
 		{"no pr for branch", 1, "no pull requests found for branch", ErrPRNotFound},
+		{"repo not visible", 1, "GraphQL: Could not resolve to a Repository with the name 'PiwikPRO/fraud0_api_contract'. (repository)", ErrRepoNotFound},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

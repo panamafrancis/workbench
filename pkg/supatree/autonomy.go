@@ -43,7 +43,8 @@ type Permission struct {
 	// are different kinds of risk — one is private and recoverable, the other is
 	// published and permanent — so folding the second into `auto` would mean
 	// wanting unattended tree creation also granted a public voice. It defaults
-	// off at every level, including `auto`.
+	// off at every level, including `auto` — except in a review tree, where
+	// posting the review is the job (see Config.ReviewOutward).
 	Outward bool
 	// Scheduled marks a turn nobody is watching. A scheduled job caps at
 	// `nudge` however the tree is configured, unless its entry opts in.
@@ -79,6 +80,9 @@ func (c *Config) Resolve(meta *Meta) Permission {
 		p.Level = Autonomy(c.DefaultAutonomy)
 	}
 	p.Outward = c.DefaultOutward
+	if meta != nil && meta.Reviewing() {
+		p.Outward = c.ReviewOutward == nil || *c.ReviewOutward
+	}
 	if meta != nil {
 		if ValidAutonomy(meta.Autonomy) {
 			p.Level = Autonomy(meta.Autonomy)

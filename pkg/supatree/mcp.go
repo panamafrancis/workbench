@@ -108,7 +108,8 @@ func MCPServer(version string) *mcp.Server {
 				Description: "Review trees only: submit ONE batched review to a member's PR, with inline comments. " +
 					"Line numbers must come from the PR head (what is checked out here) — numbers from the base branch land on unrelated code. " +
 					"Anchored to the commit this tree has checked out, so it refuses when the author has pushed since: refresh and re-read first. " +
-					"Publishing in the user's name, so it requires the `outward` permission.",
+					"Publishes in the user's name: allowed in review trees unless the human turned `outward` off. " +
+					"event APPROVE approves the PR, REQUEST_CHANGES blocks it, COMMENT (default) does neither.",
 				InputSchema: mcp.ObjectSchema(map[string]any{
 					argRepo:    mcp.StringProp("Member repo alias"),
 					"body":     mcp.StringProp("The review body: the verdict and anything that is not tied to one line"),
@@ -218,15 +219,28 @@ func MCPServer(version string) *mcp.Server {
 			},
 			{
 				Name:        "new_tree",
-				Description: "PM: create a supatree from a stack — or, with `prs`, a review tree for someone else's pull requests. Needs autonomy 'auto' to do unasked, or `asked` when the human has asked you to. Returns the name; it does NOT open a tab — opening focuses it and takes the terminal away from whoever is using it.",
+				Description: "PM: create a supatree from a stack — or, with `prs`, a review tree for someone else's pull requests. Needs autonomy 'auto' to do unasked, or `asked` when the human has asked you to. With `start`, its main agent is also launched in the background and set to work on `brief` (a review tree gets a full review brief by default); without it, the tree just waits for the human.",
 				InputSchema: mcp.ObjectSchema(map[string]any{
 					"stack":  mcp.StringProp("Stack alias (omit if only one is registered)"),
 					"name":   mcp.StringProp("Supatree name (omit to auto-generate)"),
 					"intent": mcp.StringProp("What this supatree is for — the issue or task. Recorded, and worth filling in: the branch rename discards the generated name."),
 					"prs":    mcp.StringProp("Comma-separated pull request URLs (or owner/repo#number). Given these, the tree is a REVIEW tree instead: each repo is checked out at its PR head and the authoring commands are refused. Use this when the task is reviewing someone else's cross-repo change rather than writing one."),
 					"asked":  mcp.BoolProp("The human asked for this in this turn. Set it only then — it is what distinguishes a request from your own initiative, and below autonomy 'auto' it is the difference between doing this and reporting that you could"),
+					"start":  mcp.BoolProp("Also launch the tree's main agent in the background and have it start on `brief` straight away. Focus returns to wherever the human was."),
+					"brief":  mcp.StringProp("What the started agent should do. Delivered to its mailbox before it launches. Omit on a review tree for the default: a full review written to .supatree/review.md, posted if permitted, and a summary back to you."),
 				}, nil),
 				Handler: handleNewTree,
+			},
+			{
+				Name:        "start_agent",
+				Description: "PM: launch an agent in an existing supatree, in the background, briefed and working. The brief is left in its mailbox and the agent is started with an instruction to read it; if the agent is already running, it gets the brief on its next turn instead. Same autonomy rule as new_tree.",
+				InputSchema: mcp.ObjectSchema(map[string]any{
+					argTree: mcp.StringProp("Supatree name"),
+					"agent": mcp.StringProp("Agent name (default main)"),
+					"brief": mcp.StringProp("What it should do. Omit on a review tree for the default review brief; omit elsewhere to start it on whatever mail is already waiting"),
+					"asked": mcp.BoolProp("The human asked for this in this turn. Set it only then — it is what distinguishes a request from your own initiative, and below autonomy 'auto' it is the difference between doing this and reporting that you could"),
+				}, []string{argTree}),
+				Handler: handleStartAgent,
 			},
 			{
 				Name:        "remove_tree",
@@ -510,8 +524,9 @@ func outwardDenied(inst *Instance, action string) string {
 	}
 	if p := cfg.Resolve(meta); !p.Outward {
 		return fmt.Sprintf("%s is not permitted: it publishes in the user's name, which needs the `outward` "+
-			"permission. That is off by default at every autonomy level. To allow it, set `outward: true` in "+
-			"%s/.supatree/meta.yml, or `default_outward: true` in ~/.supatree/config.yml.\n\n"+
+			"permission. Review trees have it unless `review_outward: false` in ~/.supatree/config.yml or "+
+			"`outward: false` in this tree's meta.yml turns it off. To allow it, set `outward: true` in "+
+			"%s/.supatree/meta.yml, or `review_outward: true` in ~/.supatree/config.yml.\n\n"+
 			"Until then, write the review up and let the human post it.", action, inst.Root)
 	}
 	return ""
@@ -815,17 +830,26 @@ func handleMessageAgent(args map[string]any) (string, bool) {
 	if deny := messagingDenied(inst); deny != "" {
 		return deny, true
 	}
+	from := os.Getenv("SUPATREE_AGENT")
+	if from == "" {
+		from = "unknown"
+	}
+	// The PM is in no tree's agents.yml. Its mail lands in this tree's mailbox
+	// — the only one a sandboxed tree agent can write — and the watcher
+	// forwards it into the PM's request queue.
+	if to == PMAgentName && os.Getenv("SUPATREE_PM") != "1" {
+		if err := Deliver(inst.Root, to, from, text); err != nil {
+			return err.Error(), true
+		}
+		return "left for the PM; the watcher forwards it into the PM's request queue within a few seconds.", false
+	}
 	agents, err := LoadAgents(inst.Root)
 	if err != nil {
 		return err.Error(), true
 	}
 	target := FindAgent(agents, to)
 	if target == nil {
-		return fmt.Sprintf("no agent named %q in supatree %q — call `agents` to see them", to, inst.Name), true
-	}
-	from := os.Getenv("SUPATREE_AGENT")
-	if from == "" {
-		from = "unknown"
+		return fmt.Sprintf("no agent named %q in supatree %q — call `agents` to see them, or `start_agent` to launch one", to, inst.Name), true
 	}
 	if err := Deliver(inst.Root, to, from, text); err != nil {
 		return err.Error(), true
@@ -872,6 +896,7 @@ var pmTools = map[string]bool{
 	"board":       true,
 	"autonomy":    true,
 	"new_tree":    true,
+	"start_agent": true,
 	"remove_tree": true,
 	"history":     true,
 }
@@ -1095,8 +1120,14 @@ func handleNewTree(args map[string]any) (string, bool) {
 	// With pull requests, this is a review tree. Gated identically: it creates
 	// worktrees and checks out code, which is the thing the level governs, even
 	// though a review tree commits nothing and opens no pull requests.
+	start, _ := args["start"].(bool)
+	brief, _ := args["brief"].(string)
 	if prs, _ := args["prs"].(string); strings.TrimSpace(prs) != "" {
-		return createReviewTree(cfg, wb, stack, name, intent, prs)
+		inst, out, isErr := createReviewTree(cfg, wb, stack, name, intent, prs)
+		if isErr || !start {
+			return out, isErr
+		}
+		return out + "\n" + startAgentReport(inst, "main", brief), false
 	}
 
 	// Intent goes in at creation rather than being written back afterwards:
@@ -1106,8 +1137,79 @@ func handleNewTree(args map[string]any) (string, bool) {
 	if err != nil {
 		return err.Error(), true
 	}
-	return fmt.Sprintf("created supatree %q (%d members). It has no tab: tell the human to press enter on it in the sidebar.",
-		inst.Name, len(inst.Members)), false
+	out := fmt.Sprintf("created supatree %q (%d members).", inst.Name, len(inst.Members))
+	if !start {
+		return out + " It has no tab: tell the human to press enter on it in the sidebar, or call start_agent.", false
+	}
+	if strings.TrimSpace(brief) == "" && intent != "" {
+		brief = intent
+	}
+	return out + "\n" + startAgentReport(inst, "main", brief), false
+}
+
+func handleStartAgent(args map[string]any) (string, bool) {
+	name, _ := args[argTree].(string)
+	cfg, inst, err := pmTree(name)
+	if err != nil {
+		return err.Error(), true
+	}
+	meta, err := LoadMeta(inst.Root)
+	if err != nil {
+		return err.Error(), true
+	}
+	if p := cfg.Resolve(meta).AsAsked(argAsked(args)); !p.AllowsMutation() {
+		return p.Deny("starting an agent"), true
+	}
+	agent, _ := args["agent"].(string)
+	brief, _ := args["brief"].(string)
+	out, err := startAgent(inst, agent, brief)
+	if err != nil {
+		return err.Error(), true
+	}
+	return out, false
+}
+
+// startAgentReport is startAgent for a caller that has already succeeded at
+// something (creating the tree) and must not report that as a failure.
+func startAgentReport(inst *Instance, agent, brief string) string {
+	out, err := startAgent(inst, agent, brief)
+	if err != nil {
+		return fmt.Sprintf("the tree exists, but its agent was not started: %v. Call start_agent to retry.", err)
+	}
+	return out
+}
+
+// startAgent briefs an agent and queues it for launch.
+//
+// The brief goes in the mailbox *before* the launch is queued: an agent opened
+// with mail waiting is started with KickoffPrompt, so the order is what makes
+// it start working rather than sit at an empty prompt. The agent is registered
+// first because message delivery to a name nobody launched yet would otherwise
+// be refused by message_agent later, and because the launch resumes by the
+// session id registered here.
+func startAgent(inst *Instance, agent, brief string) (string, error) {
+	if agent == "" {
+		agent = "main"
+	}
+	if _, _, err := EnsureAgent(inst.Root, inst.Name, agent, inst.Model, time.Now()); err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(brief) == "" && inst.Reviewing() {
+		brief = DefaultReviewBrief(inst)
+	}
+	if strings.TrimSpace(brief) != "" {
+		if err := Deliver(inst.Root, agent, PMAgentName, brief); err != nil {
+			return "", fmt.Errorf("brief the agent: %w", err)
+		}
+	} else if !HasMail(inst.Root, agent) {
+		return "", fmt.Errorf("nothing for %s to do: pass a brief", agent)
+	}
+	req := LaunchRequest{Tree: inst.Name, Agent: agent, Session: os.Getenv("ZELLIJ_SESSION_NAME"), From: PMAgentName}
+	if err := QueueLaunch(req); err != nil {
+		return "", fmt.Errorf("queue launch: %w", err)
+	}
+	return fmt.Sprintf("briefed %s and queued it to start in tab %q. The watcher opens it in the background within a few seconds and returns focus to wherever the human was; if nothing appears, `supatree watch` is not running. The agent reports back with message_agent, which reaches you through `requests`.",
+		agent, TabName(inst.Name, agent)), nil
 }
 
 func handleRemoveTree(args map[string]any) (string, bool) {
@@ -1383,9 +1485,12 @@ the one check no single-repo reviewer can make:
 - Post one batched review per pull request with review_post, not prose pointing
   at line numbers and not a stream of separate comments. Several agents each
   posting partial reviews is worse than one review.
-- review_post publishes in the user's name, so it needs the outward permission
-  and is refused without it. That refusal is not a dead end: write the review up
-  and hand it to the human.
+- Pick the verdict deliberately: event APPROVE when nothing blocks,
+  REQUEST_CHANGES when something does, COMMENT when you are not in a position
+  to call it. Approving is a claim you ran the gate and read the tree.
+- review_post publishes in the user's name. Review trees may post unless the
+  human turned outward off; if it is refused, that is not a dead end: write the
+  review up and hand it to the human.
 - If the author has pushed since this tree was made, review_post refuses. Run
   review_refresh, re-read what you had already reviewed, then post — their new
   commits may have answered you already.
@@ -1441,17 +1546,17 @@ func foreignNote(t TreeStatus) string {
 
 // createReviewTree is new_tree's review branch: resolve the pull requests, then
 // build the tree around them.
-func createReviewTree(cfg *Config, wb *config.Config, stack, name, intent, prs string) (string, bool) {
+func createReviewTree(cfg *Config, wb *config.Config, stack, name, intent, prs string) (*Instance, string, bool) {
 	refs, err := ResolvePRRefs(splitList(prs))
 	if err != nil {
-		return err.Error(), true
+		return nil, err.Error(), true
 	}
 	inst, _, err := NewReview(cfg, wb, ReviewOptions{Stack: stack, Name: name, Intent: intent, PRs: refs})
 	if err != nil {
-		return err.Error(), true
+		return nil, err.Error(), true
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "created review tree %q (%d members). It has no tab: tell the human to press enter on it in the sidebar.\n",
+	fmt.Fprintf(&b, "created review tree %q (%d members).\n",
 		inst.Name, len(inst.Members))
 	for _, m := range inst.Members {
 		if m.Review != nil {
@@ -1459,7 +1564,7 @@ func createReviewTree(cfg *Config, wb *config.Config, stack, name, intent, prs s
 		}
 	}
 	b.WriteString("\nThe authoring commands are refused there, and it reports `reviewing` rather than a ship state.")
-	return b.String(), false
+	return inst, b.String(), false
 }
 
 // splitList splits a comma-separated argument, dropping empties so a trailing

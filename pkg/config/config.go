@@ -58,6 +58,11 @@ type Model struct {
 	// of "{agent_name}" is substituted. Empty for models with no such bus, which
 	// then fall back to file mailboxes alone.
 	AgentNameArgs []string `yaml:"agent_name_args,omitempty"`
+	// PromptArgs hand the agent its first message at launch, so it starts
+	// working instead of waiting at an empty prompt. Each occurrence of
+	// "{prompt}" is substituted. Empty for models with no such argument, which
+	// then start idle and pick their instructions up on the first human turn.
+	PromptArgs []string `yaml:"prompt_args,omitempty"`
 }
 
 type Repo struct {
@@ -91,6 +96,7 @@ func DefaultConfig() *Config {
 				NewSessionArgs:    []string{"--session-id", "{session_id}"},
 				ResumeSessionArgs: []string{"--resume", "{session_id}"},
 				AgentNameArgs:     []string{"--name", "{agent_name}"},
+				PromptArgs:        []string{"{prompt}"},
 			},
 			"codex": {
 				NonoProfile: "default",
@@ -157,6 +163,17 @@ func backfillSessionArgs(models map[string]Model) {
 			m.ResumeSessionArgs = dm.ResumeSessionArgs
 			models[key] = m
 		}
+	}
+	// PromptArgs arrived later than the session args, so a config that already
+	// had those backfilled still lacks it. Same rule: shipped key and binary,
+	// never overwriting.
+	for key, dm := range DefaultConfig().Models {
+		m, ok := models[key]
+		if !ok || m.Binary != dm.Binary || len(dm.PromptArgs) == 0 || len(m.PromptArgs) > 0 {
+			continue
+		}
+		m.PromptArgs = dm.PromptArgs
+		models[key] = m
 	}
 }
 

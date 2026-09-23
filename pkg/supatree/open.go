@@ -49,6 +49,13 @@ func OpenRootAgent(inst *Instance, wb *config.Config, ws zellij.Workspace, sideb
 	if err != nil {
 		return false, err
 	}
+	// Mail waiting means somebody briefed this agent before it was running —
+	// the PM starting it, or a sibling. Without a first message it would sit
+	// at an empty prompt until a human typed, and the brief would go unread.
+	// Ignored when the tab is already live: OpenOrFocusTab only focuses it.
+	if HasMail(inst.Root, agentName) {
+		nonoArgs = sandbox.AppendPrompt(nonoArgs, agent.Model, wb, KickoffPrompt)
+	}
 	env := inst.AgentEnv(agentName)
 	tabCreated, err := ws.OpenOrFocusTab(TabName(inst.Name, agentName), inst.Root, sidebarWidth, nonoArgs, env)
 	if err != nil {

@@ -252,3 +252,40 @@ func TestCacheRef(t *testing.T) {
 		t.Errorf("Ref = %+v, want zero", got)
 	}
 }
+
+// A repository gh cannot see must not be retried every round — and must be
+// retried again once it resolves or the window passes.
+func TestCacheUnreachableBackoff(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "pr-status.json")
+	const key = "st/canberra/api"
+
+	c := NewCache(path)
+	c.MarkUnreachable(key, time.Now())
+	if c.IsStale(key, time.Minute) {
+		t.Error("an unreachable key with no entry reported stale — it would be retried every round")
+	}
+	if err := c.Save(); err != nil {
+		t.Fatal(err)
+	}
+	// The pollers are separate processes, so the mark has to survive a reload.
+	reloaded := NewCache(path)
+	if err := reloaded.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.IsStale(key, time.Minute) {
+		t.Error("the unreachable mark did not survive Save/Load")
+	}
+
+	// A mark whose window has passed is tried again.
+	c.MarkUnreachable(key, time.Now().Add(-UnreachableBackoff-time.Minute))
+	if !c.IsStale(key, time.Minute) {
+		t.Error("an expired unreachable mark still suppressed the fetch")
+	}
+
+	// Resolving clears it, so a fixed remote goes back on the normal schedule.
+	c.MarkUnreachable(key, time.Now())
+	c.Set(key, &PRInfo{Status: PRNone, FetchedAt: time.Now().Add(-time.Hour)})
+	if !c.IsStale(key, time.Minute) {
+		t.Error("Set did not clear the unreachable mark")
+	}
+}

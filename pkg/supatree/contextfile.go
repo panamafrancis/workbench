@@ -63,7 +63,8 @@ is capped so that starting a session stays cheap.
 {{end}}## Other agents
 
 Several agents can share this supatree. ` + "`agents`" + ` lists them with their bus
-addresses; ` + "`message_agent`" + ` leaves one a message.
+addresses; ` + "`message_agent`" + ` leaves one a message. Agent ` + "`pm`" + ` reaches
+the PM.
 
 **Check ` + "`inbox`" + ` at the start of each turn.** Messages are delivered to a
 mailbox rather than interrupting you, so nothing tells you one has arrived —
@@ -127,11 +128,18 @@ version:
 - ` + "`review_refresh`" + ` re-fetches the heads when an author pushes. Do it
   before posting: comments anchored to a commit they have passed are marked
   outdated the moment they land.
-- ` + "`review_post`" + ` submits one batched review with inline comments. It
-  needs the ` + "`outward`" + ` permission, which is off by default — if it is
+- ` + "`review_post`" + ` submits one batched review with inline comments, as
+  COMMENT, REQUEST_CHANGES or APPROVE. It publishes in the user's name; review
+  trees may post unless the human turned ` + "`outward`" + ` off. If it is
   refused, write the review up and let the human post it.
 - To propose the fix yourself, ` + "`supatree review fork`" + ` turns this into
   an authoring tree whose pull requests target the authors' branches.
+
+## Messages
+
+**Check ` + "`inbox`" + ` at the start of each turn.** The PM briefs you there —
+often before you were even started — and nothing else tells you a message has
+arrived. To report back to the PM, ` + "`message_agent`" + ` with agent ` + "`pm`" + `.
 `))
 
 // InfoData is the template context for info.md.

@@ -207,17 +207,30 @@ func TestSeedPRCacheIsResolvableButNotAuthoritative(t *testing.T) {
 	}
 }
 
-// Posting publishes in the user's name, so it is refused unless the outward
-// permission is on — which it is not, at any autonomy level, by default.
-func TestReviewPostRefusedWithoutOutward(t *testing.T) {
+// Posting the review is what a review tree is for, so it may post by default —
+// but the human can still withhold that, globally or per tree, and the refusal
+// must name the switch they would flip.
+func TestReviewPostOutwardDefaults(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	inst := &Instance{Name: treeA, Root: filepath.Join(home, "tree"), Mode: ModeReviewing}
+	root := filepath.Join(home, "tree")
+	inst := &Instance{Name: treeA, Root: root, Mode: ModeReviewing}
+	if err := (&Meta{Name: treeA, Mode: ModeReviewing}).Save(root); err != nil {
+		t.Fatal(err)
+	}
+	if msg := outwardDenied(inst, "posting a review"); msg != "" {
+		t.Fatalf("a review tree was refused posting by default:\n%s", msg)
+	}
+
+	off := false
+	if err := (&Config{ReviewOutward: &off}).Save(); err != nil {
+		t.Fatal(err)
+	}
 	msg := outwardDenied(inst, "posting a review")
 	if msg == "" {
-		t.Fatal("posting was permitted with outward off")
+		t.Fatal("posting was permitted with review_outward off")
 	}
-	for _, want := range []string{"outward", "default_outward", "let the human post it"} {
+	for _, want := range []string{"outward", "review_outward", "let the human post it"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("refusal does not mention %q:\n%s", want, msg)
 		}

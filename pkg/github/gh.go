@@ -66,6 +66,13 @@ var ErrGHNotFound = errors.New("gh CLI not found")
 var ErrGHAuth = errors.New("gh auth required")
 var ErrGHRateLimited = errors.New("gh rate limited")
 
+// ErrRepoNotFound means GitHub cannot see the repository a worktree's origin
+// names: it was moved or renamed, or the gh account in use has no access.
+// Retrying it on the ordinary schedule changes nothing and spends quota every
+// round, so fetchers back that one branch off (Cache.MarkUnreachable) rather
+// than aborting the batch — every other repo still resolves.
+var ErrRepoNotFound = errors.New("repository not visible to gh")
+
 // ErrPRNotFound means GitHub has no PR with the number we asked about — it was
 // deleted, or the number belongs to another repo. Distinct from "this branch
 // has no PR", which LookupPR reports as a PRNone result.
@@ -274,6 +281,9 @@ func classifyGHError(err error) error {
 	if strings.Contains(lower, "could not resolve to a pullrequest") || strings.Contains(lower, "no pull requests found") {
 		return ErrPRNotFound
 	}
+	if strings.Contains(lower, "could not resolve to a repository") {
+		return fmt.Errorf("%w: %s", ErrRepoNotFound, strings.TrimSpace(stderr))
+	}
 	return fmt.Errorf("gh: %s", stderr)
 }
 
@@ -369,6 +379,11 @@ func mapStatus(state string, isDraft bool) PRStatus {
 
 func IsPermanentError(err error) bool {
 	return errors.Is(err, ErrGHNotFound) || errors.Is(err, ErrGHAuth)
+}
+
+// IsRepoNotFound reports whether err means gh cannot see the repository.
+func IsRepoNotFound(err error) bool {
+	return errors.Is(err, ErrRepoNotFound)
 }
 
 func IsRateLimited(err error) bool {

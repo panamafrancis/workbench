@@ -35,3 +35,30 @@ func TestBackfillSessionArgsSkipsRepurposedBinary(t *testing.T) {
 		t.Error("must not inject claude flags into a differently-binaried model")
 	}
 }
+
+func TestBackfillPromptArgs(t *testing.T) {
+	// A config whose session args were already backfilled still predates
+	// prompt_args, so the prompt backfill must not hang off the session one.
+	models := map[string]Model{
+		modelClaude: {Binary: "claude", NewSessionArgs: []string{"--session-id", "{session_id}"}},
+		"shell":     {Binary: "bash"},
+	}
+	backfillSessionArgs(models)
+	if got := models[modelClaude].PromptArgs; len(got) != 1 || got[0] != "{prompt}" {
+		t.Errorf("claude should gain prompt args, got %v", got)
+	}
+	if got := models["shell"].PromptArgs; len(got) != 0 {
+		t.Errorf("a model with no shipped prompt args must not gain any, got %v", got)
+	}
+
+	mine := map[string]Model{modelClaude: {Binary: "claude", PromptArgs: []string{"-p", "{prompt}"}}}
+	backfillSessionArgs(mine)
+	if got := mine[modelClaude].PromptArgs; len(got) != 2 {
+		t.Errorf("must not overwrite user prompt args, got %v", got)
+	}
+	other := map[string]Model{modelClaude: {Binary: "some-other-cli"}}
+	backfillSessionArgs(other)
+	if len(other[modelClaude].PromptArgs) != 0 {
+		t.Error("must not inject claude's prompt into a differently-binaried model")
+	}
+}
