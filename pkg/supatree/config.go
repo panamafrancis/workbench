@@ -41,6 +41,12 @@ type Config struct {
 	// DefaultOutward allows actions a third party sees. Off unless you say
 	// otherwise, at every autonomy level.
 	DefaultOutward bool `yaml:"default_outward,omitempty"`
+	// ReviewOutward is the outward default for review trees, and it is on
+	// unless set false. Posting the review is what a review tree is for: a
+	// tree you made to review someone's pull request, whose every other
+	// authoring verb is refused, has no second use for the permission to
+	// withhold. A tree's own `outward` still overrides it.
+	ReviewOutward *bool `yaml:"review_outward,omitempty"`
 }
 
 // Stack is a registered stack repo.

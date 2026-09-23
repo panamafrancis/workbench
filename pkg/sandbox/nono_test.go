@@ -201,3 +201,28 @@ func TestBuildNamedAgentNonoArgs(t *testing.T) {
 		t.Errorf("args = %v, want no name flag when no name is given", args)
 	}
 }
+
+func TestAppendPrompt(t *testing.T) {
+	cfg := &config.Config{Models: map[string]config.Model{
+		modelClaude: {Binary: modelClaude, PromptArgs: []string{"{prompt}"}},
+		"flagged":   {Binary: "other", PromptArgs: []string{"--prompt={prompt}"}},
+		"noprompt":  {Binary: "codex"},
+	}}
+	base := []string{"run", "--", "claude"}
+
+	got := AppendPrompt(append([]string(nil), base...), modelClaude, cfg, "read your inbox")
+	if want := append(append([]string(nil), base...), "read your inbox"); !reflect.DeepEqual(got, want) {
+		t.Errorf("AppendPrompt = %v, want %v", got, want)
+	}
+	got = AppendPrompt(append([]string(nil), base...), "flagged", cfg, "go")
+	if got[len(got)-1] != "--prompt=go" {
+		t.Errorf("AppendPrompt = %v, want the token substituted mid-argument", got)
+	}
+	// No PromptArgs, or no prompt, must leave the launch exactly as it was:
+	// the agent starts idle, which is what every launch did before this.
+	for _, tc := range []struct{ model, prompt string }{{"noprompt", "go"}, {modelClaude, ""}, {"unknown", "go"}} {
+		if got := AppendPrompt(append([]string(nil), base...), tc.model, cfg, tc.prompt); !reflect.DeepEqual(got, base) {
+			t.Errorf("AppendPrompt(%q, %q) = %v, want unchanged", tc.model, tc.prompt, got)
+		}
+	}
+}

@@ -113,6 +113,13 @@ func FetchPRs(targets []FetchTarget, cache *github.Cache, force bool, staleAge t
 			info, err := resolveTarget(t, cache)
 			if err != nil {
 				lastErr = err
+				// Report it this round, then leave this branch alone: retrying
+				// a repository gh cannot see only spends quota and fills the
+				// watcher log once per round.
+				if github.IsRepoNotFound(err) {
+					cache.MarkUnreachable(t.Key, time.Now())
+					continue
+				}
 				if github.IsPermanentError(err) || github.IsRateLimited(err) {
 					if github.IsRateLimited(err) {
 						cache.SetRetryAfter(time.Now().Add(RateLimitCooldown))

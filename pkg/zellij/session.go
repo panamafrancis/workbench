@@ -20,6 +20,23 @@ type SessionInfo struct {
 	Exited bool
 }
 
+// SessionAlive reports whether a named session is up and not exited. It asks
+// `zellij list-sessions`, which reads the socket directory rather than sending
+// the session's server an action — so it is safe against a server that is
+// shutting down, where an action like dump-layout can make it panic.
+func SessionAlive(name string) (bool, error) {
+	sessions, err := ListSessions()
+	if err != nil {
+		return false, err
+	}
+	for _, s := range sessions {
+		if s.Name == name {
+			return !s.Exited, nil
+		}
+	}
+	return false, nil
+}
+
 func ListSessions() ([]SessionInfo, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), cmdTimeout)
 	defer cancel()

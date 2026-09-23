@@ -71,6 +71,18 @@ func BuildNamedAgentNonoArgs(worktreePath, modelKey string, cfg *config.Config, 
 	return args, nil
 }
 
+// AppendPrompt appends the model's PromptArgs with "{prompt}" substituted, so
+// the agent launches with prompt as its first message. A model without
+// PromptArgs, or an empty prompt, leaves args unchanged: the agent starts idle,
+// which is what every launch did before this existed.
+func AppendPrompt(args []string, modelKey string, cfg *config.Config, prompt string) []string {
+	m, ok := cfg.Models[modelKey]
+	if !ok || prompt == "" || len(m.PromptArgs) == 0 {
+		return args
+	}
+	return append(args, substituteTokens(m.PromptArgs, map[string]string{"{prompt}": prompt})...)
+}
+
 // SessionExists reports whether a transcript for sessionID already exists under
 // worktreePath's claude project directory. It is the authoritative "should I
 // resume?" signal: a session ID that was generated but never launched (or was

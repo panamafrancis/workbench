@@ -1061,6 +1061,12 @@ func (m *Model) fetchVisibleCmd(force bool) tea.Cmd {
 				info, err := github.ResolvePR(t.repoPath, t.branch, cache.Ref(t.branch))
 				if err != nil {
 					lastErr = err
+					// Mirrors pkg/supatree's FetchPRs: back a repository gh
+					// cannot see off instead of retrying it every round.
+					if github.IsRepoNotFound(err) {
+						cache.MarkUnreachable(t.branch, time.Now())
+						continue
+					}
 					if github.IsPermanentError(err) {
 						_ = cache.Save()
 						result = prBatchDoneMsg{ghErr: err}

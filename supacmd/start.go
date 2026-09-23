@@ -91,7 +91,11 @@ func spawnWatcher(sessionName string) {
 	if err := os.MkdirAll(supatree.LogsDir(), 0755); err != nil {
 		return
 	}
-	logPath := filepath.Join(supatree.LogsDir(), "watch.log")
+	// Raw stdio only — a panic, or a line from a library. The watcher writes
+	// its own log, watch.log, through a rotating writer once it has won the
+	// singleton election; pointing stdio there too would leave the live
+	// watcher's stderr on a file rotation had renamed away.
+	logPath := filepath.Join(supatree.LogsDir(), "watch.out")
 	log, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {
 		return
