@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/panamafrancis/workbench/pkg/git"
 )
 
 // Polling a repo's pull request list is how PR status stays current without
@@ -328,8 +330,16 @@ func PollRepo(repoPath string, ref RepoRef, etag string) (RepoPoll, error) {
 // `gh pr view`/`pr checks`, and in practice that bucket is the one that runs
 // out. An empty result is authoritative — the branch has no PR.
 func LookupBranchPR(repoPath string, ref RepoRef, branch string) (*PRInfo, error) {
+	// The head is qualified by the owner of the repo the branch was pushed to,
+	// which is origin — not necessarily ref, the base repo gh resolves PRs
+	// against. In a fork clone the two differ, and qualifying by the base owner
+	// would come back empty for every branch.
+	headOwner := ref.Owner
+	if origin, ok := RepoRefFromRemote(git.OriginURL(repoPath)); ok {
+		headOwner = origin.Owner
+	}
 	path := fmt.Sprintf("repos/%s/%s/pulls?state=all&per_page=1&head=%s:%s",
-		ref.Owner, ref.Name, ref.Owner, url.QueryEscape(branch))
+		ref.Owner, ref.Name, headOwner, url.QueryEscape(branch))
 
 	ctx, cancel := context.WithTimeout(context.Background(), lookupTimeout)
 	defer cancel()

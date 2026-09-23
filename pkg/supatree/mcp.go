@@ -697,6 +697,12 @@ func depsWithoutPRs(inst *Instance, m *Member) ([]string, error) {
 	var missing []string
 	for _, dm := range deps {
 		info := cache.Get(dm.CacheKey())
+		if info == nil && dm.Review == nil && !git.HasRemoteBranch(dm.Path, dm.Branch) {
+			// Sync skips a branch that was never pushed, since it cannot have a
+			// PR — which is exactly the answer this check is asking for.
+			missing = append(missing, dm.Alias)
+			continue
+		}
 		if info == nil {
 			// No answer at all — say so rather than calling it "no PR". Sync's
 			// own error, if it had one, explains why.

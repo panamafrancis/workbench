@@ -162,6 +162,37 @@ func TestSyncNotModifiedConfirmsEntries(t *testing.T) {
 	}
 }
 
+// A 304 only covers changes since the repo's last poll. An entry verified
+// before that poll — tracked by another process whose round consumed the delta
+// without it as a target — may have missed a PR that poll saw and dropped, so
+// it must be looked up rather than confirmed forever.
+func TestSyncNotModifiedDoesNotConfirmEntriesOlderThanLastPoll(t *testing.T) {
+	c := syncCache(t)
+	verified := time.Now().Add(-time.Hour)
+	if err := c.Mutate(func(w *Writable) error {
+		w.Set(testBranch, &PRInfo{Status: PRNone, FetchedAt: verified})
+		w.SetRepoState("acme/widgets", RepoState{ETag: testETag, PolledAt: verified.Add(time.Minute)})
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	f := &fakeGH{
+		polls:  []RepoPoll{{NotModified: true, ETag: testETag}},
+		lookup: &PRInfo{Number: 7, Status: PROpen, FetchedAt: time.Now()},
+	}
+	f.install(t, testRemote, true)
+
+	report := runSync(t, c, []Target{{RepoPath: testRepo, Branch: testBranch}}, SyncOptions{MaxAge: time.Minute})
+
+	if report.Confirmed != 0 {
+		t.Errorf("Confirmed = %d, want an entry older than the last poll looked up", report.Confirmed)
+	}
+	if info := c.Get(testBranch); info == nil || info.Number != 7 {
+		t.Errorf("entry = %+v, want the looked-up PR", info)
+	}
+}
+
 func TestSyncCompleteListingProvesAbsence(t *testing.T) {
 	f := &fakeGH{polls: []RepoPoll{{ETag: testPollETag, Truncated: false, PRs: nil}}}
 	f.install(t, testRemote, true)

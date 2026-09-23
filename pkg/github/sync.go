@@ -87,7 +87,7 @@ var (
 	lookupREST   = LookupBranchPR
 	lookupBranch = LookupPR
 	lookupNumber = LookupPRByNumber
-	originURL    = git.OriginURL
+	originURL    = git.BaseRemoteURL
 	hasRemote    = git.HasRemoteBranch
 )
 
@@ -193,6 +193,12 @@ func resolveFallbacks(w *Writable, unresolved []unresolvedTarget, opts SyncOptio
 				return false
 			}
 			continue
+		}
+		if info != nil && info.DetailedAt.IsZero() {
+			// A REST lookup carries no review verdict or check rollup; keep the
+			// previous ones rather than blanking the badges until the details
+			// refresh (which a GraphQL cooldown can hold off indefinitely).
+			info = mergePolled(w.Get(t.key()), info)
 		}
 		w.Set(t.key(), info)
 		report.Updated++
@@ -402,10 +408,15 @@ func syncRepo(w *Writable, group repoGroup, opts SyncOptions, now time.Time, rep
 		// closed would have appeared at the top of it.
 		if complete {
 			prev := w.Get(key)
-			// Only an entry that was verified once can be confirmed unchanged.
-			// One carried over a rename or seeded from a review set has a zero
-			// FetchedAt and has to be looked up for real.
-			if prev != nil && !prev.FetchedAt.IsZero() {
+			// Only an entry verified at or after the repo's last poll can be
+			// confirmed unchanged: the listing (or the 304) covers changes since
+			// that poll, nothing older. An entry verified before it — tracked
+			// by another process whose round consumed the delta without it as a
+			// target, or a branch that has just come back into view — may have
+			// missed a change that poll saw and dropped. One carried over a
+			// rename or seeded from a review set has a zero FetchedAt and also
+			// has to be looked up for real.
+			if prev != nil && !prev.FetchedAt.IsZero() && !prev.FetchedAt.Before(state.PolledAt) {
 				w.Touch(key, now)
 				report.Confirmed++
 				continue
