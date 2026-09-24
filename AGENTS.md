@@ -44,7 +44,7 @@ cmd/                    # Cobra commands
   init.go               # workbench init — setup wizard
   doctor.go             # workbench doctor — dependency checks
   uninstall.go          # workbench uninstall
-  version.go            # workbench version (Version var stamped via ldflags)
+  version.go            # workbench version (pkg/version.Version: ldflags, else the go install module version)
 pkg/
   config/
     config.go           # Config types, Load/Save, FindRepo, FindWorktree, CRUD helpers

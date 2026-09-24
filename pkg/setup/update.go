@@ -88,13 +88,17 @@ func compareVersions(current, latest string) string {
 	if !isNewer(latest, current) {
 		return ""
 	}
-	return fmt.Sprintf("workbench %s available (you have %s) — go install github.com/panamafrancis/workbench@latest",
+	return fmt.Sprintf("workbench %s available (you have %s) — go install github.com/panamafrancis/workbench@latest github.com/panamafrancis/workbench/cmd/supatree@latest",
 		latest, current)
 }
 
+// isNewer compares the numeric cores of two versions. A build suffix
+// ("+dirty") or pre-release/pseudo-version tail ("-0.2026…-abc123") is dropped
+// first: those are what a local or `go install` build reports, and without
+// the strip "14+dirty" parses as 0 and a current build is told to update.
 func isNewer(a, b string) bool {
-	ap := strings.Split(a, ".")
-	bp := strings.Split(b, ".")
+	ap := strings.Split(versionCore(a), ".")
+	bp := strings.Split(versionCore(b), ".")
 	for i := range max(len(ap), len(bp)) {
 		ai, bi := 0, 0
 		if i < len(ap) {
@@ -108,4 +112,11 @@ func isNewer(a, b string) bool {
 		}
 	}
 	return false
+}
+
+func versionCore(v string) string {
+	if i := strings.IndexAny(v, "-+"); i >= 0 {
+		return v[:i]
+	}
+	return v
 }
