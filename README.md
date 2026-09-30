@@ -14,8 +14,11 @@ A sandboxed git worktree manager. Each piece of work gets its own git worktree r
 ## Install
 
 ```sh
-go install github.com/panamafrancis/workbench@latest
+go install github.com/panamafrancis/workbench@latest github.com/panamafrancis/workbench/cmd/supatree@latest
 ```
+
+This installs both binaries — `workbench` and `supatree` ship from the same
+module, and installing only the first leaves `supatree` on an old version.
 
 Or build from source:
 
@@ -23,6 +26,7 @@ Or build from source:
 git clone https://github.com/panamafrancis/workbench
 cd workbench
 go build -o /usr/local/bin/workbench .
+go build -o /usr/local/bin/supatree ./cmd/supatree
 ```
 
 ## Setup
