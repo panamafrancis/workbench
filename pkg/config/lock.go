@@ -19,7 +19,7 @@ var ErrLockBusy = errors.New("lock busy")
 // sequences can interleave and the later Save resurrects an entry the other
 // removed.
 func withConfigLock(fn func() error) error {
-	return WithFileLock(ConfigPath()+".lock", fn)
+	return WithFileLock(filepath.Join(StateDir(), "config.lock"), fn)
 }
 
 // WithFileLock runs fn while holding an exclusive advisory (flock) lock on

@@ -5,10 +5,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/panamafrancis/workbench/pkg/testutil"
 )
 
 func TestWriteSessionLayoutPath(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.IsolateHome(t)
 	path, err := WorkbenchWorkspace().WriteSessionLayout("wb-main", "15%")
 	if err != nil {
 		t.Fatalf("WriteSessionLayout() error = %v", err)
@@ -22,7 +24,7 @@ func TestWriteSessionLayoutPath(t *testing.T) {
 }
 
 func TestWriteSessionLayoutContent(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.IsolateHome(t)
 	path, err := WorkbenchWorkspace().WriteSessionLayout("wb-main", "20%")
 	if err != nil {
 		t.Fatal(err)

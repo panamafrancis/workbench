@@ -5,10 +5,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/panamafrancis/workbench/pkg/testutil"
 )
 
 func TestWriteTabLayoutPath(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.IsolateHome(t)
 
 	path, err := WorkbenchWorkspace().WriteTabLayout("myworktree", "/wt/path", "15%", []string{"run", "--profile", "claude-code", "--allow", "/wt/path", "--", "claude"}, nil)
 	if err != nil {
@@ -23,7 +25,7 @@ func TestWriteTabLayoutPath(t *testing.T) {
 }
 
 func TestWriteTabLayoutContent(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.IsolateHome(t)
 
 	nonoArgs := []string{"run", "--profile", "claude-code", "--allow", "/wt/path", "--", "claude"}
 	path, err := WorkbenchWorkspace().WriteTabLayout("atlanta", "/wt/path", "15%", nonoArgs, nil)
@@ -59,7 +61,7 @@ func TestWriteTabLayoutContent(t *testing.T) {
 }
 
 func TestWriteTabLayoutWithEnvVars(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.IsolateHome(t)
 
 	env := map[string]string{
 		"WORKBENCH":               "1",
@@ -91,7 +93,7 @@ func TestWriteTabLayoutWithEnvVars(t *testing.T) {
 }
 
 func TestWriteTabLayoutPaneNameComposite(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.IsolateHome(t)
 
 	env := map[string]string{"WORKBENCH_REPO_ALIAS": "wb"}
 	path, err := WorkbenchWorkspace().WriteTabLayout("atlanta", "/wt", "15%", []string{"run", "--", "bash"}, env)
@@ -115,7 +117,7 @@ func TestWriteTabLayoutPaneNameComposite(t *testing.T) {
 }
 
 func TestWriteTabLayoutRejectsUnsafeName(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.IsolateHome(t)
 
 	unsafe := []string{
 		`x'; touch /tmp/pwned; '`, // shell injection attempt
@@ -132,7 +134,7 @@ func TestWriteTabLayoutRejectsUnsafeName(t *testing.T) {
 }
 
 func TestWriteTabLayoutRejectsUnsafeSuffix(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.IsolateHome(t)
 	// A "<name>:<suffix>" tab identity must validate the suffix too — it reaches
 	// the sidebar bash command via SidebarActiveEnvVar.
 	unsafe := []string{"atlanta:x=1 && curl evil", "atlanta:a b", `atlanta:a"b`}
@@ -148,7 +150,7 @@ func TestWriteTabLayoutRejectsUnsafeSuffix(t *testing.T) {
 }
 
 func TestWriteTabLayoutQuotesArgs(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.IsolateHome(t)
 
 	path, err := WorkbenchWorkspace().WriteTabLayout("tab", "/wt", "15%", []string{`has"quote`}, nil)
 	if err != nil {
@@ -161,7 +163,7 @@ func TestWriteTabLayoutQuotesArgs(t *testing.T) {
 }
 
 func TestWriteTabLayoutCreatesDir(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.IsolateHome(t)
 
 	path, err := WorkbenchWorkspace().WriteTabLayout("x", "/wt", "15%", []string{"nono"}, nil)
 	if err != nil {
@@ -173,7 +175,7 @@ func TestWriteTabLayoutCreatesDir(t *testing.T) {
 }
 
 func TestWriteTabLayoutOverwrites(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.IsolateHome(t)
 
 	_, err := WorkbenchWorkspace().WriteTabLayout("tab", "/old", "15%", []string{"old"}, nil)
 	if err != nil {

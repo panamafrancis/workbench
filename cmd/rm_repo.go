@@ -33,9 +33,6 @@ var rmRepoCmd = &cobra.Command{
 		}
 
 		for _, wt := range repo.Worktrees {
-			if err := repo.RunCleanup(wt.Path, wt.Name); err != nil {
-				fmt.Fprintf(os.Stderr, "cleanup script failed for %s: %v\n", wt.Name, err)
-			}
 			if err := git.RemoveWorktree(repo.LocalPath, wt.Path); err != nil {
 				fmt.Fprintf(os.Stderr, "remove worktree %s: %v\n", wt.Name, err)
 			}

@@ -38,12 +38,13 @@ func TrustDir(dir string) error {
 	if err != nil {
 		return err
 	}
-	// Serialize against other workbench processes doing the same thing. The lock
-	// lives in workbench's own cache dir rather than beside Claude's config, so
-	// seeding never leaves a stray file in ~/.claude. Claude itself takes no
-	// such lock, which is why we write as rarely as possible (see the
-	// already-trusted short circuit below).
-	return config.WithFileLock(filepath.Join(config.CacheDir(), "claude-trust.lock"), func() error {
+	// Serialize against every other process doing the same thing — workbench's
+	// and supatree's alike, since both seed the one Claude config. The lock is in
+	// the per-user temp dir rather than either tool's own dirs (which share
+	// nothing) or beside Claude's config (so seeding never leaves a stray file in
+	// ~/.claude). Claude itself takes no such lock, which is why we write as
+	// rarely as possible (see the already-trusted short circuit below).
+	return config.WithFileLock(filepath.Join(os.TempDir(), "claude-trust.lock"), func() error {
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return fmt.Errorf("read claude config: %w", err)

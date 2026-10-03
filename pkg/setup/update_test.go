@@ -30,11 +30,13 @@ func TestCompareVersions(t *testing.T) {
 	}
 }
 
-func TestUpdateHintInstallsBothBinaries(t *testing.T) {
+// Supatree ships from its own repo now; workbench's hint names workbench only.
+func TestUpdateHintInstallsWorkbench(t *testing.T) {
 	hint := compareVersions("v0.0.13", release)
-	for _, pkg := range []string{"github.com/panamafrancis/workbench@latest", "github.com/panamafrancis/workbench/cmd/supatree@latest"} {
-		if !strings.Contains(hint, pkg) {
-			t.Errorf("hint %q does not install %s", hint, pkg)
-		}
+	if !strings.Contains(hint, "github.com/panamafrancis/workbench@latest") {
+		t.Errorf("hint %q does not install workbench", hint)
+	}
+	if strings.Contains(hint, "supatree") {
+		t.Errorf("hint %q still names supatree, which this module no longer ships", hint)
 	}
 }

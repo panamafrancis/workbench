@@ -50,8 +50,8 @@ type RepoState struct {
 // Cache is a process-local snapshot of the on-disk PR status cache, used by the
 // render path (sidebars read it every tick) and refreshed with Load.
 //
-// The cache is shared by every workbench and supatree process on the machine —
-// a sidebar per Zellij tab, the CLI, the MCP server. It is therefore read-only
+// Each tool keeps its own cache file, and every process of that tool shares
+// it — a sidebar per Zellij tab, the CLI, the MCP server, supatree's watcher. It is therefore read-only
 // here: the snapshot can go stale but never diverge destructively, because the
 // only way to change the file is Mutate/TryMutate, which re-read it under an
 // advisory lock. That matters more than it sounds: a whole-file write from a

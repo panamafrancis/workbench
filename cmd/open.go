@@ -35,10 +35,11 @@ var openCmd = &cobra.Command{
 			modelKey = cfg.ResolveModel(wt.Model)
 		}
 
-		nonoArgs, err := sandbox.BuildNonoArgs(wt.Path, modelKey, cfg)
+		model, err := cfg.Model(modelKey)
 		if err != nil {
 			return err
 		}
+		nonoArgs := sandbox.BuildNonoArgs(wt.Path, model)
 
 		if openNoZellij {
 			fmt.Printf("cd %s && nono", wt.Path)
@@ -69,16 +70,8 @@ var openCmd = &cobra.Command{
 			"WORKBENCH_REPO_ALIAS":    repo.Alias,
 			"WORKBENCH_BRANCH":        wt.Branch,
 		}
-		created, err := wbZ.OpenOrFocusTab(wt.Name, wt.Path, cfg.ResolveSidebarWidth(), nonoArgs, envVars)
-		if err != nil {
-			return err
-		}
-		if created {
-			if err := repo.RunStartup(wt.Path, wt.Name); err != nil {
-				return fmt.Errorf("startup script: %w", err)
-			}
-		}
-		return nil
+		_, err = wbZ.OpenOrFocusTab(wt.Name, wt.Path, cfg.ResolveSidebarWidth(), nonoArgs, envVars)
+		return err
 	},
 }
 

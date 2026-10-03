@@ -74,8 +74,12 @@ var addWorktreeCmd = &cobra.Command{
 			fmt.Fprintln(os.Stderr, "warning: offline — branched from last-fetched origin")
 		}
 
-		if err := repo.RunCopyFiles(worktreePath); err != nil {
+		missing, err := config.CopyFiles(repo.LocalPath, worktreePath, repo.CopyFiles)
+		if err != nil {
 			return err
+		}
+		for _, f := range missing {
+			fmt.Fprintf(os.Stderr, "warning: copy_files: %s not found in %s\n", f, repo.LocalPath)
 		}
 
 		modelKey := cfg.ResolveModel(addWorktreeModel)

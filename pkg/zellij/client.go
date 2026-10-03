@@ -8,12 +8,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/panamafrancis/workbench/pkg/config"
 )
 
 const (
@@ -160,6 +159,46 @@ func closeTabByID(id int) error {
 	return nil
 }
 
+// CloseTabsIn closes every tab in session whose name match accepts, and
+// returns the names it closed. Closing a tab ends every process in it, which
+// is how a removed worktree's agents are stopped.
+//
+// The session's focused tab, if it matches, is closed last: the caller may be
+// running in it (a sidebar removing its own tree), and nothing it asked for
+// may be left undone when it dies. "" targets the caller's own session.
+func CloseTabsIn(session string, match func(name string) bool) ([]string, error) {
+	stdout, _, err := runZellijIn(session, "list-tabs")
+	if err != nil {
+		return nil, fmt.Errorf("zellij list-tabs: %w", err)
+	}
+	ids := parseTabIDs(stdout)
+	focused := FocusedTab(session)
+	names := make([]string, 0, len(ids))
+	for name := range ids {
+		if match(name) && name != focused {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	if focused != "" && match(focused) {
+		if _, ok := ids[focused]; ok {
+			names = append(names, focused)
+		}
+	}
+	var closed []string
+	var firstErr error
+	for _, name := range names {
+		if _, _, err := runZellijIn(session, "close-tab-by-id", strconv.Itoa(ids[name])); err != nil {
+			if firstErr == nil {
+				firstErr = fmt.Errorf("close tab %s: %w", name, err)
+			}
+			continue
+		}
+		closed = append(closed, name)
+	}
+	return closed, firstErr
+}
+
 // closeTab closes a tab by focusing it first. It is the fallback for when the
 // tab's id cannot be resolved; prefer closeTabByID, because focusing is how a
 // process ends up closing the tab it is itself running in.
@@ -266,8 +305,15 @@ func runZellijIn(session string, actionArgs ...string) (stdout, stderr string, e
 	return stdout, stderr, err
 }
 
+// LogDir is where failed zellij calls are logged. Each tool points it at its
+// own logs dir at startup; empty disables the log.
+var LogDir string
+
 func logFailure(args []string, stdout, stderr string, err error) {
-	dir := filepath.Join(config.ConfigDir(), "logs")
+	dir := LogDir
+	if dir == "" {
+		return
+	}
 	if mkErr := os.MkdirAll(dir, 0755); mkErr != nil {
 		return
 	}

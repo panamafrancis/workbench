@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/panamafrancis/workbench/pkg/config"
+	"github.com/panamafrancis/workbench/pkg/testutil"
 )
 
 func testConfig() *config.Config {
@@ -38,10 +39,7 @@ const modelClaude = "claude"
 
 func TestBuildNonoArgsClaude(t *testing.T) {
 	cfg := testConfig()
-	got, err := BuildNonoArgs("/wt/path", "claude", cfg)
-	if err != nil {
-		t.Fatalf("BuildNonoArgs() error = %v", err)
-	}
+	got := BuildNonoArgs("/wt/path", cfg.Models["claude"])
 	want := []string{"run", "--profile", "claude-code", "--allow", "/wt/path", "--", "claude"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("BuildNonoArgs() = %v, want %v", got, want)
@@ -50,31 +48,17 @@ func TestBuildNonoArgsClaude(t *testing.T) {
 
 func TestBuildNonoArgsWithExtraArgs(t *testing.T) {
 	cfg := testConfig()
-	got, err := BuildNonoArgs("/wt/path", "custom", cfg)
-	if err != nil {
-		t.Fatalf("BuildNonoArgs() error = %v", err)
-	}
+	got := BuildNonoArgs("/wt/path", cfg.Models["custom"])
 	want := []string{"run", "--profile", "custom-profile", "--allow", "/wt/path", "--", "mytool", "--flag", "--verbose"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("BuildNonoArgs() = %v, want %v", got, want)
 	}
 }
 
-func TestBuildNonoArgsUnknownModel(t *testing.T) {
-	cfg := testConfig()
-	_, err := BuildNonoArgs("/wt/path", "nosuchmodel", cfg)
-	if err == nil {
-		t.Error("BuildNonoArgs(unknown model) = nil, want error")
-	}
-}
-
 func TestBuildNonoArgsPathIsAllowed(t *testing.T) {
 	cfg := testConfig()
 	path := "/Users/stefan/.workbench/worktrees/repo/branch"
-	got, err := BuildNonoArgs(path, "claude", cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
+	got := BuildNonoArgs(path, cfg.Models["claude"])
 	// --allow must be immediately followed by the worktree path
 	for i, arg := range got {
 		if arg == "--allow" {
@@ -88,8 +72,7 @@ func TestBuildNonoArgsPathIsAllowed(t *testing.T) {
 }
 
 func TestClearSessionCache(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+	home := testutil.IsolateHome(t)
 	wtPath := "/some/worktree/path"
 
 	dir := filepath.Join(home, ".claude", "projects", encodeProjectPath(wtPath))
@@ -112,7 +95,7 @@ func TestClearSessionCache(t *testing.T) {
 }
 
 func TestClearSessionCacheMissingIsNoOp(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.IsolateHome(t)
 	if err := ClearSessionCache("/never/created"); err != nil {
 		t.Errorf("ClearSessionCache(missing) = %v, want nil", err)
 	}
@@ -120,8 +103,7 @@ func TestClearSessionCacheMissingIsNoOp(t *testing.T) {
 
 // An empty path must not delete the whole projects root.
 func TestClearSessionCacheEmptyPathIsGuarded(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+	home := testutil.IsolateHome(t)
 	other := filepath.Join(home, ".claude", "projects", "someotherworktree")
 	if err := os.MkdirAll(other, 0755); err != nil {
 		t.Fatal(err)
@@ -137,10 +119,7 @@ func TestClearSessionCacheEmptyPathIsGuarded(t *testing.T) {
 
 func TestBuildNonoArgsSeparatorPresent(t *testing.T) {
 	cfg := testConfig()
-	got, err := BuildNonoArgs("/wt/path", "shell", cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
+	got := BuildNonoArgs("/wt/path", cfg.Models["shell"])
 	found := false
 	for _, a := range got {
 		if a == "--" {
@@ -172,10 +151,7 @@ func TestBuildNamedAgentNonoArgs(t *testing.T) {
 	}}
 	wt := t.TempDir()
 
-	args, err := BuildNamedAgentNonoArgs(wt, modelClaude, cfg, "sid-1", "st-canberra-main", false)
-	if err != nil {
-		t.Fatalf("BuildNamedAgentNonoArgs: %v", err)
-	}
+	args := BuildNamedAgentNonoArgs(wt, cfg.Models[modelClaude], "sid-1", "st-canberra-main", false)
 	joined := strings.Join(args, " ")
 	if !strings.Contains(joined, "--name st-canberra-main") {
 		t.Errorf("args = %v, want the bus name", args)
@@ -184,19 +160,19 @@ func TestBuildNamedAgentNonoArgs(t *testing.T) {
 		t.Errorf("args = %v, want the session id still substituted", args)
 	}
 
-	args, _ = BuildNamedAgentNonoArgs(wt, "inline", cfg, "", "st-canberra-main", false)
+	args = BuildNamedAgentNonoArgs(wt, cfg.Models["inline"], "", "st-canberra-main", false)
 	if !strings.Contains(strings.Join(args, " "), "--name=st-canberra-main") {
 		t.Errorf("args = %v, want the token substituted mid-argument", args)
 	}
 
 	// A model with no bus must not have a name flag invented for it.
-	args, _ = BuildNamedAgentNonoArgs(wt, "nobus", cfg, "", "st-canberra-main", false)
+	args = BuildNamedAgentNonoArgs(wt, cfg.Models["nobus"], "", "st-canberra-main", false)
 	if strings.Contains(strings.Join(args, " "), "st-canberra-main") {
 		t.Errorf("args = %v, want no name for a model without AgentNameArgs", args)
 	}
 
 	// And an unnamed launch stays exactly as it was before agents had names.
-	args, _ = BuildNamedAgentNonoArgs(wt, modelClaude, cfg, "sid-1", "", false)
+	args = BuildNamedAgentNonoArgs(wt, cfg.Models[modelClaude], "sid-1", "", false)
 	if strings.Contains(strings.Join(args, " "), "--name") {
 		t.Errorf("args = %v, want no name flag when no name is given", args)
 	}
@@ -210,19 +186,36 @@ func TestAppendPrompt(t *testing.T) {
 	}}
 	base := []string{"run", "--", "claude"}
 
-	got := AppendPrompt(append([]string(nil), base...), modelClaude, cfg, "read your inbox")
+	got := AppendPrompt(append([]string(nil), base...), cfg.Models[modelClaude], "read your inbox")
 	if want := append(append([]string(nil), base...), "read your inbox"); !reflect.DeepEqual(got, want) {
 		t.Errorf("AppendPrompt = %v, want %v", got, want)
 	}
-	got = AppendPrompt(append([]string(nil), base...), "flagged", cfg, "go")
+	got = AppendPrompt(append([]string(nil), base...), cfg.Models["flagged"], "go")
 	if got[len(got)-1] != "--prompt=go" {
 		t.Errorf("AppendPrompt = %v, want the token substituted mid-argument", got)
 	}
 	// No PromptArgs, or no prompt, must leave the launch exactly as it was:
 	// the agent starts idle, which is what every launch did before this.
 	for _, tc := range []struct{ model, prompt string }{{"noprompt", "go"}, {modelClaude, ""}, {"unknown", "go"}} {
-		if got := AppendPrompt(append([]string(nil), base...), tc.model, cfg, tc.prompt); !reflect.DeepEqual(got, base) {
+		if got := AppendPrompt(append([]string(nil), base...), cfg.Models[tc.model], tc.prompt); !reflect.DeepEqual(got, base) {
 			t.Errorf("AppendPrompt(%q, %q) = %v, want unchanged", tc.model, tc.prompt, got)
 		}
+	}
+}
+
+// Grants render as nono flags in a stable order, file grants included, and an
+// agent built from them gets them all.
+func TestGrantedAgentArgs(t *testing.T) {
+	g := Grants{Allow: []string{"/a"}, Read: []string{"/r"}, AllowFile: []string{"/af"}, ReadFile: []string{"/rf"}}
+	want := []string{"--allow", "/a", "--read", "/r", "--allow-file", "/af", "--read-file", "/rf"}
+	if got := g.Args(); !reflect.DeepEqual(got, want) {
+		t.Errorf("Args = %v, want %v", got, want)
+	}
+	args := BuildGrantedAgentNonoArgs(config.Model{NonoProfile: "p", Binary: modelClaude}, g, "/a", "", "", false)
+	if got := strings.Join(args, " "); got != "run --profile p --allow /a --read /r --allow-file /af --read-file /rf -- claude" {
+		t.Errorf("args = %s", got)
+	}
+	if (Grants{}).Empty() != true || g.Empty() {
+		t.Error("Empty is wrong")
 	}
 }

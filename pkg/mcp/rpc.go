@@ -47,6 +47,25 @@ type Server struct {
 	Gate func(toolName string) string
 }
 
+// WithPrecondition returns s with check consulted before every tool call,
+// ahead of its Gate. A non-empty answer refuses the call with that text. It is
+// how a server whose tool would fail for a reason outside the tool — files in
+// an old layout — says so per call instead of failing to start, which would
+// take the agent's whole session down with it.
+func (s *Server) WithPrecondition(check func() string) *Server {
+	gate := s.Gate
+	s.Gate = func(name string) string {
+		if msg := check(); msg != "" {
+			return msg
+		}
+		if gate == nil {
+			return ""
+		}
+		return gate(name)
+	}
+	return s
+}
+
 type request struct {
 	JSONRPC string          `json:"jsonrpc"`
 	ID      json.RawMessage `json:"id,omitempty"`

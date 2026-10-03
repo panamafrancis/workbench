@@ -142,20 +142,20 @@ const commands = `# CLI Commands
 
 const configDoc = `# Configuration
 
-All state lives under ~/.workbench/:
+Files follow the XDG base directories ($XDG_CONFIG_HOME etc. when set):
 
-  ~/.workbench/config.yml              main config
-  ~/.workbench/state.yml               last-run version, update check cache
-  ~/.workbench/worktrees/<alias>/<n>/  default worktree location
-  ~/.workbench/layouts/<name>.kdl      generated Zellij layouts (transient)
-  ~/.workbench/cache/                  PR status cache
-  ~/.workbench/logs/                   Zellij error log
+  ~/.config/workbench/config.yml               main config
+  ~/.local/state/workbench/state.yml           last-run version, update check, stats
+  ~/.local/state/workbench/logs/               Zellij error log
+  ~/.cache/workbench/agent/pr-status.json      PR status cache
+  ~/.cache/workbench/layouts/<name>.kdl        generated Zellij layouts (transient)
+  ~/workbench/<alias>/<name>/                  default worktree location
 
 ## config.yml fields
 
   version: 1
   default_model: claude                 which model to use by default
-  worktree_base: ""                     override worktree root (default ~/.workbench/worktrees/)
+  worktree_base: ""                     override worktree root (default ~/workbench/)
   default_zellij_layout: ""             override the embedded session layout
   sidebar_width: "20%"                  sidebar pane width in worktree tabs
   update_check_disabled: false          disable the GitHub release check on start
@@ -177,8 +177,6 @@ Models is an open map — add any binary with any nono profile.
     - alias: wb
       local_path: /path/to/repo
       copy_files: [".claude", ".env"]   copied from repo to new worktrees
-      startup_script: ""                run before opening a worktree
-      cleanup_script: ""                run before removing a worktree
       worktrees:
         - name: clear-detroit
           branch: wt/wb/clear-detroit
@@ -304,13 +302,12 @@ ref. The default branch is detected via git symbolic-ref refs/remotes/origin/HEA
 3. If tab exists but command exited → close stale tab, create fresh
 4. Write layout KDL with WORKBENCH_* env vars
 5. zellij action new-tab with the layout
-6. Run startup_script (if configured, only on fresh tab)
 
 ## Deletion
 
   workbench rm worktree <name>
 
-Runs cleanup_script, git worktree remove, deletes the wt/* branch, removes
+Runs git worktree remove, deletes the wt/* branch, removes
 from config, and cleans up the layout KDL file. Warns if the worktree has
 a running tab or uncommitted changes.
 `
@@ -387,7 +384,8 @@ The init wizard generates claude-code-local.json by:
 
 ## Key directories to allow
 
-  ~/.workbench              config, worktree base, layouts
+  ~/.config/workbench       config
+  ~/.cache/workbench/agent  PR status cache (agents' create_pr writes it)
   ~/code/<org>              repo parent directories
   ~/code/go/pkg,bin,src     Go module cache and toolchain
   ~/.config/gh              GitHub CLI auth tokens

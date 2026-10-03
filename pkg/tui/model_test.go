@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/panamafrancis/workbench/pkg/config"
+	"github.com/panamafrancis/workbench/pkg/testutil"
 )
 
 // writeConfig persists a config with the given repo aliases to the test HOME.
@@ -21,7 +22,7 @@ func writeConfig(t *testing.T, aliases ...string) {
 }
 
 func TestReloadLocalStatePicksUpDiskChanges(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.IsolateHome(t)
 	if err := os.MkdirAll(config.ConfigDir(), 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +78,7 @@ func TestActiveWorktreeMarker(t *testing.T) {
 }
 
 func TestReloadLocalStateNoOpWhileBusy(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.IsolateHome(t)
 	if err := os.MkdirAll(config.ConfigDir(), 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -340,7 +341,7 @@ func TestViewRendersOnlyTheWindow(t *testing.T) {
 // whatever viewTail leaves over, so a long repo list scrolls instead of
 // pushing the footer off the bottom.
 func TestViewFitsPaneHeight(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.IsolateHome(t)
 	if err := os.MkdirAll(config.ConfigDir(), 0755); err != nil {
 		t.Fatal(err)
 	}
