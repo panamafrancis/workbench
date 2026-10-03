@@ -4,9 +4,12 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/panamafrancis/workbench/pkg/testutil"
 )
 
 func TestMailDeliverAndDrain(t *testing.T) {
+	testutil.IsolateHome(t)
 	root := t.TempDir()
 
 	if msgs, err := Mail(root, "main"); err != nil || len(msgs) != 0 {
@@ -53,6 +56,7 @@ func TestMailDeliverAndDrain(t *testing.T) {
 
 // Mailboxes are per agent: one agent draining must not take another's mail.
 func TestMailIsPerAgent(t *testing.T) {
+	testutil.IsolateHome(t)
 	root := t.TempDir()
 	if err := Deliver(root, "main", "pm", "for main"); err != nil {
 		t.Fatalf("Deliver: %v", err)
@@ -70,6 +74,7 @@ func TestMailIsPerAgent(t *testing.T) {
 }
 
 func TestDeliverRejectsEmpty(t *testing.T) {
+	testutil.IsolateHome(t)
 	root := t.TempDir()
 	if err := Deliver(root, "main", "pm", "   "); err == nil {
 		t.Error("Deliver(blank) = nil, want an error")
@@ -79,6 +84,7 @@ func TestDeliverRejectsEmpty(t *testing.T) {
 // A torn message must not wedge the inbox: a draining read drops it and takes
 // everything else, so one bad file cannot block every later instruction.
 func TestDrainSkipsTornMessage(t *testing.T) {
+	testutil.IsolateHome(t)
 	root := t.TempDir()
 	if err := Deliver(root, "main", "pm", "good"); err != nil {
 		t.Fatalf("Deliver: %v", err)

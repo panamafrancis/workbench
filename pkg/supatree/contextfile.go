@@ -232,7 +232,7 @@ Add your issue-specific instructions below.
 
 // scaffoldGitignore keeps the gitignored per-tree working files out of the
 // stack repo's history.
-const scaffoldGitignore = ReposDirName + "/\n" + stateDirName + "/\nagents/\n"
+const scaffoldGitignore = ReposDirName + "/\n" + stateDirName + "\nagents/\n"
 
 // boardHeader is prepended to every board write, so a board that has gone stale
 // says so itself rather than looking like current fact.

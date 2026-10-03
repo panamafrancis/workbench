@@ -75,6 +75,11 @@ func Remove(c *Config, name string, opts RemoveOptions) (*RemoveResult, error) {
 		}
 		_ = git.DeleteBranch(stack.Path, "st/"+name)
 	}
+	// State before the root: the root's .supatree link is how StateDir finds
+	// it, and state left behind is a tree List would keep reporting.
+	if err := os.RemoveAll(StateDir(inst.Root)); err != nil {
+		res.Warnings = append(res.Warnings, fmt.Sprintf("remove state: %v", err))
+	}
 	if err := os.RemoveAll(inst.Root); err != nil {
 		res.Warnings = append(res.Warnings, fmt.Sprintf("remove dir: %v", err))
 	}

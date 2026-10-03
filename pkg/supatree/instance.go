@@ -3,8 +3,11 @@ package supatree
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 // Instance is a live supatree: a worktree of a stack repo with its member repo
@@ -116,23 +119,24 @@ func LoadInstance(root string) (*Instance, error) {
 	}, nil
 }
 
-// List discovers every supatree under the configured trees base.
+// List discovers every supatree from the per-tree state directories. Each
+// meta.yml records where its tree is checked out, so a tree is found wherever
+// trees_base put it — including a base that has since been changed.
 func List(c *Config) ([]*Instance, error) {
-	base := c.ResolveTreesBase()
-	entries, err := os.ReadDir(base)
+	entries, err := os.ReadDir(TreesStateDir())
 	if os.IsNotExist(err) {
 		return nil, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("read trees base: %w", err)
+		return nil, fmt.Errorf("read tree state: %w", err)
 	}
 	var out []*Instance
 	for _, e := range entries {
 		if !e.IsDir() {
 			continue
 		}
-		root := treeRoot(base, e.Name())
-		if !isSupatreeRoot(root) {
+		root := rootFor(c, e.Name())
+		if root == "" || !isSupatreeRoot(root) {
 			continue
 		}
 		inst, err := LoadInstance(root)
@@ -148,11 +152,25 @@ func List(c *Config) ([]*Instance, error) {
 
 // Get returns the named supatree, or an error if it does not exist.
 func Get(c *Config, name string) (*Instance, error) {
-	root := treeRoot(c.ResolveTreesBase(), name)
-	if !isSupatreeRoot(root) {
+	root := rootFor(c, name)
+	if root == "" || !isSupatreeRoot(root) {
 		return nil, fmt.Errorf("supatree %q not found", name)
 	}
 	return LoadInstance(root)
+}
+
+// rootFor is where the tree with this state directory is checked out: the
+// root its meta records, else (a meta written before it recorded one) the
+// tree of that name under the trees base.
+func rootFor(c *Config, name string) string {
+	data, err := os.ReadFile(filepath.Join(TreesStateDir(), name, "meta.yml"))
+	if err == nil {
+		var m Meta
+		if yaml.Unmarshal(data, &m) == nil && m.Root != "" {
+			return m.Root
+		}
+	}
+	return treeRoot(c.ResolveTreesBase(), name)
 }
 
 // Names returns the names of all existing supatrees (best effort).

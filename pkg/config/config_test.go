@@ -8,6 +8,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/panamafrancis/workbench/pkg/testutil"
 )
 
 // Model keys used across the config tests. They stand in for whatever the
@@ -20,7 +22,7 @@ const (
 
 func isolatedHome(t *testing.T) {
 	t.Helper()
-	t.Setenv("HOME", t.TempDir())
+	testutil.IsolateHome(t)
 }
 
 func TestDefaultConfig(t *testing.T) {

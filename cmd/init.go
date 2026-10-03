@@ -213,7 +213,13 @@ func generateNonoProfile() error {
 		}
 	}
 
-	allow := []string{config.ConfigDir()}
+	// An agent reads workbench's config and writes the PR cache (create_pr);
+	// nothing else of workbench's. Not the state dir, not the layouts zellij
+	// runs unsandboxed — and nothing of supatree's.
+	if err := os.MkdirAll(config.AgentCacheDir(), 0755); err != nil {
+		return err
+	}
+	allow := []string{config.AgentCacheDir()}
 	for _, r := range cfg.Repos {
 		allow = append(allow, filepath.Dir(r.LocalPath))
 	}
@@ -221,6 +227,7 @@ func generateNonoProfile() error {
 		Name:        localProfileName,
 		Description: "claude-code with project repos, toolchain, and SSH agent",
 		Extends:     []string{"claude-code"},
+		Read:        []string{config.ConfigDir()},
 		Allow:       allow,
 	}.WithToolchain()
 

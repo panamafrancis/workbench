@@ -14,7 +14,7 @@ import (
 var scheduleCmd = &cobra.Command{
 	Use:   "schedule",
 	Short: "Recurring PM work (standups, triage, reminders)",
-	Long: "schedule lists the jobs in ~/.supatree/schedule.yml with when each last fired.\n" +
+	Long: "schedule lists the jobs in ~/.config/supatree/schedule.yml with when each last fired.\n" +
 		"A due job is fired by the watcher, which queues it for the PM exactly as the\n" +
 		"sidebar's `m` does — so the PM needs no timer of its own, which is the point:\n" +
 		"an agent mid-turn, blocked, or restarted cannot be trusted to hold one.\n\n" +
@@ -113,7 +113,7 @@ var scheduleInitCmd = &cobra.Command{
 		if _, err := os.Stat(supatree.SchedulePath()); err == nil {
 			return fmt.Errorf("%s already exists", supatree.SchedulePath())
 		}
-		if err := os.MkdirAll(supatree.Dir(), 0755); err != nil {
+		if err := os.MkdirAll(supatree.ConfigDir(), 0755); err != nil {
 			return err
 		}
 		if err := os.WriteFile(supatree.SchedulePath(), []byte(scheduleExample), 0644); err != nil {

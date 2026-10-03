@@ -43,11 +43,7 @@ var rmCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		ws := supatreeWorkspace()
-		ws.CleanupLayout(name)
-		for _, a := range res.Agents {
-			ws.CleanupLayout(supatree.TabName(name, a.Name))
-		}
+		cleanupTreeTabs(name, res)
 		for _, w := range res.Warnings {
 			fmt.Fprintf(os.Stderr, "warning: %s\n", w)
 		}
@@ -60,4 +56,13 @@ func init() {
 	rmCmd.Flags().BoolVar(&rmForce, "force", false, "remove even with uncommitted stack changes")
 	rmCmd.Flags().BoolVar(&rmPush, "push", false, "push the st/<name> branch before deleting it locally")
 	rmCmd.Flags().BoolVarP(&rmYes, "yes", "y", false, "skip confirmation")
+}
+
+// cleanupTreeTabs deletes the layouts a removed tree's tabs were opened from.
+func cleanupTreeTabs(tree string, res *supatree.RemoveResult) {
+	ws := supatreeWorkspace()
+	ws.CleanupLayout(tree)
+	for _, a := range res.Agents {
+		ws.CleanupLayout(supatree.TabName(tree, a.Name))
+	}
 }

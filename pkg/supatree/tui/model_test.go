@@ -10,6 +10,7 @@ import (
 
 	"github.com/panamafrancis/workbench/pkg/github"
 	"github.com/panamafrancis/workbench/pkg/supatree"
+	"github.com/panamafrancis/workbench/pkg/testutil"
 	"github.com/panamafrancis/workbench/pkg/zellij"
 )
 
@@ -27,7 +28,7 @@ func key(s string) tea.KeyMsg {
 }
 
 func TestViewEmptyDoesNotPanic(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.IsolateHome(t)
 	m := New(supatree.DefaultConfig(), zellij.Workspace{})
 	out := m.View()
 	if !strings.Contains(out, "supatree") {
@@ -39,7 +40,7 @@ func TestViewEmptyDoesNotPanic(t *testing.T) {
 }
 
 func TestRebuildRowsStructure(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.IsolateHome(t)
 	m := New(supatree.DefaultConfig(), zellij.Workspace{})
 	// Inject a synthetic instance and rebuild.
 	m.insts = []*supatree.Instance{{
@@ -91,7 +92,7 @@ func TestTreeFromTab(t *testing.T) {
 // Pressing n with a single stack skips the stack prompt and asks for a name;
 // the stack prompt only appears when more than one stack is registered.
 func TestNewTreeSingleStackAsksForName(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.IsolateHome(t)
 	cfg := supatree.DefaultConfig()
 	cfg.Stacks = []supatree.Stack{{Alias: "only", Path: "/tmp/only"}}
 	m := New(cfg, zellij.Workspace{})
@@ -106,7 +107,7 @@ func TestNewTreeSingleStackAsksForName(t *testing.T) {
 }
 
 func TestNewTreeMultiStackAsksForStackThenName(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.IsolateHome(t)
 	cfg := supatree.DefaultConfig()
 	cfg.Stacks = []supatree.Stack{{Alias: "a", Path: "/tmp/a"}, {Alias: "b", Path: "/tmp/b"}}
 	m := New(cfg, zellij.Workspace{})
@@ -130,7 +131,7 @@ func TestNewTreeMultiStackAsksForStackThenName(t *testing.T) {
 // reloadWithSelection keeps the cursor on the same logical row even when a new
 // supatree sorts in above it and shifts every row index down.
 func TestReloadWithSelectionPinsRow(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.IsolateHome(t)
 	m := New(supatree.DefaultConfig(), zellij.Workspace{})
 	m.insts = []*supatree.Instance{{
 		Name:    "milan",
@@ -221,7 +222,7 @@ func TestSpaceOnMemberRowFoldsOnlyRepos(t *testing.T) {
 // The repositories section is folded until asked otherwise, and its header
 // carries the members' PR statuses as coloured counts while it is.
 func TestReposFoldedByDefaultWithCountBadge(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.IsolateHome(t)
 	m := New(supatree.DefaultConfig(), zellij.Workspace{})
 	m.insts = []*supatree.Instance{{
 		Name: "oslo",
@@ -261,7 +262,7 @@ func TestReposFoldedByDefaultWithCountBadge(t *testing.T) {
 // Folds are shared state: one sidebar per Zellij tab means a fold made in one
 // tab has to show up in the next tab's reload, not just in the tab that made it.
 func TestFoldStateIsSharedAcrossSidebars(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.IsolateHome(t)
 	one := New(supatree.DefaultConfig(), zellij.Workspace{})
 	two := New(supatree.DefaultConfig(), zellij.Workspace{})
 
@@ -279,7 +280,7 @@ func TestFoldStateIsSharedAcrossSidebars(t *testing.T) {
 
 // The viewport keeps the cursor visible when the list is taller than the pane.
 func TestViewportScrollsToCursor(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.IsolateHome(t)
 	m := New(supatree.DefaultConfig(), zellij.Workspace{})
 	m.rows = make([]row, 20)
 	for i := range m.rows {
@@ -315,7 +316,7 @@ func TestViewportScrollsToCursor(t *testing.T) {
 // re-fetching every 30s; a transient/successful result restores it and clears
 // the hint.
 func TestPrMsgGhAvailabilityAndHint(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.IsolateHome(t)
 	m := New(supatree.DefaultConfig(), zellij.Workspace{})
 
 	// Permanent error: unavailable, hint set, background loop drops the fetch.
@@ -354,7 +355,7 @@ func TestPrMsgGhAvailabilityAndHint(t *testing.T) {
 }
 
 func TestActiveTreeMarkerInView(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.IsolateHome(t)
 	m := New(supatree.DefaultConfig(), zellij.Workspace{})
 	m.insts = []*supatree.Instance{
 		{Name: "here", Members: []supatree.Member{{Alias: "x", Branch: "st/here/x"}}},
@@ -379,7 +380,7 @@ const (
 // member repos, for the navigation tests.
 func threeTrees(t *testing.T) *Model {
 	t.Helper()
-	t.Setenv("HOME", t.TempDir())
+	testutil.IsolateHome(t)
 	m := New(supatree.DefaultConfig(), zellij.Workspace{})
 	for _, name := range []string{berlin, cairo, delhi} {
 		m.insts = append(m.insts, &supatree.Instance{
@@ -426,7 +427,7 @@ func rowKinds(m *Model) []rowKind {
 // osloModel is a one-supatree, one-member model with its repositories unfolded.
 func osloModel(t *testing.T) *Model {
 	t.Helper()
-	t.Setenv("HOME", t.TempDir())
+	testutil.IsolateHome(t)
 	m := New(supatree.DefaultConfig(), zellij.Workspace{})
 	m.insts = []*supatree.Instance{{
 		Name:    "oslo",
@@ -630,7 +631,7 @@ func rowIndex(m *Model, k rowKind) int {
 // disk, so the open paths get past their existence check.
 func memberModel(t *testing.T) (*Model, string) {
 	t.Helper()
-	t.Setenv("HOME", t.TempDir())
+	testutil.IsolateHome(t)
 	path := t.TempDir()
 	m := New(supatree.DefaultConfig(), zellij.Workspace{})
 	m.insts = []*supatree.Instance{{
@@ -712,7 +713,7 @@ func TestFooterHintFollowsRowKind(t *testing.T) {
 // with the character that caused it — rather than being left in the footer to
 // sit under the next attempt.
 func TestInvalidTreeNameWarnsInlineAndClears(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.IsolateHome(t)
 	m := New(supatree.DefaultConfig(), zellij.Workspace{})
 
 	m.updateNormal(key("n"))
@@ -750,7 +751,7 @@ func TestInvalidTreeNameWarnsInlineAndClears(t *testing.T) {
 // generated branch and tab names. Workbench's worktree names are not consulted:
 // the two tools share no namespace.
 func TestTreeNameValidationRejectsDuplicates(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.IsolateHome(t)
 	m := New(supatree.DefaultConfig(), zellij.Workspace{})
 	m.insts = []*supatree.Instance{{Name: berlin}}
 
@@ -805,7 +806,7 @@ func TestHelpOpensAndCloses(t *testing.T) {
 // The PM section leads the list even with no supatrees, is where gg lands, and
 // the tree-scoped keys do nothing on it rather than acting on a tree named "".
 func TestPMRowPinnedAtTop(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.IsolateHome(t)
 	m := New(supatree.DefaultConfig(), zellij.Workspace{})
 	if got := rowKinds(m); !slices.Equal(got, []rowKind{rowPM, rowDivider}) {
 		t.Fatalf("empty rows = %v, want the PM section alone", got)

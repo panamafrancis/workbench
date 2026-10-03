@@ -5,8 +5,24 @@ set -euo pipefail
 # with a dependency edge, sync a third in, rename branches, and tear down.
 # Runs against an isolated HOME. Requires: workbench + supatree on PATH.
 
-export HOME=$(mktemp -d)
+# The sandbox enforcement case below needs a real, enforcing nono, and cannot
+# run from inside a nono sandbox (macOS refuses nested sandboxes). When it can
+# run, the isolated HOME goes under the real one rather than $TMPDIR, which
+# nono's base profiles leave writable — a probe there would prove nothing.
+ENFORCE=
+if nono --version >/dev/null 2>&1 && [ -z "${NONO_CAP_FILE:-}" ]; then ENFORCE=1; fi
+if [ -n "$ENFORCE" ]; then
+    export HOME=$(mktemp -d "$HOME/.supatree-e2e.XXXXXX")
+else
+    export HOME=$(mktemp -d)
+fi
 trap 'rm -rf "$HOME"' EXIT
+# Paths come from XDG first, so HOME alone does not isolate: a value exported
+# by the developer's shell would point the run at their real directories.
+export XDG_CONFIG_HOME="$HOME/.config" XDG_STATE_HOME="$HOME/.local/state" XDG_CACHE_HOME="$HOME/.cache"
+ST_CONFIG="$XDG_CONFIG_HOME/supatree"
+ST_STATE="$XDG_STATE_HOME/supatree"
+ST_CACHE="$XDG_CACHE_HOME/supatree"
 
 echo "=== e2e-supatree: isolated HOME=$HOME ==="
 
@@ -31,10 +47,10 @@ for r in terraform keystone admin; do
 done
 
 # 2. Scaffold a stack (two repos to start). Default location is
-# ~/.supatree/stacks/<name>; --repos avoids the interactive picker.
+# ~/supatree/stacks/<name>; --repos avoids the interactive picker.
 echo "--- scaffold stack ---"
 supatree scaffold s --repos=terraform,keystone
-STACK="$HOME/.supatree/stacks/s"
+STACK="$HOME/supatree/stacks/s"
 [ -f "$STACK/supatree.yml" ] || fail "supatree.yml not scaffolded at default location"
 [ -f "$STACK/AGENTS.md" ]    || fail "AGENTS.md not scaffolded"
 
@@ -49,9 +65,14 @@ git -C "$STACK" commit -qam "add dep edge"
 # 3. Create a supatree.
 echo "--- supatree new ---"
 supatree new --stack s --name berlin
-ROOT="$HOME/.supatree/trees/berlin"
+ROOT="$HOME/supatree/trees/berlin"
 [ -d "$ROOT/repos/terraform" ] || fail "terraform member worktree missing"
 [ -d "$ROOT/repos/keystone" ]  || fail "keystone member worktree missing"
+
+# Per-tree state lives outside the tree; the tree links to it.
+[ -L "$ROOT/.supatree" ] || fail ".supatree is not a link into supatree's state"
+[ "$(readlink "$ROOT/.supatree")" = "$ST_STATE/trees/berlin" ] || fail ".supatree points at $(readlink "$ROOT/.supatree"), not the tree's state dir"
+[ -f "$ST_STATE/trees/berlin/meta.yml" ] || fail "meta.yml not in the state dir"
 
 # Meta-worktree branch is st/<name>; members are st/<name>/<alias>.
 [ "$(git -C "$ROOT" rev-parse --abbrev-ref HEAD)" = "st/berlin" ] || fail "meta branch wrong"
@@ -82,32 +103,34 @@ supatree dash | grep berlin >/dev/null || fail "dash fallback did not print stat
 # quiet first run is what stops a fresh install announcing every supatree it
 # finds. A stub notify_command makes delivery observable without a desktop.
 echo "--- supatree watch --once ---"
-cat >> "$HOME/.supatree/config.yml" <<YML
+mkdir -p "$ST_CONFIG"
+cat >> "$ST_CONFIG/config.yml" <<YML
 notify_command: ["sh", "-c", "echo {title}: {text} >> $HOME/notified.log"]
 YML
 supatree watch --once || fail "watch --once failed"
-[ -f "$HOME/.supatree/cache/last-status.json" ] || fail "watch did not persist a baseline"
-[ ! -s "$HOME/.supatree/events.jsonl" ] || fail "first watch round must not emit events"
+[ -f "$ST_CACHE/last-status.json" ] || fail "watch did not persist a baseline"
+[ ! -s "$ST_STATE/ledger/events.jsonl" ] || fail "first watch round must not emit events"
 [ ! -f "$HOME/notified.log" ] || fail "first watch round must not notify"
 
 # A second round against an unchanged world is equally quiet: events are a diff,
 # not a report of the current state.
 supatree watch --once || fail "second watch --once failed"
-[ ! -s "$HOME/.supatree/events.jsonl" ] || fail "unchanged world must not emit events"
+[ ! -s "$ST_STATE/ledger/events.jsonl" ] || fail "unchanged world must not emit events"
 
 # The outbox is how a sandboxed process (the PM) reaches the desktop, since the
 # watcher is the only process outside nono. Board-tier events are recorded but
 # must not interrupt; desktop-tier ones must.
-echo '{"at":"2099-01-01T00:00:00Z","kind":"approved","tree":"berlin","text":"quiet"}' > "$HOME/.supatree/notify.jsonl"
+mkdir -p "$ST_STATE/outbox"
+echo '{"at":"2099-01-01T00:00:00Z","kind":"approved","tree":"berlin","text":"quiet"}' > "$ST_STATE/outbox/notify.jsonl"
 supatree watch --once || fail "watch --once with outbox failed"
 [ ! -f "$HOME/notified.log" ] || fail "board-tier outbox event must not notify"
-echo '{"at":"2099-01-01T00:00:00Z","kind":"checks_failed","tree":"berlin","member":"keystone","text":"ci is red"}' > "$HOME/.supatree/notify.jsonl"
+echo '{"at":"2099-01-01T00:00:00Z","kind":"checks_failed","tree":"berlin","member":"keystone","text":"ci is red"}' > "$ST_STATE/outbox/notify.jsonl"
 supatree watch --once || fail "watch --once with desktop outbox failed"
 grep -q "ci is red" "$HOME/notified.log" || fail "desktop-tier outbox event did not notify"
-[ ! -f "$HOME/.supatree/notify.jsonl" ] || fail "outbox not drained"
+[ ! -s "$ST_STATE/outbox/notify.jsonl" ] || fail "outbox not drained"
 
 # Repeats of the same news stay quiet until the cooldown elapses.
-echo '{"at":"2099-01-01T00:05:00Z","kind":"checks_failed","tree":"berlin","member":"keystone","text":"ci is red again"}' > "$HOME/.supatree/notify.jsonl"
+echo '{"at":"2099-01-01T00:05:00Z","kind":"checks_failed","tree":"berlin","member":"keystone","text":"ci is red again"}' > "$ST_STATE/outbox/notify.jsonl"
 supatree watch --once || fail "watch --once with repeat failed"
 grep -q "ci is red again" "$HOME/notified.log" && fail "repeat inside the cooldown must not notify"
 
@@ -131,9 +154,9 @@ supatree inbox berlin nobody | grep "no messages" >/dev/null || fail "empty mail
 echo "--- pm requests ---"
 supatree request --tree berlin "check the review on keystone" >/dev/null || fail "request failed"
 supatree request --from watcher "berlin has gone stale" >/dev/null || fail "second request failed"
-[ -s "$HOME/.supatree/requests.jsonl" ] || fail "request queue not written"
-grep -q "check the review" "$HOME/.supatree/requests.jsonl" || fail "request text missing"
-grep -q '"from":"watcher"' "$HOME/.supatree/requests.jsonl" || fail "request provenance missing"
+[ -s "$ST_STATE/requests/requests.jsonl" ] || fail "request queue not written"
+grep -q "check the review" "$ST_STATE/requests/requests.jsonl" || fail "request text missing"
+grep -q '"from":"watcher"' "$ST_STATE/requests/requests.jsonl" || fail "request provenance missing"
 
 # 4f. Autonomy, board, notes, schedule.
 echo "--- board + notes + schedule ---"
@@ -146,17 +169,17 @@ supatree schedule | grep "No scheduled jobs" >/dev/null || fail "expected an emp
 supatree schedule init >/dev/null || fail "schedule init failed"
 supatree schedule | grep standup >/dev/null || fail "schedule not listed"
 supatree schedule | grep never >/dev/null || fail "a fresh job should report never fired"
-REQS_BEFORE=$(wc -l < "$HOME/.supatree/requests.jsonl")
+REQS_BEFORE=$(wc -l < "$ST_STATE/requests/requests.jsonl")
 supatree watch --once || fail "watch with a schedule failed"
 supatree watch --once || fail "second watch with a schedule failed"
-[ "$(wc -l < "$HOME/.supatree/requests.jsonl")" = "$REQS_BEFORE" ] || fail "a fresh schedule fired jobs instead of seeding"
+[ "$(wc -l < "$ST_STATE/requests/requests.jsonl")" = "$REQS_BEFORE" ] || fail "a fresh schedule fired jobs instead of seeding"
 
 # schedule run fires on demand without disturbing the fire times: testing a job
 # must not silently skip its next real run.
-STATE_BEFORE=$(cat "$HOME/.supatree/cache/schedule-state.json")
+STATE_BEFORE=$(cat "$ST_CACHE/schedule-state.json")
 supatree schedule run reap >/dev/null || fail "schedule run failed"
-grep -q "schedule:reap" "$HOME/.supatree/requests.jsonl" || fail "run did not queue the job"
-[ "$(cat "$HOME/.supatree/cache/schedule-state.json")" = "$STATE_BEFORE" ] || fail "schedule run touched the last-fired state"
+grep -q "schedule:reap" "$ST_STATE/requests/requests.jsonl" || fail "run did not queue the job"
+[ "$(cat "$ST_CACHE/schedule-state.json")" = "$STATE_BEFORE" ] || fail "schedule run touched the last-fired state"
 supatree schedule run nosuchjob >/dev/null 2>&1 && fail "running an unknown job should error"
 
 # 5. Add a third repo by editing supatree.yml + sync.
@@ -180,8 +203,9 @@ supatree rename-branch payments berlin
 echo "--- supatree rm ---"
 supatree rm berlin -y --force
 [ ! -d "$ROOT" ] || fail "tree dir still exists after rm"
+[ ! -d "$ST_STATE/trees/berlin" ] || fail "tree state survived rm — List would keep reporting it"
 # Removal must not be the thing that loses an agent's history.
-[ -d "$HOME/.supatree/archive" ] || mkdir -p "$HOME/.supatree/archive"
+[ -d "$ST_STATE/archive" ] || mkdir -p "$ST_STATE/archive"
 git -C "$HOME/src/terraform" worktree list | grep "berlin" >/dev/null && fail "source worktree not pruned"
 
 # Review mode. There is no network and no gh here, so this covers everything
@@ -189,7 +213,7 @@ git -C "$HOME/src/terraform" worktree list | grep "berlin" >/dev/null && fail "s
 # alone, which is what protects a PR author's branch.
 echo "--- teardown leaves a foreign branch alone ---"
 supatree new --stack=s --name=reviewcity >/dev/null
-REVIEW="$HOME/.supatree/trees/reviewcity"
+REVIEW="$HOME/supatree/trees/reviewcity"
 [ -d "$REVIEW/repos/keystone" ] || fail "review fixture member missing"
 # Put a member on somebody else's branch, the way `gh pr checkout` would.
 git -C "$REVIEW/repos/keystone" checkout -q -b feat/not-ours
@@ -197,6 +221,41 @@ supatree rm reviewcity -y --force >/dev/null
 git -C "$HOME/src/keystone" rev-parse --verify --quiet refs/heads/feat/not-ours >/dev/null \
     || fail "supatree rm deleted a branch the tree did not create"
 echo "    foreign branch survived teardown"
+
+# Old layout: every command but migrate/version refuses, with one line saying
+# what to do, rather than half-working against files it no longer reads.
+echo "--- old-layout guard ---"
+OLD=$(mktemp -d)
+mkdir -p "$OLD/.supatree"
+( export HOME="$OLD" XDG_CONFIG_HOME="$OLD/.config" XDG_STATE_HOME="$OLD/.local/state" XDG_CACHE_HOME="$OLD/.cache"
+  out=$(supatree ls 2>&1) && fail "supatree ls ran on the old layout"
+  echo "$out" | grep "supatree migrate" >/dev/null || fail "old-layout refusal does not say what to run: $out"
+  supatree version >/dev/null || fail "supatree version refused on the old layout" )
+rm -rf "$OLD"
+
+# Sandbox enforcement: run a probe under exactly the flags a tree agent gets
+# and check the boundary holds (see ENFORCE at the top).
+echo "--- sandbox enforcement ---"
+if [ -n "$ENFORCE" ]; then
+    supatree init >/dev/null 2>&1 || fail "supatree init failed"
+    supatree new --stack=s --name=lima >/dev/null
+    supatree new --stack=s --name=quito >/dev/null
+    LIMA="$HOME/supatree/trees/lima"
+    ARGS=()
+    while IFS= read -r a; do ARGS+=("$a"); done < <(supatree sandbox-args lima)
+    probe() { nono run -s --no-rollback "${ARGS[@]}" -- sh -c "echo x >> '$1'" >/dev/null 2>&1; }
+    probe "$LIMA/repos/keystone/probe"     || fail "agent cannot write its own member"
+    probe "$ST_STATE/trees/lima/probe"     || fail "agent cannot write its own tree state"
+    probe "$ST_STATE/pm/launch.jsonl"      && fail "agent can write the PM's launch queue"
+    probe "$ST_STATE/trees/quito/probe"    && fail "agent can write another tree's state"
+    probe "$HOME/supatree/trees/quito/x"   && fail "agent can write another tree"
+    probe "$ST_CACHE/layouts/x.kdl"        && fail "agent can write layouts zellij runs unsandboxed"
+    supatree rm lima -y --force >/dev/null
+    supatree rm quito -y --force >/dev/null
+    echo "    boundary holds"
+else
+    echo "    skipped (no enforcing nono here)"
+fi
 
 echo ""
 echo "=== e2e-supatree: all checks passed ==="

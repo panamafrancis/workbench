@@ -10,9 +10,9 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// SchedulePath is the hand-editable timetable (~/.supatree/schedule.yml).
+// SchedulePath is the hand-editable timetable (~/.config/supatree/schedule.yml).
 func SchedulePath() string {
-	return filepath.Join(Dir(), "schedule.yml")
+	return filepath.Join(ConfigDir(), "schedule.yml")
 }
 
 // ScheduleStatePath records when each job last fired, beside last-status.json
@@ -93,7 +93,7 @@ func SaveSchedule(s *Schedule) error {
 	if err != nil {
 		return fmt.Errorf("marshal schedule: %w", err)
 	}
-	if err := os.MkdirAll(Dir(), 0755); err != nil {
+	if err := os.MkdirAll(ConfigDir(), 0755); err != nil {
 		return fmt.Errorf("create supatree dir: %w", err)
 	}
 	tmp := SchedulePath() + ".tmp"

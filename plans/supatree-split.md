@@ -475,3 +475,27 @@ deletes it in the same change that adds `migrate`.
 5. Repo split.
 
 1–4 land in this repo; 5 is mechanical once they are in.
+
+## As built
+
+Where the implementation departed from the text above, and why.
+
+- **Grants are directories, not files.** The queues moved into their own
+  directories under state (`ledger/`, `outbox/`, `requests/`) and are granted
+  as directories, because rotation and drains replace files and a Landlock
+  file grant follows the old inode. The outbox is truncated, never removed.
+- **Coding agents get less than the table says.** No `notify`/`requests`/
+  `events` access at all — those tools are PM-only — and no cache directory
+  either: only `cache/agent/` (PR status, comments, recall log). The rest of
+  the cache holds `layouts/`, which zellij runs unsandboxed, so a writable
+  cache was itself an escalation path. Workbench's `claude-code-local` got
+  the same treatment: config read-only, `cache/agent/` read-write, no state.
+- **`sync` goes through the watcher too**, not only the PM's create/remove:
+  adding a member writes a base clone the agent's sandbox does not reach.
+  Requests live in the requester's own directory (`pm/ops/`, or the tree's
+  `ops/`), and that location is the authorization: a tree may only sync
+  itself.
+- **Two shared-disk ties the plan missed** were cut: the Claude folder-trust
+  lock lived in workbench's cache (now the per-user temp dir), and failed
+  zellij calls logged to workbench's logs from either tool (now
+  `zellij.LogDir`, set by each tool).

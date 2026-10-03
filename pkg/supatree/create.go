@@ -71,6 +71,7 @@ func finishCreate(c *Config, stack *Stack, root, name string, opts CreateOptions
 	}
 	meta := &Meta{
 		Name:      name,
+		Root:      root,
 		Slug:      name,
 		Stack:     stack.Alias,
 		Model:     resolveModel(opts.Model, spec, c),
@@ -82,6 +83,12 @@ func finishCreate(c *Config, stack *Stack, root, name string, opts CreateOptions
 		meta.Mode = ModeReviewing
 	}
 	if err := meta.Save(root); err != nil {
+		return nil, nil, err
+	}
+	// The .supatree link and repos/ must never show as untracked in the stack,
+	// whatever the stack's own .gitignore says (a `.supatree/` pattern matches
+	// a directory, not the link that replaced it).
+	if err := excludeFromStack(root, "/"+stateDirName, "/"+ReposDirName+"/"); err != nil {
 		return nil, nil, err
 	}
 
@@ -110,6 +117,7 @@ func rollback(c *Config, stackPath, root, name string) {
 	}
 	_ = git.RemoveWorktree(stackPath, root)
 	_ = git.DeleteBranch(stackPath, "st/"+name)
+	_ = os.RemoveAll(StateDir(root))
 	_ = os.RemoveAll(root)
 }
 

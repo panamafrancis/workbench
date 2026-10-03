@@ -14,17 +14,33 @@ import (
 
 var initCmd = &cobra.Command{
 	Use:   "init",
-	Short: "Set up ~/.supatree and register the MCP server with Claude Code",
+	Short: "Set up supatree: its directories, config, nono profile and MCP server",
+	Long: "init creates supatree's config, state and cache directories, writes a default\n" +
+		"config.yml if there is none, writes the " + supatree.AgentProfileName + " nono profile the default\n" +
+		"models run under, and registers the supatree MCP server with Claude Code.\n" +
+		"It writes only supatree's own files.",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if err := os.MkdirAll(supatree.Dir(), 0755); err != nil {
-			return fmt.Errorf("create %s: %w", supatree.Dir(), err)
+		if err := supatree.EnsureLayout(); err != nil {
+			return fmt.Errorf("create supatree dirs: %w", err)
 		}
 		if _, err := os.Stat(supatree.ConfigPath()); os.IsNotExist(err) {
-			if err := supatree.DefaultConfig().Save(); err != nil {
+			c := supatree.DefaultConfig()
+			c.Models = supatree.DefaultModels()
+			if err := c.Save(); err != nil {
 				return err
 			}
+			fmt.Printf("wrote %s\n", supatree.ConfigPath())
+		} else {
+			fmt.Printf("config: %s\n", supatree.ConfigPath())
 		}
-		fmt.Printf("supatree home: %s\n", supatree.Dir())
+		// The profile is generated, and supatree is its only writer, so it is
+		// rewritten every time rather than left to drift from what the code
+		// expects.
+		path, err := supatree.AgentProfile().Write()
+		if err != nil {
+			return fmt.Errorf("write nono profile: %w", err)
+		}
+		fmt.Printf("nono profile: %s\n", path)
 		registerMCP()
 		fmt.Println("Next: supatree scaffold <dir> --repos=<a,b,c>")
 		return nil

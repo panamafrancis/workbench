@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
@@ -29,6 +30,10 @@ var rootCmd = &cobra.Command{
 		return startCmd.RunE(startCmd, nil)
 	},
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		zellij.LogDir = config.LogsDir()
+		if config.OldLayout() && !layoutExempt[cmd.Name()] {
+			return errors.New(config.OldLayoutMessage)
+		}
 		var err error
 		cfg, err = config.Load()
 		if err != nil {
@@ -43,6 +48,11 @@ var rootCmd = &cobra.Command{
 		return nil
 	},
 }
+
+// layoutExempt are the commands that still run on the old layout: the one that
+// moves it, the ones that only report, and the MCP server, which refuses per
+// tool call instead (see mcp.go).
+var layoutExempt = map[string]bool{"migrate": true, "version": true, "doctor": true, "help": true, "mcp": true}
 
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {

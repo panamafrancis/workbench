@@ -42,7 +42,10 @@ type ReviewRef struct {
 // git: which stack it belongs to, the branch slug for member branches, the
 // default model, and when it was created.
 type Meta struct {
-	Name      string    `yaml:"name"`
+	Name string `yaml:"name"`
+	// Root is where the tree is checked out. State lives outside the tree, so
+	// this is how discovery gets from a state directory back to its tree.
+	Root      string    `yaml:"root,omitempty"`
 	Slug      string    `yaml:"slug"`
 	Stack     string    `yaml:"stack"`
 	Model     string    `yaml:"model"`
@@ -90,10 +93,11 @@ func LoadMeta(root string) (*Meta, error) {
 	return &m, nil
 }
 
-// Save writes .supatree/meta.yml atomically, creating the state dir.
+// Save writes .supatree/meta.yml atomically, creating the state dir and the
+// tree's link to it.
 func (m *Meta) Save(root string) error {
-	if err := os.MkdirAll(StateDir(root), 0755); err != nil {
-		return fmt.Errorf("create state dir: %w", err)
+	if err := LinkState(root); err != nil {
+		return err
 	}
 	data, err := yaml.Marshal(m)
 	if err != nil {

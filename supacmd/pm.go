@@ -13,13 +13,14 @@ import (
 var pmCmd = &cobra.Command{
 	Use:   "pm",
 	Short: "Open the PM agent — a standing agent that manages supatrees",
-	Long: "pm opens (or focuses) an agent rooted at ~/.supatree/pm that can see every\n" +
+	Long: "pm opens (or focuses) an agent rooted at ~/.local/state/supatree/pm that can see every\n" +
 		"supatree at once: what is blocked, what reviewers said, who is working where.\n" +
 		"It is optional — nothing else depends on it running.\n\n" +
 		"It is not rooted in a supatree, because one that manages many cannot live in\n" +
-		"one of them. Its sandbox allows its own state, each tree's .supatree/ and the\n" +
-		"stack repos, and nothing under repos/ — it coordinates work rather than doing\n" +
-		"it. Press P in the supatree sidebar for the same thing.",
+		"one of them. Its sandbox allows its own state, every tree's state and the\n" +
+		"stack repos, and nothing inside any tree — it coordinates work rather than\n" +
+		"doing it, and asks the watcher to create or remove trees. Press P in the\n" +
+		"supatree sidebar for the same thing.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if !zellij.IsInZellij() {
 			return fmt.Errorf("run this inside a supatree session (supatree start)")
@@ -38,7 +39,7 @@ var pmRequestFrom string
 var requestCmd = &cobra.Command{
 	Use:   "request <text>...",
 	Short: "Queue something for the PM agent to look at",
-	Long: "request appends to ~/.supatree/requests.jsonl, which the PM reads at the top\n" +
+	Long: "request appends to the PM's request queue (~/.local/state/supatree/requests/), which it reads at the top\n" +
 		"of each turn. Anything that can append to a file can raise one — the sidebar,\n" +
 		"the watcher, a shell — which is what lets Go processes reach an agent at all.\n\n" +
 		"The PM need not be running: the queue is read from a stored offset, so one\n" +

@@ -4,12 +4,14 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/panamafrancis/workbench/pkg/testutil"
 )
 
 // A repeating error must not grow watch.log without bound: it rotates to one
 // previous generation, and the line that tripped the rotation is not lost.
 func TestWatchLogRotates(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.IsolateHome(t)
 	openWatchLog()
 	defer closeWatchLog()
 	if watchLog.f == nil {

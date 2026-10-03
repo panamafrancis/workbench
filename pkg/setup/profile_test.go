@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/panamafrancis/workbench/pkg/testutil"
 )
 
 func TestProfileJSON(t *testing.T) {
@@ -36,7 +38,7 @@ func TestProfileJSON(t *testing.T) {
 }
 
 func TestProfileWrite(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.IsolateHome(t)
 	path, err := Profile{Name: "x"}.Write()
 	if err != nil {
 		t.Fatal(err)

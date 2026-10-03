@@ -4,10 +4,12 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/panamafrancis/workbench/pkg/testutil"
 )
 
 func TestLaunchQueueRoundTrip(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.IsolateHome(t)
 
 	if reqs, err := DrainLaunches(); err != nil || len(reqs) != 0 {
 		t.Fatalf("DrainLaunches on no queue = %v, %v; want none, nil", reqs, err)
@@ -47,7 +49,7 @@ func TestLaunchQueueRoundTrip(t *testing.T) {
 }
 
 func TestQueueLaunchRejectsBadInput(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.IsolateHome(t)
 	if err := QueueLaunch(LaunchRequest{}); err == nil {
 		t.Error("QueueLaunch with no tree succeeded")
 	}
@@ -58,7 +60,7 @@ func TestQueueLaunchRejectsBadInput(t *testing.T) {
 }
 
 func TestForwardPMMail(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.IsolateHome(t)
 	root := t.TempDir()
 	inst := &Instance{Name: treeA, Root: root}
 
@@ -93,7 +95,7 @@ func TestForwardPMMail(t *testing.T) {
 }
 
 func TestStartAgentBriefsThenQueues(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.IsolateHome(t)
 	t.Setenv("ZELLIJ_SESSION_NAME", "st-main")
 	root := t.TempDir()
 	inst := &Instance{Name: treeA, Root: root, Model: defaultModelKey}
@@ -121,7 +123,7 @@ func TestStartAgentBriefsThenQueues(t *testing.T) {
 }
 
 func TestStartAgentDefaultsReviewBrief(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.IsolateHome(t)
 	root := t.TempDir()
 	inst := &Instance{Name: "hobart", Root: root, Model: defaultModelKey, Mode: ModeReviewing, Members: []Member{
 		{Alias: "api", Review: &ReviewRef{Repo: "o/api", Number: 12, URL: "https://github.com/o/api/pull/12"}},

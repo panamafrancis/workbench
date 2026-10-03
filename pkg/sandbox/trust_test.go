@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/panamafrancis/workbench/pkg/testutil"
 )
 
 // claudeHome sets up an isolated HOME holding a Claude config with the given
@@ -12,8 +14,7 @@ import (
 // ~/.claude.json symlinked to it.
 func claudeHome(t *testing.T, projects map[string]any) (home, real string) {
 	t.Helper()
-	home = t.TempDir()
-	t.Setenv("HOME", home)
+	home = testutil.IsolateHome(t)
 
 	dir := filepath.Join(home, ".claude")
 	if err := os.MkdirAll(dir, 0755); err != nil {
@@ -155,14 +156,14 @@ func TestTrustDirKeepsSymlink(t *testing.T) {
 }
 
 func TestTrustDirWithoutClaudeConfig(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.IsolateHome(t)
 	if err := TrustDir("/trees/berlin"); err == nil {
 		t.Error("expected an error when there is no claude config to seed")
 	}
 }
 
 func TestTrustDirEmptyDir(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.IsolateHome(t)
 	if err := TrustDir(""); err != nil {
 		t.Errorf("empty dir should be a no-op, got %v", err)
 	}

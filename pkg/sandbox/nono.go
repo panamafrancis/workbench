@@ -45,16 +45,24 @@ func BuildAgentNonoArgs(worktreePath string, m config.Model, sessionID string, r
 // every agent in a supatree shares the tree root, so without this they would
 // all derive the same name and collide.
 func BuildNamedAgentNonoArgs(worktreePath string, m config.Model, sessionID, agentName string, resume bool) []string {
+	return BuildGrantedAgentNonoArgs(m, Grants{Allow: []string{worktreePath}}, worktreePath, sessionID, agentName, resume)
+}
+
+// BuildGrantedAgentNonoArgs is BuildNamedAgentNonoArgs for an agent whose
+// filesystem reach is more than one directory. sessionDir is the directory
+// the agent runs in, which is what a directory-scoped resume is keyed on.
+func BuildGrantedAgentNonoArgs(m config.Model, g Grants, sessionDir, sessionID, agentName string, resume bool) []string {
 	tokens := map[string]string{"{session_id}": sessionID, "{agent_name}": agentName}
-	args := []string{"run", "--profile", m.NonoProfile, "--allow", worktreePath, "--"}
-	args = append(args, m.Binary)
+	args := []string{"run", "--profile", m.NonoProfile}
+	args = append(args, g.Args()...)
+	args = append(args, "--", m.Binary)
 	args = append(args, m.Args...)
 	switch {
 	case sessionID != "" && resume && len(m.ResumeSessionArgs) > 0:
 		args = append(args, substituteTokens(m.ResumeSessionArgs, tokens)...)
 	case sessionID != "" && !resume && len(m.NewSessionArgs) > 0:
 		args = append(args, substituteTokens(m.NewSessionArgs, tokens)...)
-	case resume && len(m.ResumeArgs) > 0 && HasPriorSession(worktreePath):
+	case resume && len(m.ResumeArgs) > 0 && HasPriorSession(sessionDir):
 		// Fallback for models without session-ID args: directory-scoped resume
 		// (e.g. --continue). Only when actually resuming — a *new* agent must
 		// never inherit whatever ran last in a shared directory.
@@ -184,8 +192,33 @@ func encodeProjectPath(p string) string {
 // supatree's own state — but that it may never write a member repo's working
 // tree.
 type Grants struct {
-	Allow []string // read+write
-	Read  []string // read-only
+	Allow     []string // read+write directories
+	Read      []string // read-only directories
+	AllowFile []string // read+write single files
+	ReadFile  []string // read-only single files
+}
+
+// Empty reports whether g grants nothing at all.
+func (g Grants) Empty() bool {
+	return len(g.Allow)+len(g.Read)+len(g.AllowFile)+len(g.ReadFile) == 0
+}
+
+// Args renders g as nono flags, in a stable order.
+func (g Grants) Args() []string {
+	args := make([]string, 0, 2*(len(g.Allow)+len(g.Read)+len(g.AllowFile)+len(g.ReadFile)))
+	for _, p := range g.Allow {
+		args = append(args, "--allow", p)
+	}
+	for _, p := range g.Read {
+		args = append(args, "--read", p)
+	}
+	for _, p := range g.AllowFile {
+		args = append(args, "--allow-file", p)
+	}
+	for _, p := range g.ReadFile {
+		args = append(args, "--read-file", p)
+	}
+	return args
 }
 
 // BuildGrantedNonoArgs builds nono args for a process with an explicit set of
@@ -194,16 +227,11 @@ type Grants struct {
 // agentName, when the model defines AgentNameArgs, gives it a bus address the
 // same way a supatree agent gets one.
 func BuildGrantedNonoArgs(m config.Model, g Grants, sessionDir, agentName string, resume bool) ([]string, error) {
-	if len(g.Allow) == 0 && len(g.Read) == 0 {
+	if g.Empty() {
 		return nil, fmt.Errorf("refusing to build a sandbox with no filesystem grants")
 	}
 	args := []string{"run", "--profile", m.NonoProfile}
-	for _, p := range g.Allow {
-		args = append(args, "--allow", p)
-	}
-	for _, p := range g.Read {
-		args = append(args, "--read", p)
-	}
+	args = append(args, g.Args()...)
 	args = append(args, "--", m.Binary)
 	args = append(args, m.Args...)
 	if resume && len(m.ResumeArgs) > 0 && HasPriorSession(sessionDir) {

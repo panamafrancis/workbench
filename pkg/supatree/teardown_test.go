@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/panamafrancis/workbench/pkg/config"
+	"github.com/panamafrancis/workbench/pkg/testutil"
 )
 
 // originRepo creates a repo with one commit that worktrees can branch from.
@@ -62,6 +63,7 @@ func withClone(c *Config, alias, clone string) *Config {
 // Teardown deletes the branch it created. That is the ordinary path and must
 // keep working — the guard is not allowed to make `rm` leave rubbish behind.
 func TestRemoveMemberDeletesItsOwnBranch(t *testing.T) {
+	testutil.IsolateHome(t)
 	repo := originRepo(t)
 	const branch = "st/canberra/keystone"
 	root, c := setupMember(t, repo, aliasKeystone, branch)
@@ -81,6 +83,7 @@ func TestRemoveMemberDeletesItsOwnBranch(t *testing.T) {
 // a `gh pr checkout` in a member worktree puts someone else's branch there. This
 // runs `git branch -D`, so without the guard an ordinary teardown destroys it.
 func TestRemoveMemberLeavesAForeignBranchAlone(t *testing.T) {
+	testutil.IsolateHome(t)
 	repo := originRepo(t)
 	const foreign = "feat/refunds-baseline-context"
 	root, c := setupMember(t, repo, aliasKeystone, foreign)
@@ -103,6 +106,7 @@ func TestRemoveMemberLeavesAForeignBranchAlone(t *testing.T) {
 // tree's own: a member checked out elsewhere still leaves st/<slug>/<alias>
 // behind in the clone, and that would accumulate on every such removal.
 func TestRemoveMemberStillReapsItsOwnBranchWhenMemberIsForeign(t *testing.T) {
+	testutil.IsolateHome(t)
 	repo := originRepo(t)
 	const own = "st/canberra/keystone"
 	const foreign = "feat/refunds-baseline-context"
@@ -144,6 +148,7 @@ func writeTree(t *testing.T, repo string, meta *Meta, aliases ...string) string 
 // recording the author's branch as the PR base so the change is proposed on
 // their pull request instead of competing with it.
 func TestForkReviewConvertsAndRecordsBase(t *testing.T) {
+	testutil.IsolateHome(t)
 	repo := originRepo(t)
 	meta := &Meta{
 		Name: treeA, Slug: treeA, Stack: "s", Mode: ModeReviewing,
@@ -195,6 +200,7 @@ func TestForkReviewConvertsAndRecordsBase(t *testing.T) {
 // Forking something that was never a review is a mistake worth naming, not a
 // no-op that silently rewrites branches.
 func TestForkReviewRefusesAuthoringTree(t *testing.T) {
+	testutil.IsolateHome(t)
 	repo := originRepo(t)
 	meta := &Meta{Name: "berlin", Slug: "berlin", Stack: "s"}
 	root := writeTree(t, repo, meta, aliasKeystone)
@@ -213,6 +219,7 @@ func TestForkReviewRefusesAuthoringTree(t *testing.T) {
 // pull requests, and while CacheKey still said pr:<repo>#<n> those were invisible
 // to every status surface while the author's PR was reported in their place.
 func TestForkedMembersStopKeyingOnTheReviewedPR(t *testing.T) {
+	testutil.IsolateHome(t)
 	repo := originRepo(t)
 	meta := &Meta{
 		Name: treeA, Slug: treeA, Stack: "s", Mode: ModeReviewing,

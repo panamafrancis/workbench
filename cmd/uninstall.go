@@ -50,7 +50,9 @@ var uninstallCmd = &cobra.Command{
 		}
 		fmt.Printf("  All wb-* Zellij sessions\n")
 		if !uninstallKeepCfg {
-			fmt.Printf("  %s\n", config.ConfigDir())
+			for _, dir := range workbenchDirs() {
+				fmt.Printf("  %s\n", dir)
+			}
 		}
 		fmt.Println()
 
@@ -92,10 +94,12 @@ var uninstallCmd = &cobra.Command{
 		}
 
 		if !uninstallKeepCfg {
-			if err := os.RemoveAll(config.ConfigDir()); err != nil {
-				fmt.Fprintf(os.Stderr, "  warning: remove %s: %v\n", config.ConfigDir(), err)
-			} else {
-				fmt.Printf("  removed %s\n", config.ConfigDir())
+			for _, dir := range workbenchDirs() {
+				if err := os.RemoveAll(dir); err != nil {
+					fmt.Fprintf(os.Stderr, "  warning: remove %s: %v\n", dir, err)
+				} else {
+					fmt.Printf("  removed %s\n", dir)
+				}
 			}
 		}
 
@@ -119,6 +123,11 @@ type worktreeInfo struct {
 
 func init() {
 	uninstallCmd.Flags().BoolVar(&uninstallDryRun, "dry-run", false, "show what would be removed without doing it")
-	uninstallCmd.Flags().BoolVar(&uninstallKeepCfg, "keep-config", false, "keep ~/.workbench config directory")
+	uninstallCmd.Flags().BoolVar(&uninstallKeepCfg, "keep-config", false, "keep workbench's config, state and cache directories")
 	uninstallCmd.Flags().BoolVar(&uninstallForce, "force", false, "remove dirty worktrees too (dangerous)")
+}
+
+// workbenchDirs are the directories that hold nothing but workbench's own files.
+func workbenchDirs() []string {
+	return []string{config.ConfigDir(), config.StateDir(), config.CacheDir()}
 }

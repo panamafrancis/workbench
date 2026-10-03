@@ -32,7 +32,7 @@ var watchCmd = &cobra.Command{
 	Short: "Watch every supatree and notify when something needs you",
 	Long: "watch is the single background poller. It refreshes PR status on the shared\n" +
 		"staleness gate, derives the activity summary, diffs it against the previous\n" +
-		"round, appends what changed to ~/.supatree/events.jsonl, and delivers the few\n" +
+		"round, appends what changed to the activity ledger, and delivers the few\n" +
 		"events that warrant interrupting you as desktop notifications.\n\n" +
 		"It is a singleton: a second instance exits quietly rather than doubling the\n" +
 		"GitHub API load. `supatree start` spawns one automatically, so running this by\n" +
@@ -62,11 +62,16 @@ var watchCmd = &cobra.Command{
 
 func runWatch(ctx context.Context) error {
 	if watchOnce {
+		runOps()
 		return watchRound(ctx)
 	}
 
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	// Tree operations get their own goroutine: a create fetches every member
+	// and may take a minute, which must hold up neither launches nor rounds.
+	go runOpsLoop(ctx)
 
 	interval := stCfg.ResolveWatchInterval()
 	ticker := time.NewTicker(interval)
@@ -161,6 +166,53 @@ const launchPollInterval = 2 * time.Second
 // --background`, which reuses the ordinary open path unchanged — the child is
 // pointed at the session through ZELLIJ_SESSION_NAME, exactly as `--session`
 // already does — and keeps one failed launch from touching the daemon.
+// opsPollInterval is how often the watcher looks for tree operations. A tool
+// is blocked waiting on the answer, so it is short; looking is a readdir.
+const opsPollInterval = time.Second
+
+// runOpsLoop carries out the tree operations sandboxed processes ask for
+// (supatree.Op): creating and removing trees for the PM, syncing a tree for
+// its own agents. Only the watcher can: those write worktrees and clones no
+// sandbox is granted.
+func runOpsLoop(ctx context.Context) {
+	if cfg, err := supatree.Load(); err == nil {
+		insts, _ := supatree.List(cfg)
+		supatree.AbandonInterrupted(supatree.OpSources(insts))
+	}
+	ticker := time.NewTicker(opsPollInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			runOps()
+		}
+	}
+}
+
+// runOps claims and answers every waiting request, one at a time: two creates
+// at once would race for the same generated name.
+func runOps() {
+	cfg, err := supatree.Load()
+	if err != nil {
+		logWatch("ops: load config: %v", err)
+		return
+	}
+	insts, _ := supatree.List(cfg)
+	for _, claimed := range supatree.ClaimOps(supatree.OpSources(insts)) {
+		res := cfg.RunOp(claimed, supatree.OpHooks{Removed: cleanupTreeTabs})
+		if res.Err != "" {
+			logWatch("op %s %s: %s", claimed.Op.Kind, claimed.Op.ID, res.Err)
+		} else {
+			logWatch("op %s %s: done (%s)", claimed.Op.Kind, claimed.Op.ID, res.Tree)
+		}
+		if err := supatree.AnswerOp(claimed.Dir, res); err != nil {
+			logWatch("op %s: answer: %v", claimed.Op.ID, err)
+		}
+	}
+}
+
 func runLaunches(ctx context.Context) {
 	if _, err := os.Stat(supatree.LaunchPath()); err != nil {
 		return
@@ -280,7 +332,7 @@ func deliver(ctx context.Context, cfg *supatree.Config, evs []supatree.Event, no
 // way around it.
 func drainNotifyOutbox() []supatree.Event {
 	var evs []supatree.Event
-	err := config.WithFileLock(supatree.EventsLockPath(), func() error {
+	err := config.WithFileLock(supatree.NotifyLockPath(), func() error {
 		data, err := os.ReadFile(supatree.NotifyPath())
 		if os.IsNotExist(err) {
 			return nil
@@ -298,7 +350,9 @@ func drainNotifyOutbox() []supatree.Event {
 			}
 			evs = append(evs, ev)
 		}
-		return os.Remove(supatree.NotifyPath())
+		// Truncate rather than remove, so the outbox the PM appends to is
+		// always the same file.
+		return os.Truncate(supatree.NotifyPath(), 0)
 	})
 	if err != nil {
 		logWatch("drain notify outbox: %v", err)
@@ -360,7 +414,7 @@ var watchLog struct {
 	size int64
 }
 
-// openWatchLog points logWatch at ~/.supatree/logs/watch.log. Best effort: if
+// openWatchLog points logWatch at <state>/logs/watch.log. Best effort: if
 // it cannot be opened, lines go to stderr as before.
 func openWatchLog() {
 	if err := os.MkdirAll(supatree.LogsDir(), 0755); err != nil {

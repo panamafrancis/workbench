@@ -8,6 +8,8 @@ set -euo pipefail
 ORIG_HOME="$HOME"
 export HOME=$(mktemp -d)
 trap 'rm -rf "$HOME"' EXIT
+# Paths come from XDG first, so HOME alone does not isolate.
+export XDG_CONFIG_HOME="$HOME/.config" XDG_STATE_HOME="$HOME/.local/state" XDG_CACHE_HOME="$HOME/.cache"
 
 echo "=== e2e: using isolated HOME=$HOME ==="
 
@@ -39,7 +41,7 @@ workbench add worktree --repo=fix --name=testwt
 
 # 6. Verify worktree
 echo "--- verify worktree ---"
-WT_PATH="$HOME/.workbench/worktrees/fix/testwt"
+WT_PATH="$HOME/workbench/fix/testwt"
 if [ ! -d "$WT_PATH" ]; then
     echo "FAIL: worktree dir $WT_PATH does not exist"
     exit 1

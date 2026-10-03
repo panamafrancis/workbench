@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/panamafrancis/workbench/pkg/github"
+	"github.com/panamafrancis/workbench/pkg/testutil"
 )
 
 var diffNow = time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
@@ -179,7 +180,7 @@ func TestDiffCarriesContext(t *testing.T) {
 // The ledger is append-only history rather than config, so a torn or
 // hand-edited line must cost that line and not the rest of the file.
 func TestLedgerRoundTrip(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.IsolateHome(t)
 
 	if got, err := ReadEvents(time.Time{}); err != nil || got != nil {
 		t.Fatalf("ReadEvents on a fresh install = %v, %v; want nil, nil", got, err)
@@ -249,7 +250,7 @@ func TestDiffAcrossTrees(t *testing.T) {
 // The ledger is append-only and every reader scans it, so it must not grow
 // without bound — and rotating must not lose the history History() reports.
 func TestLedgerRotation(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.IsolateHome(t)
 
 	early := ev(EventMerged, treeA, "api", diffNow.Add(-time.Hour))
 	if err := AppendEvents([]Event{early}); err != nil {
@@ -297,7 +298,7 @@ func TestLedgerRotation(t *testing.T) {
 // the schedule gate and History. A damaged ledger must cost the entries after
 // the damage, never all four callers at once.
 func TestReadEventsSurvivesAnOverlongLine(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.IsolateHome(t)
 	good := ev(EventMerged, treeA, "api", diffNow)
 	if err := AppendEvents([]Event{good}); err != nil {
 		t.Fatalf("AppendEvents: %v", err)

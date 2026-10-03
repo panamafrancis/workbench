@@ -13,17 +13,21 @@ import (
 // fall back to what workbench's config says. Nothing outside this file reads
 // workbench's config, and nothing here ever writes it.
 
-// loadLegacy reads workbench's config if there is one. A missing or broken
-// file is not an error: supatree runs without workbench.
+// loadLegacy reads workbench's config — at its XDG path, else its pre-XDG one —
+// if there is one. A missing or broken file is not an error: supatree runs
+// without workbench.
 func loadLegacy() *config.Config {
-	if _, err := os.Stat(config.ConfigPath()); err != nil {
-		return nil
+	for _, path := range []string{config.ConfigPath(), config.LegacyConfigPath()} {
+		if _, err := os.Stat(path); err != nil {
+			continue
+		}
+		wb, err := config.LoadFile(path)
+		if err != nil {
+			return nil
+		}
+		return wb
 	}
-	wb, err := config.Load()
-	if err != nil {
-		return nil
-	}
-	return wb
+	return nil
 }
 
 // legacyModels is workbench's config when supatree's own has no models yet.

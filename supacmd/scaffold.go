@@ -26,7 +26,7 @@ issue spans and how they depend on each other. Later, "supatree new --stack
 
 A stack is itself a small git repo — it holds supatree.yml (the repo list +
 dependency edges), AGENTS.md (instructions for agents working in it), and a
-scripts/ directory. By default it is created at ~/.supatree/stacks/<name>/;
+scripts/ directory. By default it is created at ~/supatree/stacks/<name>/;
 pass --path to put it somewhere you'll push to a remote and share.
 
 Member repos are referenced by their workbench alias, so register them first
@@ -34,7 +34,7 @@ with "workbench add repo <path> --alias=<alias>". Omit --repos to pick them
 interactively.
 
 Examples:
-  # interactively pick repos, stack stored at ~/.supatree/stacks/fraud
+  # interactively pick repos, stack stored at ~/supatree/stacks/fraud
   supatree scaffold fraud
 
   # non-interactive (scripts/CI)
@@ -98,5 +98,5 @@ func selectRepos() ([]string, error) {
 
 func init() {
 	scaffoldCmd.Flags().StringVar(&scaffoldRepos, "repos", "", "comma-separated workbench repo aliases (omit to pick interactively)")
-	scaffoldCmd.Flags().StringVar(&scaffoldPath, "path", "", "location for the stack repo (default: ~/.supatree/stacks/<name>)")
+	scaffoldCmd.Flags().StringVar(&scaffoldPath, "path", "", "location for the stack repo (default: ~/supatree/stacks/<name>)")
 }

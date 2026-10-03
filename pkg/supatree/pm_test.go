@@ -3,13 +3,15 @@ package supatree
 import (
 	"strings"
 	"testing"
+
+	"github.com/panamafrancis/workbench/pkg/testutil"
 )
 
 // The PM's grant is the security boundary, so it gets asserted rather than
 // assumed: it may write supatree's own state and must never reach a member
 // repo's working tree.
 func TestPMGrants(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.IsolateHome(t)
 	cfg := &Config{Stacks: []Stack{{Alias: "s", Path: "/elsewhere/stacks/s"}}}
 	insts := []*Instance{
 		{Name: treeA, Root: "/trees/canberra"},
@@ -18,16 +20,21 @@ func TestPMGrants(t *testing.T) {
 	g := PMGrants(cfg, insts)
 
 	allow := strings.Join(g.Allow, " ")
-	for _, want := range []string{PMDir(), "/trees/canberra/.supatree", "/trees/darwin/.supatree", "/elsewhere/stacks/s"} {
+	for _, want := range []string{PMDir(), TreesStateDir(), OutboxDir(), "/elsewhere/stacks/s"} {
 		if !strings.Contains(allow, want) {
 			t.Errorf("Allow = %v, want it to include %q", g.Allow, want)
 		}
 	}
-	// The tree roots are readable but not writable, and repos/ is neither
-	// granted nor implied by anything above it.
+	// No tree root, and nothing under one, is writable: tree state is granted
+	// where it really lives, outside every tree.
 	for _, w := range g.Allow {
-		if strings.HasSuffix(w, "/repos") || w == "/trees/canberra" || w == "/trees/darwin" {
-			t.Errorf("Allow includes %q — the PM must never write a member repo's worktree", w)
+		for _, inst := range insts {
+			if w == inst.Root || strings.HasPrefix(w, inst.Root+"/") {
+				t.Errorf("Allow includes %q — the PM must never write inside a tree", w)
+			}
+		}
+		if w == StateRoot() || w == CacheDir() {
+			t.Errorf("Allow includes %q — that would hand the PM the watcher's own files", w)
 		}
 	}
 	if len(g.Read) == 0 {
@@ -38,7 +45,7 @@ func TestPMGrants(t *testing.T) {
 // A stack at the default location is already covered by the stacks dir grant
 // and must not be granted twice.
 func TestPMGrantsNoDuplicateStack(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.IsolateHome(t)
 	cfg := &Config{Stacks: []Stack{{Alias: "s", Path: DefaultStackPath("s")}}}
 	g := PMGrants(cfg, nil)
 	seen := map[string]int{}

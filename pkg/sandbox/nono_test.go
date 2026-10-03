@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/panamafrancis/workbench/pkg/config"
+	"github.com/panamafrancis/workbench/pkg/testutil"
 )
 
 func testConfig() *config.Config {
@@ -71,8 +72,7 @@ func TestBuildNonoArgsPathIsAllowed(t *testing.T) {
 }
 
 func TestClearSessionCache(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+	home := testutil.IsolateHome(t)
 	wtPath := "/some/worktree/path"
 
 	dir := filepath.Join(home, ".claude", "projects", encodeProjectPath(wtPath))
@@ -95,7 +95,7 @@ func TestClearSessionCache(t *testing.T) {
 }
 
 func TestClearSessionCacheMissingIsNoOp(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.IsolateHome(t)
 	if err := ClearSessionCache("/never/created"); err != nil {
 		t.Errorf("ClearSessionCache(missing) = %v, want nil", err)
 	}
@@ -103,8 +103,7 @@ func TestClearSessionCacheMissingIsNoOp(t *testing.T) {
 
 // An empty path must not delete the whole projects root.
 func TestClearSessionCacheEmptyPathIsGuarded(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+	home := testutil.IsolateHome(t)
 	other := filepath.Join(home, ".claude", "projects", "someotherworktree")
 	if err := os.MkdirAll(other, 0755); err != nil {
 		t.Fatal(err)
@@ -201,5 +200,22 @@ func TestAppendPrompt(t *testing.T) {
 		if got := AppendPrompt(append([]string(nil), base...), cfg.Models[tc.model], tc.prompt); !reflect.DeepEqual(got, base) {
 			t.Errorf("AppendPrompt(%q, %q) = %v, want unchanged", tc.model, tc.prompt, got)
 		}
+	}
+}
+
+// Grants render as nono flags in a stable order, file grants included, and an
+// agent built from them gets them all.
+func TestGrantedAgentArgs(t *testing.T) {
+	g := Grants{Allow: []string{"/a"}, Read: []string{"/r"}, AllowFile: []string{"/af"}, ReadFile: []string{"/rf"}}
+	want := []string{"--allow", "/a", "--read", "/r", "--allow-file", "/af", "--read-file", "/rf"}
+	if got := g.Args(); !reflect.DeepEqual(got, want) {
+		t.Errorf("Args = %v, want %v", got, want)
+	}
+	args := BuildGrantedAgentNonoArgs(config.Model{NonoProfile: "p", Binary: modelClaude}, g, "/a", "", "", false)
+	if got := strings.Join(args, " "); got != "run --profile p --allow /a --read /r --allow-file /af --read-file /rf -- claude" {
+		t.Errorf("args = %s", got)
+	}
+	if (Grants{}).Empty() != true || g.Empty() {
+		t.Error("Empty is wrong")
 	}
 }

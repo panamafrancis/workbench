@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/panamafrancis/workbench/pkg/testutil"
 )
 
 // Defaults matter more than the stored values here: a supatree nobody has
@@ -19,7 +21,7 @@ func TestUIStateDefaults(t *testing.T) {
 }
 
 func TestUIStateRoundTrips(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.IsolateHome(t)
 
 	if _, err := UpdateUIState(func(u *UIState) {
 		u.SetTreeCollapsed("oslo", true)
@@ -43,7 +45,7 @@ func TestUIStateRoundTrips(t *testing.T) {
 // Two sidebars folding different supatrees must not overwrite each other: each
 // change is applied to what is on disk, not to the snapshot the process holds.
 func TestUpdateUIStateMergesConcurrentEdits(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.IsolateHome(t)
 
 	first := LoadUIState() // the snapshot an already-running sidebar holds
 	if _, err := UpdateUIState(func(u *UIState) { u.SetTreeCollapsed("oslo", true) }); err != nil {
@@ -64,7 +66,7 @@ func TestUpdateUIStateMergesConcurrentEdits(t *testing.T) {
 // Entries back at their default are dropped, so the file does not accumulate a
 // row per supatree that was ever folded and unfolded again.
 func TestUIStateSavePrunesDefaults(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.IsolateHome(t)
 
 	if _, err := UpdateUIState(func(u *UIState) { u.SetTreeCollapsed("oslo", true) }); err != nil {
 		t.Fatalf("UpdateUIState: %v", err)
@@ -84,7 +86,7 @@ func TestUIStateSavePrunesDefaults(t *testing.T) {
 // A missing or unparseable file falls back to the defaults: fold state is a
 // convenience and is never worth failing a render over.
 func TestLoadUIStateToleratesBadFile(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.IsolateHome(t)
 	if u := LoadUIState(); u.TreeCollapsed("oslo") {
 		t.Error("absent file should yield defaults")
 	}

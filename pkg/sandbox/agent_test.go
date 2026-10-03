@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/panamafrancis/workbench/pkg/config"
+	"github.com/panamafrancis/workbench/pkg/testutil"
 )
 
 func writeTranscript(t *testing.T, wtPath, session string) {
@@ -29,7 +30,7 @@ func noSessionCfg() *config.Config {
 }
 
 func TestBuildAgentNonoArgsNewAgentNeverContinues(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.IsolateHome(t)
 	wt := "/wt/path"
 	writeTranscript(t, wt, "other") // some other session already ran here
 
@@ -42,7 +43,7 @@ func TestBuildAgentNonoArgsNewAgentNeverContinues(t *testing.T) {
 }
 
 func TestBuildAgentNonoArgsResumeUsesContinueFallback(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.IsolateHome(t)
 	wt := "/wt/path"
 	writeTranscript(t, wt, "other")
 
@@ -53,7 +54,7 @@ func TestBuildAgentNonoArgsResumeUsesContinueFallback(t *testing.T) {
 }
 
 func TestSessionExists(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.IsolateHome(t)
 	wt := "/wt/x"
 	if SessionExists(wt, "abc") {
 		t.Error("SessionExists = true before any transcript written")

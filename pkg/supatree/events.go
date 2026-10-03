@@ -38,7 +38,7 @@ const (
 	EventAuthorPushed EventKind = "author_pushed"
 )
 
-// Event is one entry in the activity ledger (~/.supatree/events.jsonl).
+// Event is one entry in the activity ledger (<state>/ledger/events.jsonl).
 type Event struct {
 	At   time.Time `json:"at"`
 	Kind EventKind `json:"kind"`
@@ -340,7 +340,7 @@ func AppendNotification(ev Event) error {
 	if ev.At.IsZero() {
 		ev.At = time.Now().UTC()
 	}
-	return config.WithFileLock(EventsLockPath(), func() error {
+	return config.WithFileLock(NotifyLockPath(), func() error {
 		return appendJSONL(NotifyPath(), []Event{ev})
 	})
 }

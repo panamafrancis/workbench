@@ -13,7 +13,7 @@ import (
 // CommentsCachePath holds fetched review feedback, beside the PR status cache
 // and serialized by the same lock.
 func CommentsCachePath() string {
-	return filepath.Join(CacheDir(), "pr-comments.json")
+	return filepath.Join(AgentCacheDir(), "pr-comments.json")
 }
 
 // commentsEntry is one PR's feedback plus the PR timestamp it was valid for.

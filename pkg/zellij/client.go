@@ -12,8 +12,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/panamafrancis/workbench/pkg/config"
 )
 
 const (
@@ -266,8 +264,15 @@ func runZellijIn(session string, actionArgs ...string) (stdout, stderr string, e
 	return stdout, stderr, err
 }
 
+// LogDir is where failed zellij calls are logged. Each tool points it at its
+// own logs dir at startup; empty disables the log.
+var LogDir string
+
 func logFailure(args []string, stdout, stderr string, err error) {
-	dir := filepath.Join(config.ConfigDir(), "logs")
+	dir := LogDir
+	if dir == "" {
+		return
+	}
 	if mkErr := os.MkdirAll(dir, 0755); mkErr != nil {
 		return
 	}

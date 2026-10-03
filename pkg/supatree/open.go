@@ -52,7 +52,7 @@ func OpenRootAgent(inst *Instance, c *Config, ws zellij.Workspace, sidebarWidth,
 	if err != nil {
 		return false, err
 	}
-	nonoArgs := sandbox.BuildNamedAgentNonoArgs(inst.Root, model, agent.SessionID, agent.Address, resume)
+	nonoArgs := sandbox.BuildGrantedAgentNonoArgs(model, TreeGrants(c, inst), inst.Root, agent.SessionID, agent.Address, resume)
 	// Mail waiting means somebody briefed this agent before it was running —
 	// the PM starting it, or a sibling. Without a first message it would sit
 	// at an empty prompt until a human typed, and the brief would go unread.
@@ -84,8 +84,8 @@ func requireMember(inst *Instance, alias string) (*Member, error) {
 	return m, nil
 }
 
-// OpenMemberAgent opens an agent scoped to a single member repo (nono --allow
-// just that repo). Member worktrees have unique paths, so directory-based
+// OpenMemberAgent opens an agent scoped to a single member repo (MemberGrants:
+// that worktree and its clone's git dir). Member worktrees have unique paths, so directory-based
 // resume works without session IDs.
 func OpenMemberAgent(inst *Instance, c *Config, ws zellij.Workspace, sidebarWidth, alias, modelOverride string) (bool, error) {
 	m, err := requireMember(inst, alias)
@@ -100,7 +100,7 @@ func OpenMemberAgent(inst *Instance, c *Config, ws zellij.Workspace, sidebarWidt
 	if err != nil {
 		return false, err
 	}
-	nonoArgs := sandbox.BuildNonoArgs(m.Path, model)
+	nonoArgs := sandbox.BuildGrantedAgentNonoArgs(model, MemberGrants(c, inst, alias), m.Path, "", "", true)
 	env := inst.AgentEnv(alias)
 	env["SUPATREE_MEMBER"] = alias
 	return ws.OpenOrFocusTab(TabName(inst.Name, alias), m.Path, sidebarWidth, nonoArgs, env)

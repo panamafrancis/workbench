@@ -11,7 +11,7 @@ import (
 	"github.com/panamafrancis/workbench/pkg/config"
 )
 
-// Config is the supatree registry (~/.supatree/config.yml). It lists the
+// Config is supatree's config (~/.config/supatree/config.yml). It lists the
 // registered stack repos and defaults. Live supatrees are NOT stored here — they
 // are discovered by scanning the trees base for per-tree metadata.
 type Config struct {
@@ -169,7 +169,7 @@ func (c *Config) models() map[string]config.Model {
 	if wb := c.legacyModels(); wb != nil {
 		return wb.Models
 	}
-	return config.DefaultModels()
+	return DefaultModels()
 }
 
 // ResolveSidebarWidth returns the sidebar width or a default.

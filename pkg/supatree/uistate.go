@@ -11,9 +11,9 @@ import (
 	"github.com/panamafrancis/workbench/pkg/config"
 )
 
-// UIStatePath is where the sidebar's fold state lives (~/.supatree/ui.yml).
+// UIStatePath is where the sidebar's fold state lives (<state>/ui.yml).
 func UIStatePath() string {
-	return filepath.Join(Dir(), "ui.yml")
+	return filepath.Join(StateRoot(), "ui.yml")
 }
 
 // UIStateLockPath serializes the read-modify-write cycles of the fold state

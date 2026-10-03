@@ -169,7 +169,7 @@ func isNote(name string) bool {
 // what makes that visible — and gives the kill criterion something to measure.
 // A store nothing has read in 30 days should be deleted, not debugged.
 func RecallLogPath() string {
-	return filepath.Join(CacheDir(), "recall.jsonl")
+	return filepath.Join(AgentCacheDir(), "recall.jsonl")
 }
 
 // RecallHit is one query against the curated notes.

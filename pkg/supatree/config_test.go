@@ -6,10 +6,11 @@ import (
 	"time"
 
 	"github.com/panamafrancis/workbench/pkg/config"
+	"github.com/panamafrancis/workbench/pkg/testutil"
 )
 
 func TestConfigRoundTrip(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.IsolateHome(t)
 	c := DefaultConfig()
 	c.DefaultModel = defaultModelKey
 	if err := AddStack("mystack", "/some/path"); err != nil {
@@ -29,7 +30,7 @@ func TestConfigRoundTrip(t *testing.T) {
 }
 
 func TestAddStackIdempotentSamePath(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.IsolateHome(t)
 	if err := AddStack("s", "/p"); err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +44,7 @@ func TestAddStackIdempotentSamePath(t *testing.T) {
 }
 
 func TestAddStackConflictingPath(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.IsolateHome(t)
 	_ = AddStack("s", "/p")
 	if err := AddStack("s", "/other"); err == nil {
 		t.Error("re-adding with a different path should error")
@@ -51,6 +52,7 @@ func TestAddStackConflictingPath(t *testing.T) {
 }
 
 func TestMetaRoundTrip(t *testing.T) {
+	testutil.IsolateHome(t)
 	root := t.TempDir()
 	when := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
 	m := &Meta{Name: treeBerlin, Slug: treeBerlin, Stack: "s", Model: defaultModelKey, CreatedAt: when}
@@ -70,6 +72,7 @@ func TestMetaRoundTrip(t *testing.T) {
 }
 
 func TestSpecOrderedMembers(t *testing.T) {
+	testutil.IsolateHome(t)
 	root := t.TempDir()
 	spec := &Spec{
 		Members: []string{aliasAdmin, aliasKeystone, aliasTerraform},
@@ -128,7 +131,7 @@ func TestModelResolutionOrder(t *testing.T) {
 
 // Supatree must run with no workbench config at all.
 func TestLoadWithoutWorkbench(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.IsolateHome(t)
 	c, err := Load()
 	if err != nil {
 		t.Fatal(err)

@@ -5,6 +5,7 @@ import (
 
 	"github.com/panamafrancis/workbench/pkg/supatree"
 	"github.com/panamafrancis/workbench/pkg/version"
+	"github.com/panamafrancis/workbench/pkg/zellij"
 )
 
 var mcpCmd = &cobra.Command{
@@ -13,6 +14,12 @@ var mcpCmd = &cobra.Command{
 	Hidden:            true,
 	PersistentPreRunE: func(*cobra.Command, []string) error { return nil },
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return supatree.MCPServer(version.Version).Run()
+		zellij.LogDir = supatree.LogsDir()
+		return supatree.MCPServer(version.Version).WithPrecondition(func() string {
+			if supatree.OldLayout() {
+				return supatree.OldLayoutMessage
+			}
+			return ""
+		}).Run()
 	},
 }

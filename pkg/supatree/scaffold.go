@@ -17,7 +17,7 @@ type ScaffoldResult struct {
 // Scaffold creates a stack repo named name, seeded with supatree.yml (listing
 // the given member aliases), AGENTS.md, a scripts/ directory, and a .gitignore,
 // then registers it in the supatree registry. It is placed at
-// ~/.supatree/stacks/<name>/ unless pathOverride is given. The member aliases
+// ~/supatree/stacks/<name>/ unless pathOverride is given. The member aliases
 // must resolve to repos supatree can clone from, and the target dir must not already be a
 // git repo.
 func Scaffold(c *Config, name, pathOverride string, members []string) (*ScaffoldResult, error) {

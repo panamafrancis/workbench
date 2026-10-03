@@ -142,20 +142,20 @@ const commands = `# CLI Commands
 
 const configDoc = `# Configuration
 
-All state lives under ~/.workbench/:
+Files follow the XDG base directories ($XDG_CONFIG_HOME etc. when set):
 
-  ~/.workbench/config.yml              main config
-  ~/.workbench/state.yml               last-run version, update check cache
-  ~/.workbench/worktrees/<alias>/<n>/  default worktree location
-  ~/.workbench/layouts/<name>.kdl      generated Zellij layouts (transient)
-  ~/.workbench/cache/                  PR status cache
-  ~/.workbench/logs/                   Zellij error log
+  ~/.config/workbench/config.yml               main config
+  ~/.local/state/workbench/state.yml           last-run version, update check, stats
+  ~/.local/state/workbench/logs/               Zellij error log
+  ~/.cache/workbench/agent/pr-status.json      PR status cache
+  ~/.cache/workbench/layouts/<name>.kdl        generated Zellij layouts (transient)
+  ~/workbench/<alias>/<name>/                  default worktree location
 
 ## config.yml fields
 
   version: 1
   default_model: claude                 which model to use by default
-  worktree_base: ""                     override worktree root (default ~/.workbench/worktrees/)
+  worktree_base: ""                     override worktree root (default ~/workbench/)
   default_zellij_layout: ""             override the embedded session layout
   sidebar_width: "20%"                  sidebar pane width in worktree tabs
   update_check_disabled: false          disable the GitHub release check on start
@@ -384,7 +384,8 @@ The init wizard generates claude-code-local.json by:
 
 ## Key directories to allow
 
-  ~/.workbench              config, worktree base, layouts
+  ~/.config/workbench       config
+  ~/.cache/workbench/agent  PR status cache (agents' create_pr writes it)
   ~/code/<org>              repo parent directories
   ~/code/go/pkg,bin,src     Go module cache and toolchain
   ~/.config/gh              GitHub CLI auth tokens

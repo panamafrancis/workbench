@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/panamafrancis/workbench/pkg/github"
+	"github.com/panamafrancis/workbench/pkg/testutil"
 )
 
 // repoKeystone is the PR repo used throughout, distinct from the workbench
@@ -102,6 +103,7 @@ func TestCacheKeyIsPRScopedWhenReviewing(t *testing.T) {
 // never ask GitHub about its own pull requests — reporting total_prs=0 forever,
 // which is the bug review mode exists to fix.
 func TestFetchTargetsIncludesReviewMembers(t *testing.T) {
+	testutil.IsolateHome(t)
 	inst := &Instance{
 		Name: treeA,
 		Mode: ModeReviewing,
@@ -129,6 +131,7 @@ func TestFetchTargetsIncludesReviewMembers(t *testing.T) {
 // unpushed-branch skip to it (and match it by head), the quota discipline the
 // review-member exception must not weaken.
 func TestFetchTargetsLeavesAuthoringBranchesUnpinned(t *testing.T) {
+	testutil.IsolateHome(t)
 	inst := &Instance{
 		Name:    treeA,
 		Members: []Member{{Alias: aliasKeystone, Path: t.TempDir(), Branch: "st/canberra/keystone", Exists: true}},
@@ -184,8 +187,7 @@ func TestDocsTopics(t *testing.T) {
 // fetched: it carries the number and URL, and is stale from the moment it is
 // written so the first real round replaces it.
 func TestSeedPRCacheIsResolvableButNotAuthoritative(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("HOME", dir)
+	testutil.IsolateHome(t)
 	ref := ReviewRef{Repo: repoKeystone, Number: 600, URL: "https://github.com/fraud-zero/keystone-api/pull/600"}
 	seedPRCache(map[string]ReviewRef{aliasKeystone: ref})
 
@@ -212,8 +214,7 @@ func TestSeedPRCacheIsResolvableButNotAuthoritative(t *testing.T) {
 // but the human can still withhold that, globally or per tree, and the refusal
 // must name the switch they would flip.
 func TestReviewPostOutwardDefaults(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+	home := testutil.IsolateHome(t)
 	root := filepath.Join(home, "tree")
 	inst := &Instance{Name: treeA, Root: root, Mode: ModeReviewing}
 	if err := (&Meta{Name: treeA, Mode: ModeReviewing}).Save(root); err != nil {

@@ -6,10 +6,12 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/panamafrancis/workbench/pkg/testutil"
 )
 
 func TestHistoryFromLedger(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.IsolateHome(t)
 	base := diffNow
 	evs := []Event{
 		{At: base, Kind: EventPROpened, Tree: treeA, Member: "api", PR: 1, Text: "x"},
@@ -56,7 +58,7 @@ func TestHistoryFromLedger(t *testing.T) {
 }
 
 func TestRecallAndRemember(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.IsolateHome(t)
 	stack := t.TempDir()
 	if err := ScaffoldNotes(stack); err != nil {
 		t.Fatalf("ScaffoldNotes: %v", err)
@@ -95,6 +97,7 @@ func TestRecallAndRemember(t *testing.T) {
 // The injection budget is the part that decides whether this works: what loads
 // into every session must be capped, with the rest behind recall.
 func TestMemorySummaryIsCapped(t *testing.T) {
+	testutil.IsolateHome(t)
 	stack := t.TempDir()
 	if err := ScaffoldNotes(stack); err != nil {
 		t.Fatalf("ScaffoldNotes: %v", err)
@@ -120,7 +123,7 @@ func TestMemorySummaryIsCapped(t *testing.T) {
 // A merge on a review tree is the author's. Counting it as shipped work would
 // make "what did we ship this month" answer with other people's changes.
 func TestHistorySeparatesReviewFromShipped(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.IsolateHome(t)
 	now := time.Now().UTC()
 	if err := AppendEvents([]Event{
 		{At: now, Kind: EventMerged, Tree: "ours", Member: "keystone", PR: 1, Text: "merged"},

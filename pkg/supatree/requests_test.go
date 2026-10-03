@@ -3,10 +3,12 @@ package supatree
 import (
 	"os"
 	"testing"
+
+	"github.com/panamafrancis/workbench/pkg/testutil"
 )
 
 func TestRequestQueueCatchUp(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.IsolateHome(t)
 
 	if reqs, _, err := PendingRequests(); err != nil || len(reqs) != 0 {
 		t.Fatalf("PendingRequests on a fresh install = %v, %v; want none, nil", reqs, err)
@@ -56,7 +58,7 @@ func TestRequestQueueCatchUp(t *testing.T) {
 // seeked past the end — losing the backlog is the failure the offset exists to
 // avoid, so the safe direction is to re-deliver.
 func TestRequestQueueSurvivesTruncation(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.IsolateHome(t)
 	for _, text := range []string{"a", "b", "c"} {
 		if err := AppendRequest(Request{From: "cli", Text: text}); err != nil {
 			t.Fatalf("AppendRequest: %v", err)
@@ -83,7 +85,7 @@ func TestRequestQueueSurvivesTruncation(t *testing.T) {
 }
 
 func TestAppendRequestRejectsEmpty(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	testutil.IsolateHome(t)
 	if err := AppendRequest(Request{From: "cli", Text: "  "}); err == nil {
 		t.Error("AppendRequest(blank) = nil, want an error")
 	}

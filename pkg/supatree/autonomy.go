@@ -129,7 +129,7 @@ func (p Permission) AllowsMutation() bool {
 // Deny renders why an action is not permitted, in terms of the setting the
 // human would change to permit it.
 func (p Permission) Deny(action string) string {
-	where := "`default_autonomy` in ~/.supatree/config.yml"
+	where := "`default_autonomy` in " + ConfigPath()
 	raise := fmt.Sprintf("raise the tree's `autonomy` in .supatree/meta.yml, or %s", where)
 	switch {
 	case p.Scheduled && p.Asked:

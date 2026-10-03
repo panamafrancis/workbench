@@ -125,7 +125,12 @@ func DefaultModels() map[string]Model {
 }
 
 func Load() (*Config, error) {
-	path := ConfigPath()
+	return LoadFile(ConfigPath())
+}
+
+// LoadFile reads a workbench config from path, returning defaults when the
+// file is absent.
+func LoadFile(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
 		return DefaultConfig(), nil

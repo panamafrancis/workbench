@@ -7,9 +7,11 @@ import (
 
 	"github.com/panamafrancis/workbench/pkg/config"
 	"github.com/panamafrancis/workbench/pkg/sandbox"
+	"github.com/panamafrancis/workbench/pkg/testutil"
 )
 
 func TestEnsureAgentCreatesThenResumes(t *testing.T) {
+	testutil.IsolateHome(t)
 	root := t.TempDir()
 	now := time.Now()
 
@@ -37,6 +39,7 @@ func TestEnsureAgentCreatesThenResumes(t *testing.T) {
 }
 
 func TestEnsureAgentRejectsUnsafeName(t *testing.T) {
+	testutil.IsolateHome(t)
 	root := t.TempDir()
 	for _, bad := range []string{"x=1 && curl evil", "a:b", "a b", ""} {
 		if _, _, err := EnsureAgent(root, "canberra", bad, defaultModelKey, time.Now()); err == nil {
@@ -46,6 +49,7 @@ func TestEnsureAgentRejectsUnsafeName(t *testing.T) {
 }
 
 func TestEnsureAgentDistinctSessions(t *testing.T) {
+	testutil.IsolateHome(t)
 	root := t.TempDir()
 	now := time.Now()
 	a, _, _ := EnsureAgent(root, "canberra", "main", defaultModelKey, now)
@@ -102,6 +106,7 @@ func TestAgentAddress(t *testing.T) {
 }
 
 func TestEnsureAgentRecordsAddress(t *testing.T) {
+	testutil.IsolateHome(t)
 	root := t.TempDir()
 	a, _, err := EnsureAgent(root, "canberra", "reviewer", defaultModelKey, time.Now())
 	if err != nil {

@@ -37,7 +37,7 @@ workbench doctor     # verify all dependencies are installed and configured
 workbench start      # launch a Zellij session with the sidebar
 ```
 
-`workbench init` creates `~/.workbench/config.yml`, optionally generates a nono profile (globbing your `~/.ssh/*.pub` keys), and offers to run `gh auth login`.
+`workbench init` creates `~/.config/workbench/config.yml`, optionally generates a nono profile (globbing your `~/.ssh/*.pub` keys), and offers to run `gh auth login`.
 
 `workbench doctor` checks: zellij, nono, git, gh auth, config, nono profiles, SSH agent, and registered repos.
 
@@ -142,7 +142,7 @@ PR status is fetched via the `gh` CLI and cached on disk. A round asks each **re
 
 - **One conditional poll per repo.** `GET /repos/{owner}/{repo}/pulls` is sent with the `ETag` from last time. A repo that hasn't changed answers `304 Not Modified`, which GitHub does not charge against the rate limit at all — so a quiet round costs nothing, and a busy one costs one request per repo that actually changed. Measured on a 14-repo, 67-branch setup: 15 requests to fill a cold cache, then 0 per round.
 - **It spends the REST (`core`) bucket, not GraphQL.** The 5,000/hour GraphQL bucket is the one your agents drain with `gh pr view` / `gh pr checks`; background polling no longer competes with it.
-- **Only one sidebar fetches per round.** The round runs inside the PR cache's cross-process lock (`~/.workbench/cache/pr-status.json.lock`); tabs that lose it cede and pick up what the winner writes, so ten open tabs cost the same as one.
+- **Only one sidebar fetches per round.** The round runs inside the PR cache's cross-process lock (`~/.cache/workbench/agent/pr-status.json.lock`); tabs that lose it cede and pick up what the winner writes, so ten open tabs cost the same as one.
 - **Unpushed branches are never queried.** A branch with no `origin/<branch>` ref cannot have a PR.
 - **Repos the account cannot see are left alone.** A repo that answers `404` (private to another org, renamed, deleted, or the wrong gh account) is skipped for 6 hours, or until you press `r`.
 - **Only open PRs spend GraphQL.** Review state and CI checks aren't in the REST listing, so each *open* PR's are re-read with one `gh pr view` on the ordinary staleness window (sooner if it was pushed to). Merged, closed and no-PR branches never touch the GraphQL bucket.
@@ -161,23 +161,25 @@ Worktree creation works offline — if `git fetch` fails, workbench falls back t
 
 ## Configuration
 
-All state lives under `~/.workbench/`:
+Files follow the XDG base directories on every platform, macOS included (`$XDG_CONFIG_HOME`, `$XDG_STATE_HOME` and `$XDG_CACHE_HOME` win when set). Nothing here is shared with supatree.
 
 | Path | Purpose |
 |------|---------|
-| `~/.workbench/config.yml` | Main config |
-| `~/.workbench/state.yml` | Last-run version, update check cache, gamification stats |
-| `~/.workbench/worktrees/<alias>/<name>/` | Default worktree location |
-| `~/.workbench/layouts/<name>.kdl` | Generated Zellij layouts (transient) |
-| `~/.workbench/cache/` | PR status cache |
-| `~/.workbench/logs/` | Zellij error log |
+| `~/.config/workbench/config.yml` | Main config |
+| `~/.local/state/workbench/state.yml` | Last-run version, update check cache, gamification stats |
+| `~/.local/state/workbench/logs/` | Zellij error log |
+| `~/.cache/workbench/agent/` | PR status cache (the one cache an agent writes) |
+| `~/.cache/workbench/layouts/<name>.kdl` | Generated Zellij layouts (transient) |
+| `~/workbench/<alias>/<name>/` | Default worktree location |
+
+Upgrading from a version that kept everything in `~/.workbench/`: every command refuses until you run `workbench migrate`.
 
 ### Example config
 
 ```yaml
 version: 1
 default_model: claude
-worktree_base: ""          # empty = ~/.workbench/worktrees/
+worktree_base: ""          # empty = ~/workbench/
 default_zellij_layout: ""  # override the embedded session layout
 sidebar_width: "20%"       # sidebar pane width in new worktree tabs
 update_check_disabled: false  # set true to disable the update check on start
@@ -205,7 +207,7 @@ repos:
     worktrees:
       - name: atlanta
         branch: wt/ss/atlanta
-        path: /Users/you/.workbench/worktrees/ss/atlanta
+        path: /Users/you/workbench/ss/atlanta
         model: claude
 ```
 
@@ -251,8 +253,8 @@ sidebar_width: "20%"
 workbench open --repo=ss --worktree=atlanta --model=claude
   1. Resolve model → look up nono profile and binary from config
   2. If a tab with the same name exists but its command has exited, close it
-  3. Write ~/.workbench/layouts/atlanta.kdl (with WORKBENCH_* env vars)
-  4. zellij action new-tab --name atlanta --layout ~/.workbench/layouts/atlanta.kdl
+  3. Write ~/.cache/workbench/layouts/atlanta.kdl (with WORKBENCH_* env vars)
+  4. zellij action new-tab --name atlanta --layout ~/.cache/workbench/layouts/atlanta.kdl
 ```
 
 The agent pane receives these environment variables:
@@ -296,7 +298,7 @@ It also clears the agent's cached session transcripts for that path (e.g. `~/.cl
 ```sh
 workbench uninstall              # interactive: lists what will be removed, confirms
 workbench uninstall --dry-run    # preview only
-workbench uninstall --keep-config  # remove worktrees/sessions but keep ~/.workbench
+workbench uninstall --keep-config  # remove worktrees/sessions but keep config, state and cache
 workbench uninstall --force      # also remove dirty worktrees
 ```
 
@@ -333,7 +335,7 @@ The MCP server gates on the `WORKBENCH` env var — tools return an error outsid
 ### Model
 
 - A **stack** is a git repo holding the repo selection (`supatree.yml`), an agent guide (`AGENTS.md`), and `scripts/`. Create one with `supatree scaffold`.
-- A **supatree** is a worktree of that stack repo at `~/.supatree/trees/<name>/`, with each member repo checked out under `repos/<alias>/`. It is named with a city name, like workbench worktrees.
+- A **supatree** is a worktree of that stack repo at `~/supatree/trees/<name>/`, with each member repo checked out under `repos/<alias>/`. Its state (`meta.yml`, `agents.yml`, `info.md`, `board.md`, mailboxes) lives in `~/.local/state/supatree/trees/<name>/`, and the tree's `.supatree` is a link to it — so `.supatree/info.md` reads as it always did, and a sandbox can be given every tree's state without being given anything inside a tree. It is named with a city name, like workbench worktrees.
 - Member repos are referenced by their **workbench alias** — supatree reuses workbench's registered repo definitions (path, `copy_files`, scripts). Register repos with `workbench add repo` first.
 - Member branches are `st/<slug>/<alias>` (the slug starts as the city name; rename it before opening PRs). The stack worktree itself is on `st/<name>`.
 - A **review tree** (`supatree review`) is the same thing pointed at someone else's work: each member is checked out at a pull request's head on a tree-local `review/<slug>/<alias>` branch, and the tree records the PRs rather than deriving them from the branch name. The authoring commands (`rename-branch`, `create_pr`, `create_prs`) refuse there — the branches belong to the PRs' authors — and `.supatree/info.md` carries review instructions instead. The `docs` MCP tool with `topic: review` explains how to review in one. A review tree finishes as `reviewed` rather than `done` — the author's merge is their milestone, not work you shipped, and `history` counts the two separately.
@@ -344,12 +346,12 @@ The MCP server gates on the `WORKBENCH` env var — tools return an error outsid
 ### Quickstart
 
 ```sh
-supatree init                                   # set up ~/.supatree, register MCP
+supatree init                                   # dirs, config, supatree-agent nono profile, MCP
 workbench add repo ~/code/terraform --alias=terraform
 workbench add repo ~/code/keystone  --alias=keystone
-supatree scaffold fraud                         # pick repos interactively; stack at ~/.supatree/stacks/fraud
+supatree scaffold fraud                         # pick repos interactively; stack at ~/supatree/stacks/fraud
 # (or non-interactively: supatree scaffold fraud --repos=terraform,keystone)
-# edit ~/.supatree/stacks/fraud/supatree.yml to add deps, commit it
+# edit ~/supatree/stacks/fraud/supatree.yml to add deps, commit it
 supatree start                                  # start the st-main Zellij session
 supatree new --stack=fraud                      # create a city-named supatree
 supatree open <name>                            # open the root agent (sees all repos)
@@ -410,7 +412,7 @@ Pressing `n` prompts for a **name** (leave it blank to auto-generate a city name
 
 Each supatree's **repositories section starts folded**, so a long list of supatrees stays readable. Its header carries a coloured count per PR status instead (`◌1 ◉2 ✓1 ✕1 ·3` — draft, open, merged, closed, and members with no PR yet); the same summary moves up onto the supatree row when the whole supatree is folded. Unfold the section (`Space`, `l` or `enter` on the `repositories` row) to see the member rows, which show each repo's PR state and number in full (`◉ open #871`).
 
-Folds are shared: they live in `~/.supatree/ui.yml` rather than in each sidebar process, so folding a supatree in one tab folds it in every other tab's sidebar on its next reload (focus or the 30s tick) instead of leaving each tab with its own shape of the same list.
+Folds are shared: they live in `~/.local/state/supatree/ui.yml` rather than in each sidebar process, so folding a supatree in one tab folds it in every other tab's sidebar on its next reload (focus or the 30s tick) instead of leaving each tab with its own shape of the same list.
 
 The two sections answer different questions, so `enter` does different things in them. Agent rows are processes (the `●`/`○` dot is liveness), and `enter` opens or focuses that agent's tab. Member rows are places reporting state (branch, dirty mark, PR), so `enter` (or `o`) stands in one: a shell pane rooted at `repos/<alias>/`, opened beside the agent in the tab's main area rather than under the sidebar. That shell is your own — it is **not** inside the nono sandbox, unlike every agent workbench and supatree launch — and it is disposable, closing when you exit it. To get an agent scoped to a single member repo instead (nono allows only that repo, not the whole tree), press `a` on the member row; `a` on a supatree or agent row still prompts for a new root agent's name. The footer hint tracks the cursor (`enter shell` vs `enter open`) so you can see which you'll get. A member that isn't checked out yet says so and points at `supatree sync`.
 
@@ -445,14 +447,14 @@ Unlike `supatree status`, this one costs API quota. Thread resolution exists onl
 
 ### The PM agent
 
-`supatree pm` (or `P` in the sidebar) opens a standing agent rooted at `~/.supatree/pm` that can see every supatree at once: what is blocked, what reviewers said, who is working where. It is **optional** — nothing else depends on it running, and without it supatree behaves exactly as it does today.
+`supatree pm` (or `P` in the sidebar) opens a standing agent rooted at `~/.local/state/supatree/pm` that can see every supatree at once: what is blocked, what reviewers said, who is working where. It is **optional** — nothing else depends on it running, and without it supatree behaves exactly as it does today.
 
 It is not rooted in a supatree, because one that manages many cannot live inside one of them. That also means it gets its own MCP gate: `SUPATREE_PM=1` unlocks the cross-tree tools (`requests`, `list_trees`, `events`, `notify`), while `SUPATREE` stays *unset* so the tree-scoped tools stay hidden rather than resolving nothing.
 
-**Its sandbox is a different shape, not a bigger one.** It allows its own state, each tree's `.supatree/`, and the stack repos — and nothing under `repos/`. The invariant is not "read-only on trees" but *the PM may write supatree's own state and never a member repo's working tree*. Set `pm_model` in `~/.supatree/config.yml` to point it at a `models` entry with its own `nono_profile`: the PM executes no third-party code but reads text other people wrote and holds credentials that reach off the machine, so the profile it wants is narrow on egress rather than wide on the filesystem.
+**Its sandbox is a different shape, not a bigger one.** It allows its own home, every tree's state (one directory, so a tree created after the PM started needs no relaunch), the notification outbox and the stack repos — and nothing inside any tree. The invariant is not "read-only on trees" but *the PM may write supatree's own state and never a member repo's working tree*. Creating and removing trees writes exactly what it may not, so `new_tree` and `remove_tree` ask the watcher to do it and wait for the answer. Set `pm_model` in `~/.config/supatree/config.yml` to point it at a `models` entry with its own `nono_profile`: the PM executes no third-party code but reads text other people wrote and holds credentials that reach off the machine, so the profile it wants is narrow on egress rather than wide on the filesystem.
 
 ```yaml
-# ~/.supatree/config.yml
+# ~/.config/supatree/config.yml
 pm_model: claude-pm     # a models entry whose nono_profile scopes the gh credential
 ```
 
@@ -464,7 +466,7 @@ It also cannot notify you directly — nothing inside the sandbox can — so its
 
 ### Autonomy
 
-What the PM may do unasked is explicit and per supatree, in `.supatree/meta.yml`, with a workspace default in `~/.supatree/config.yml`:
+What the PM may do unasked is explicit and per supatree, in `.supatree/meta.yml`, with a workspace default in `~/.config/supatree/config.yml`:
 
 | Level | Unasked, the PM may | If you ask it to |
 | --- | --- | --- |
@@ -490,11 +492,11 @@ Three tools: `remember` writes a note, `recall` searches them, and `history` ans
 
 Two things keep it from rotting. `info.md` names only the few most recent notes, with everything else behind `recall`: storage was never the hard problem, what loads into every session is. And every `recall` logs its query and whether it hit, so *"a store nothing has read in 30 days gets deleted, not debugged"* is a measurable claim rather than a hope.
 
-`supatree rm` no longer throws away agent history either: transcripts are moved to `~/.supatree/archive/<tree>/` before the session cache is cleared. Archiving is deterministic and cheap, which is what makes it safe on the removal path — distilling one into something worth keeping is a judgement call, and blocking a removal on an agent round-trip would be worse than the leak.
+`supatree rm` no longer throws away agent history either: transcripts are moved to `~/.local/state/supatree/archive/<tree>/` before the session cache is cleared. Archiving is deterministic and cheap, which is what makes it safe on the removal path — distilling one into something worth keeping is a judgement call, and blocking a removal on an agent round-trip would be worse than the leak.
 
 ### Scheduled work
 
-`~/.supatree/schedule.yml` (`supatree schedule init` writes an example) runs recurring PM work: a morning standup, hourly triage of new review comments, a Friday reap proposal, or a one-shot reminder.
+`~/.config/supatree/schedule.yml` (`supatree schedule init` writes an example) runs recurring PM work: a morning standup, hourly triage of new review comments, a Friday reap proposal, or a one-shot reminder.
 
 The scheduler lives in the **watcher**, not in the PM. An agent cannot be trusted to hold a timer — it is mid-turn, blocked on a tool call, or was restarted an hour ago — and a schedule that silently drops jobs is worse than none. Firing a job is an append to the same request queue the sidebar's `m` uses, so the PM needs no timer and no new channel.
 
@@ -520,7 +522,7 @@ Three MCP tools: `agents` lists who is here with their addresses and unread coun
 **Delivery is always by mailbox** — a file under `.supatree/mail/<agent>/`, read on the recipient's next turn. That is the contract, and it works for every model, whether or not the recipient is running. A message bus, where the CLI has one, only makes the same message arrive sooner; `agents` reports per agent whether it is reachable that way (`bus st-canberra-main`) or by mailbox alone (`mailbox (next turn)`), rather than implying parity.
 
 ```yaml
-# ~/.workbench/config.yml — a model with no message bus simply omits this
+# ~/.config/supatree/config.yml — a model with no message bus simply omits this
 models:
   claude:
     agent_name_args: ["--name", "{agent_name}"]
@@ -528,7 +530,7 @@ models:
 
 ### Notifications
 
-`supatree watch` is the single background poller. Each round it refreshes PR status on the shared staleness gate, derives the same summary `supatree status` shows, diffs it against the previous round, appends what changed to `~/.supatree/events.jsonl`, and delivers the few events that warrant interrupting you as desktop notifications.
+`supatree watch` is the single background poller. Each round it refreshes PR status on the shared staleness gate, derives the same summary `supatree status` shows, diffs it against the previous round, appends what changed to the ledger (`~/.local/state/supatree/ledger/events.jsonl`), and delivers the few events that warrant interrupting you as desktop notifications.
 
 `supatree start` spawns one automatically and it exits when the last supatree Zellij session closes. It is a singleton enforced by a file lock, so a second one — a stray `supatree watch`, or a cron entry firing while a session is open — exits quietly rather than doubling the GitHub API load. That makes a scheduled `supatree watch --once` safe to add if you want the hours when no session is running covered too.
 
@@ -537,7 +539,7 @@ Events are a diff, not a report. Nothing that has no previously observed state i
 Only two kinds interrupt you: **changes requested** and **checks failing** — the two that mean a human is now waiting on you. Merges, approvals and finished trees are recorded but silent, and pushes and opened PRs only change a sidebar glyph. Repeats of the same news stay quiet for a cooldown (two hours for failing checks, which flap as CI re-runs), and notifications for the supatree whose tab you are currently looking at are suppressed, since you can already see it.
 
 ```yaml
-# ~/.supatree/config.yml
+# ~/.config/supatree/config.yml
 notify_command: ["notify-send", "{title}", "{text}"]   # default: osascript on macOS
 watch_interval: 30s                                    # how often to re-derive; the gh fetch behind it stays gated
 ```
@@ -550,7 +552,7 @@ In the sidebar, a supatree holding news you have not looked at is marked `!` nex
 
 Opening a root agent also marks the tree root as a trusted folder in `~/.claude.json`, so Claude does not ask "Do you trust the files in this folder?" on every launch. It has to be seeded rather than simply answered once: several agents share the tree root, each rewrites that file wholesale from what it read at startup, and an agent that started before you accepted puts the unaccepted answer back. Only the `hasTrustDialogAccepted` flag for the tree root is touched, only when it is not already set.
 
-All agents run at the supatree root under a nono sandbox that allows the whole tree. Multiple named agents (`--agent`) share the directory but resume independently via cached session IDs. `--repo <alias>` opens an agent scoped to a single member repo instead (the same thing `a` does on a member row in the sidebar).
+All agents run at the supatree root under a nono sandbox that allows the whole tree, its state, and the git directories its commits land in (the stack's and each member's clone) — not other trees, not the PM's queue, not supatree's own state. A member that `sync` adds is not committable by agents already running until they restart: a sandbox's reach is fixed when it starts. `sync` itself is carried out by the watcher, since adding a member writes a clone the agent's sandbox does not reach. Multiple named agents (`--agent`) share the directory but resume independently via cached session IDs. `--repo <alias>` opens an agent scoped to a single member repo instead (the same thing `a` does on a member row in the sidebar).
 
 ### MCP tools
 
@@ -566,7 +568,7 @@ workbench passes `--allow <worktree-path>` to nono so the sandboxed process can 
 
 Use `workbench init --profile` to generate a nono profile, or create one manually.
 
-The init wizard generates `~/.config/nono/profiles/claude-code-local.json` by:
+The init wizard generates `~/.config/nono/profiles/claude-code-local.json` (supatree writes its own, `supatree-agent`, with `supatree init`) by:
 - Detecting your repo parent directories
 - Finding your Go toolchain paths (`go env GOPATH`)
 - Globbing `~/.ssh/*.pub` for SSH public keys
@@ -583,7 +585,7 @@ Example generated profile:
   },
   "filesystem": {
     "allow": [
-      "$HOME/.workbench",
+      "$HOME/.cache/workbench/agent",
       "$HOME/code/myorg",
       "$HOME/code/go/pkg",
       "$HOME/code/go/bin",
@@ -624,8 +626,9 @@ models:
 
 | Path | Why |
 |------|-----|
-| `$HOME/.workbench` | workbench config, worktree base, generated layouts |
-| `$HOME/code/<org>` | Your repo parent directories (worktrees live under `~/.workbench/worktrees/` but the bare repo is here) |
+| `$HOME/.config/workbench` (read) | workbench config |
+| `$HOME/.cache/workbench/agent` | PR status cache, written by `create_pr` — and nothing else of workbench's: not the state dir, not the layouts zellij runs unsandboxed |
+| `$HOME/code/<org>` | Your repo parent directories (worktrees live under `~/workbench/` but the repo they come from is here) |
 | `$HOME/code/go/pkg`, `bin`, `src` | Go module cache and toolchain (adjust for your `GOPATH`) |
 | `$HOME/.config/gh` | GitHub CLI auth tokens (needed for `gh` commands and PR lookups) |
 

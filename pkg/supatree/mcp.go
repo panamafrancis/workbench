@@ -327,30 +327,33 @@ func handleInfo(map[string]any) (string, bool) {
 	return b.String(), false
 }
 
+// handleSync asks the watcher to reconcile this tree: adding a member writes
+// that member's base clone, which this agent's sandbox does not reach.
 func handleSync(args map[string]any) (string, bool) {
-	c, inst, err := currentInstance()
+	_, inst, err := currentInstance()
 	if err != nil {
 		return err.Error(), true
 	}
 	prune, _ := args["prune"].(bool)
-	report, err := Sync(c, inst.Root, prune)
+	return opReply(RequestOp(StateDir(inst.Root), Op{Kind: OpSync, Tree: inst.Name, Prune: prune}, opTimeout))
+}
+
+// opTimeout bounds how long a tool waits for the watcher. Generous: a create
+// fetches every member, and a first create clones them.
+const opTimeout = 10 * time.Minute
+
+// opReply turns the watcher's answer into a tool result.
+func opReply(res *OpResult, err error) (string, bool) {
 	if err != nil {
 		return err.Error(), true
 	}
-	var b strings.Builder
-	for _, a := range report.Created {
-		fmt.Fprintf(&b, "+ %s\n", a)
+	if res.Err != "" {
+		if res.Text != "" {
+			return res.Text + "\n" + res.Err, true
+		}
+		return res.Err, true
 	}
-	for _, a := range report.Pruned {
-		fmt.Fprintf(&b, "- %s\n", a)
-	}
-	for _, w := range report.Warnings {
-		fmt.Fprintf(&b, "warning: %s\n", w)
-	}
-	if b.Len() == 0 {
-		return "already in sync", false
-	}
-	return b.String(), false
+	return res.Text, false
 }
 
 func handleRenameBranches(args map[string]any) (string, bool) {
@@ -518,10 +521,10 @@ func outwardDenied(inst *Instance, action string) string {
 	}
 	if p := cfg.Resolve(meta); !p.Outward {
 		return fmt.Sprintf("%s is not permitted: it publishes in the user's name, which needs the `outward` "+
-			"permission. Review trees have it unless `review_outward: false` in ~/.supatree/config.yml or "+
+			"permission. Review trees have it unless `review_outward: false` in %[2]s or "+
 			"`outward: false` in this tree's meta.yml turns it off. To allow it, set `outward: true` in "+
-			"%s/.supatree/meta.yml, or `review_outward: true` in ~/.supatree/config.yml.\n\n"+
-			"Until then, write the review up and let the human post it.", action, inst.Root)
+			"%[3]s, or `review_outward: true` in %[2]s.\n\n"+
+			"Until then, write the review up and let the human post it.", action, ConfigPath(), MetaPath(inst.Root))
 	}
 	return ""
 }
@@ -1180,32 +1183,39 @@ func handleNewTree(args map[string]any) (string, bool) {
 	stack, _ := args["stack"].(string)
 	name, _ := args["name"].(string)
 	intent, _ := args["intent"].(string)
-
-	// With pull requests, this is a review tree. Gated identically: it creates
-	// worktrees and checks out code, which is the thing the level governs, even
-	// though a review tree commits nothing and opens no pull requests.
 	start, _ := args["start"].(bool)
 	brief, _ := args["brief"].(string)
-	if prs, _ := args["prs"].(string); strings.TrimSpace(prs) != "" {
-		inst, out, isErr := createReviewTree(cfg, stack, name, intent, prs)
-		if isErr || !start {
-			return out, isErr
-		}
-		return out + "\n" + startAgentReport(inst, MainAgent, brief), false
-	}
 
 	// Intent goes in at creation rather than being written back afterwards:
 	// info.md is generated from the meta, so a late intent is an intent missing
 	// from the one file the agent will actually read three weeks later.
-	inst, _, err := New(cfg, CreateOptions{Stack: stack, Name: name, Intent: intent})
-	if err != nil {
-		return err.Error(), true
+	op := Op{Kind: OpNew, Stack: stack, Name: name, Intent: intent}
+	// With pull requests, this is a review tree. Gated identically: it creates
+	// worktrees and checks out code, which is the thing the level governs, even
+	// though a review tree commits nothing and opens no pull requests.
+	if prs, _ := args["prs"].(string); strings.TrimSpace(prs) != "" {
+		op.Kind = OpReview
+		op.PRs = splitList(prs)
 	}
-	out := fmt.Sprintf("created supatree %q (%d members).", inst.Name, len(inst.Members))
+	// The watcher creates it: a tree's worktrees and the clones they hang off
+	// are outside the PM's sandbox, deliberately.
+	res, err := RequestOp(PMDir(), op, opTimeout)
+	out, isErr := opReply(res, err)
+	if isErr {
+		return out, true
+	}
 	if !start {
-		return out + " It has no tab: tell the human to press enter on it in the sidebar, or call start_agent.", false
+		if op.Kind == OpNew {
+			out += " It has no tab: tell the human to press enter on it in the sidebar, or call start_agent."
+		}
+		return out, false
 	}
-	if strings.TrimSpace(brief) == "" && intent != "" {
+	inst, err := Get(cfg, res.Tree)
+	if err != nil {
+		return fmt.Sprintf("%s\nbut it could not be read back to start its agent: %v", out, err), true
+	}
+	// A review tree with no brief gets the default review brief (startAgent).
+	if op.Kind == OpNew && strings.TrimSpace(brief) == "" && intent != "" {
 		brief = intent
 	}
 	return out + "\n" + startAgentReport(inst, MainAgent, brief), false
@@ -1299,15 +1309,9 @@ func handleRemoveTree(args map[string]any) (string, bool) {
 				inst.Name, sum.Trees[0].State), true
 		}
 	}
-	res, err := Remove(cfg, inst.Name, RemoveOptions{Force: force})
-	if err != nil {
-		return err.Error(), true
-	}
-	out := "removed supatree " + inst.Name
-	if len(res.Warnings) > 0 {
-		out += "\nwarnings: " + strings.Join(res.Warnings, "; ")
-	}
-	return out, false
+	// The watcher removes it: the worktrees and branches being deleted are
+	// outside the PM's sandbox, and only the watcher can close the tree's tabs.
+	return opReply(RequestOp(PMDir(), Op{Kind: OpRemove, Tree: inst.Name, Force: force}, opTimeout))
 }
 
 func handleHistory(args map[string]any) (string, bool) {
@@ -1602,29 +1606,6 @@ func foreignNote(t TreeStatus) string {
 			"and the authoring commands refused. Call docs with topic \"review\".\n")
 	}
 	return b.String()
-}
-
-// createReviewTree is new_tree's review branch: resolve the pull requests, then
-// build the tree around them.
-func createReviewTree(cfg *Config, stack, name, intent, prs string) (*Instance, string, bool) {
-	refs, err := ResolvePRRefs(splitList(prs))
-	if err != nil {
-		return nil, err.Error(), true
-	}
-	inst, _, err := NewReview(cfg, ReviewOptions{Stack: stack, Name: name, Intent: intent, PRs: refs})
-	if err != nil {
-		return nil, err.Error(), true
-	}
-	var b strings.Builder
-	fmt.Fprintf(&b, "created review tree %q (%d members).\n",
-		inst.Name, len(inst.Members))
-	for _, m := range inst.Members {
-		if m.Review != nil {
-			fmt.Fprintf(&b, "  %s at %s#%d\n", m.Alias, m.Review.Repo, m.Review.Number)
-		}
-	}
-	b.WriteString("\nThe authoring commands are refused there, and it reports `reviewing` rather than a ship state.")
-	return inst, b.String(), false
 }
 
 // splitList splits a comma-separated argument, dropping empties so a trailing

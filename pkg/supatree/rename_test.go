@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/panamafrancis/workbench/pkg/git"
+	"github.com/panamafrancis/workbench/pkg/testutil"
 )
 
 // memberRepo creates a git repo checked out on branch, standing in for one
@@ -39,6 +40,7 @@ func currentBranch(t *testing.T, dir string) string {
 }
 
 func TestRenameMemberBranches(t *testing.T) {
+	testutil.IsolateHome(t)
 	a := memberRepo(t, "st/old/a")
 	b := memberRepo(t, "st/old/b")
 	inst := &Instance{Members: []Member{
@@ -66,6 +68,7 @@ func TestRenameMemberBranches(t *testing.T) {
 }
 
 func TestRenameMemberBranchesRollsBack(t *testing.T) {
+	testutil.IsolateHome(t)
 	// A mid-loop failure used to leave earlier members on the new slug while
 	// meta.Slug stayed on the old one, orphaning them from their own tree.
 	a := memberRepo(t, "st/old/a")
@@ -93,6 +96,7 @@ func TestRenameMemberBranchesRollsBack(t *testing.T) {
 }
 
 func TestRenameMemberBranchesFirstMemberFails(t *testing.T) {
+	testutil.IsolateHome(t)
 	inst := &Instance{Members: []Member{
 		{Alias: "broken", Path: t.TempDir(), Branch: "st/old/broken", Exists: true},
 	}}
