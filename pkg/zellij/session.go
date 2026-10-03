@@ -45,7 +45,8 @@ func ListSessions() ([]SessionInfo, error) {
 	cmd.Stdout = &outBuf
 	cmd.Stderr = &errBuf
 	if err := cmd.Run(); err != nil {
-		if outBuf.Len() == 0 && errBuf.Len() == 0 {
+		// No server running at all is an empty list, not a failure.
+		if outBuf.Len() == 0 && (errBuf.Len() == 0 || strings.Contains(errBuf.String(), "No active zellij sessions")) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("zellij list-sessions: %s", strings.TrimSpace(errBuf.String()))

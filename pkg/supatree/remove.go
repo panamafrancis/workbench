@@ -3,10 +3,12 @@ package supatree
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/panamafrancis/workbench/pkg/git"
 	"github.com/panamafrancis/workbench/pkg/github"
 	"github.com/panamafrancis/workbench/pkg/sandbox"
+	"github.com/panamafrancis/workbench/pkg/zellij"
 )
 
 // RemoveOptions parameterizes Remove.
@@ -18,8 +20,9 @@ type RemoveOptions struct {
 // RemoveResult reports what Remove did.
 type RemoveResult struct {
 	Warnings []string
-	Agents   []Agent // agents that existed (so the caller can clean their tabs)
-	Archived int     // transcripts rescued from deletion into ArchiveDir
+	Agents   []Agent  // agents that existed (so the caller can clean their tabs)
+	Members  []string // member aliases (a member agent's tab is <tree>:<alias>)
+	Archived int      // transcripts rescued from deletion into ArchiveDir
 }
 
 // Remove tears down a supatree: every member worktree (reverse dependency
@@ -32,7 +35,7 @@ func Remove(c *Config, name string, opts RemoveOptions) (*RemoveResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	res := &RemoveResult{}
+	res := &RemoveResult{Members: inst.MemberAliases()}
 	res.Agents, _ = LoadAgents(inst.Root)
 
 	if dirty, _ := hasUncommittedChanges(inst.Root); dirty && !opts.Force && !opts.Push {
@@ -109,4 +112,45 @@ func archiveSessions(path, tree string, total *int) {
 		return
 	}
 	*total += n
+}
+
+// CloseTree closes every tab a removed tree had open, in every live session of
+// ws, and deletes the layouts they were opened from.
+//
+// Closing a tab ends the processes in it, agents included: this is what makes
+// removing a tree stop its agents rather than leave them running against a
+// directory that no longer exists (supatree#2). It runs after the removal,
+// because the caller may be a sidebar inside one of those tabs and does not
+// survive the close.
+func CloseTree(ws zellij.Workspace, tree string, res *RemoveResult) []string {
+	names := map[string]bool{tree: true}
+	if res != nil {
+		for _, a := range res.Agents {
+			names[TabName(tree, a.Name)] = true
+		}
+		for _, alias := range res.Members {
+			names[TabName(tree, alias)] = true
+		}
+	}
+	for name := range names {
+		ws.CleanupLayout(name)
+	}
+	// Any "<tree>:…" tab is this tree's, whether or not an agent was ever
+	// recorded for it — a tab opened by hand counts too.
+	match := func(name string) bool { return names[name] || strings.HasPrefix(name, tree+":") }
+
+	var warnings []string
+	sessions, err := zellij.ListSessions()
+	if err != nil {
+		return []string{fmt.Sprintf("could not list zellij sessions to close %s's tabs: %v", tree, err)}
+	}
+	for _, s := range sessions {
+		if s.Exited || !strings.HasPrefix(s.Name, ws.SessionPrefix) {
+			continue
+		}
+		if _, err := zellij.CloseTabsIn(s.Name, match); err != nil {
+			warnings = append(warnings, fmt.Sprintf("%s: %v", s.Name, err))
+		}
+	}
+	return warnings
 }

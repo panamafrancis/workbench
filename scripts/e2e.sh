@@ -10,6 +10,12 @@ export HOME=$(mktemp -d)
 trap 'rm -rf "$HOME"' EXIT
 # Paths come from XDG first, so HOME alone does not isolate.
 export XDG_CONFIG_HOME="$HOME/.config" XDG_STATE_HOME="$HOME/.local/state" XDG_CACHE_HOME="$HOME/.cache"
+# A private zellij: commands here list and close tabs in every live session,
+# and must never reach the developer's own.
+# (Short path: a unix socket path is capped near 104 bytes.)
+export ZELLIJ_SOCKET_DIR=$(mktemp -d /tmp/zj.XXXXXX)
+trap 'rm -rf "$HOME" "$ZELLIJ_SOCKET_DIR"' EXIT
+unset ZELLIJ ZELLIJ_SESSION_NAME ZELLIJ_PANE_ID
 
 echo "=== e2e: using isolated HOME=$HOME ==="
 

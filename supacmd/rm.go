@@ -43,11 +43,13 @@ var rmCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		cleanupTreeTabs(name, res)
 		for _, w := range res.Warnings {
 			fmt.Fprintf(os.Stderr, "warning: %s\n", w)
 		}
 		fmt.Printf("removed supatree %q\n", name)
+		// Last: if this runs in a shell inside one of the tree's tabs, closing
+		// it ends this process.
+		cleanupTreeTabs(name, res)
 		return nil
 	},
 }
@@ -58,11 +60,10 @@ func init() {
 	rmCmd.Flags().BoolVarP(&rmYes, "yes", "y", false, "skip confirmation")
 }
 
-// cleanupTreeTabs deletes the layouts a removed tree's tabs were opened from.
+// cleanupTreeTabs closes a removed tree's tabs in every supatree session —
+// stopping its agents — and deletes their layouts.
 func cleanupTreeTabs(tree string, res *supatree.RemoveResult) {
-	ws := supatreeWorkspace()
-	ws.CleanupLayout(tree)
-	for _, a := range res.Agents {
-		ws.CleanupLayout(supatree.TabName(tree, a.Name))
+	for _, w := range supatree.CloseTree(supatreeWorkspace(), tree, res) {
+		fmt.Fprintf(os.Stderr, "warning: %s\n", w)
 	}
 }

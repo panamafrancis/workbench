@@ -471,10 +471,9 @@ func (m *Model) removeTree(tree string) tea.Cmd {
 		if err != nil {
 			return actionDoneMsg{err: err}
 		}
-		m.ws.CleanupLayout(tree)
-		for _, a := range res.Agents {
-			m.ws.CleanupLayout(supatree.TabName(tree, a.Name))
-		}
+		// Closes the tree's tabs, which stops its agents — and, if this
+		// sidebar is in one of them, this process; it is closed last.
+		_ = supatree.CloseTree(m.ws, tree, res)
 		return actionDoneMsg{msg: "removed " + tree}
 	}
 }

@@ -20,6 +20,12 @@ trap 'rm -rf "$HOME"' EXIT
 # Paths come from XDG first, so HOME alone does not isolate: a value exported
 # by the developer's shell would point the run at their real directories.
 export XDG_CONFIG_HOME="$HOME/.config" XDG_STATE_HOME="$HOME/.local/state" XDG_CACHE_HOME="$HOME/.cache"
+# A private zellij: commands here list and close tabs in every live session,
+# and must never reach the developer's own.
+# (Short path: a unix socket path is capped near 104 bytes.)
+export ZELLIJ_SOCKET_DIR=$(mktemp -d /tmp/zj.XXXXXX)
+trap 'rm -rf "$HOME" "$ZELLIJ_SOCKET_DIR"' EXIT
+unset ZELLIJ ZELLIJ_SESSION_NAME ZELLIJ_PANE_ID
 ST_CONFIG="$XDG_CONFIG_HOME/supatree"
 ST_STATE="$XDG_STATE_HOME/supatree"
 ST_CACHE="$XDG_CACHE_HOME/supatree"
@@ -199,9 +205,20 @@ supatree rename-branch payments berlin
 [ "$(git -C "$ROOT/repos/admin" rev-parse --abbrev-ref HEAD)" = "st/payments/admin" ] || fail "member not renamed"
 [ "$(git -C "$ROOT" rev-parse --abbrev-ref HEAD)" = "st/berlin" ] || fail "meta branch should not rename"
 
-# 7. Remove (force: supatree.yml was edited in-tree without commit).
+# 7. Remove (force: supatree.yml was edited in-tree without commit). Removing
+# a tree closes its tabs in every supatree session, which is what stops its
+# agents (supatree#2) — so give it some to close, in a background session.
 echo "--- supatree rm ---"
+zellij attach --create-background st-e2e
+zellij --session st-e2e action new-tab --name berlin
+zellij --session st-e2e action new-tab --name berlin:reviewer
+zellij --session st-e2e action new-tab --name berlinx
 supatree rm berlin -y --force
+TABS=$(zellij --session st-e2e action query-tab-names)
+echo "$TABS" | grep -x "berlin" >/dev/null && fail "rm left the tree's tab open"
+echo "$TABS" | grep -x "berlin:reviewer" >/dev/null && fail "rm left an agent tab open"
+echo "$TABS" | grep -x "berlinx" >/dev/null || fail "rm closed a tab that was not the tree's"
+zellij delete-session st-e2e --force >/dev/null 2>&1 || true
 [ ! -d "$ROOT" ] || fail "tree dir still exists after rm"
 [ ! -d "$ST_STATE/trees/berlin" ] || fail "tree state survived rm — List would keep reporting it"
 # Removal must not be the thing that loses an agent's history.
