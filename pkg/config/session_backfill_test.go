@@ -7,7 +7,7 @@ func TestBackfillSessionArgsFillsClaude(t *testing.T) {
 	models := map[string]Model{
 		modelClaude: {Binary: "claude", Args: []string{"--dangerously-skip-permissions"}, ResumeArgs: []string{"--continue"}},
 	}
-	backfillSessionArgs(models)
+	BackfillModels(models)
 	m := models[modelClaude]
 	if len(m.NewSessionArgs) == 0 || len(m.ResumeSessionArgs) == 0 {
 		t.Errorf("claude should gain session args, got new=%v resume=%v", m.NewSessionArgs, m.ResumeSessionArgs)
@@ -18,7 +18,7 @@ func TestBackfillSessionArgsRespectsExisting(t *testing.T) {
 	models := map[string]Model{
 		modelClaude: {Binary: "claude", NewSessionArgs: []string{"--mine", "{session_id}"}},
 	}
-	backfillSessionArgs(models)
+	BackfillModels(models)
 	if got := models[modelClaude].NewSessionArgs; len(got) != 2 || got[0] != "--mine" {
 		t.Errorf("must not overwrite user session args, got %v", got)
 	}
@@ -30,7 +30,7 @@ func TestBackfillSessionArgsSkipsRepurposedBinary(t *testing.T) {
 	models := map[string]Model{
 		modelClaude: {Binary: "some-other-cli"},
 	}
-	backfillSessionArgs(models)
+	BackfillModels(models)
 	if len(models[modelClaude].NewSessionArgs) != 0 {
 		t.Error("must not inject claude flags into a differently-binaried model")
 	}
@@ -43,7 +43,7 @@ func TestBackfillPromptArgs(t *testing.T) {
 		modelClaude: {Binary: "claude", NewSessionArgs: []string{"--session-id", "{session_id}"}},
 		"shell":     {Binary: "bash"},
 	}
-	backfillSessionArgs(models)
+	BackfillModels(models)
 	if got := models[modelClaude].PromptArgs; len(got) != 1 || got[0] != "{prompt}" {
 		t.Errorf("claude should gain prompt args, got %v", got)
 	}
@@ -52,12 +52,12 @@ func TestBackfillPromptArgs(t *testing.T) {
 	}
 
 	mine := map[string]Model{modelClaude: {Binary: "claude", PromptArgs: []string{"-p", "{prompt}"}}}
-	backfillSessionArgs(mine)
+	BackfillModels(mine)
 	if got := mine[modelClaude].PromptArgs; len(got) != 2 {
 		t.Errorf("must not overwrite user prompt args, got %v", got)
 	}
 	other := map[string]Model{modelClaude: {Binary: "some-other-cli"}}
-	backfillSessionArgs(other)
+	BackfillModels(other)
 	if len(other[modelClaude].PromptArgs) != 0 {
 		t.Error("must not inject claude's prompt into a differently-binaried model")
 	}

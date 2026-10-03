@@ -35,10 +35,7 @@ func TestBuildAgentNonoArgsNewAgentNeverContinues(t *testing.T) {
 
 	// A brand-new agent (resume=false) must NOT inherit the directory's last
 	// session — this was the "new agent lands in main's chat" bug.
-	args, err := BuildAgentNonoArgs(wt, "m", noSessionCfg(), "sid", false)
-	if err != nil {
-		t.Fatal(err)
-	}
+	args := BuildAgentNonoArgs(wt, noSessionCfg().Models["m"], "sid", false)
 	if contains(args, "--continue") {
 		t.Errorf("new agent must not resume via --continue: %v", args)
 	}
@@ -49,10 +46,7 @@ func TestBuildAgentNonoArgsResumeUsesContinueFallback(t *testing.T) {
 	wt := "/wt/path"
 	writeTranscript(t, wt, "other")
 
-	args, err := BuildAgentNonoArgs(wt, "m", noSessionCfg(), "sid", true)
-	if err != nil {
-		t.Fatal(err)
-	}
+	args := BuildAgentNonoArgs(wt, noSessionCfg().Models["m"], "sid", true)
 	if !contains(args, "--continue") {
 		t.Errorf("resume with no session args should fall back to --continue: %v", args)
 	}

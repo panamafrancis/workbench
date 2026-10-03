@@ -24,7 +24,7 @@ var syncCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		report, err := supatree.Sync(inst.Root, wbCfg, syncPrune)
+		report, err := supatree.Sync(stCfg, inst.Root, syncPrune)
 		if err != nil {
 			return err
 		}

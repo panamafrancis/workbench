@@ -177,8 +177,6 @@ Models is an open map — add any binary with any nono profile.
     - alias: wb
       local_path: /path/to/repo
       copy_files: [".claude", ".env"]   copied from repo to new worktrees
-      startup_script: ""                run before opening a worktree
-      cleanup_script: ""                run before removing a worktree
       worktrees:
         - name: clear-detroit
           branch: wt/wb/clear-detroit
@@ -304,13 +302,12 @@ ref. The default branch is detected via git symbolic-ref refs/remotes/origin/HEA
 3. If tab exists but command exited → close stale tab, create fresh
 4. Write layout KDL with WORKBENCH_* env vars
 5. zellij action new-tab with the layout
-6. Run startup_script (if configured, only on fresh tab)
 
 ## Deletion
 
   workbench rm worktree <name>
 
-Runs cleanup_script, git worktree remove, deletes the wt/* branch, removes
+Runs git worktree remove, deletes the wt/* branch, removes
 from config, and cleans up the layout KDL file. Warns if the worktree has
 a running tab or uncommitted changes.
 `

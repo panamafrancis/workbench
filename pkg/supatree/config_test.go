@@ -1,14 +1,17 @@
 package supatree
 
 import (
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/panamafrancis/workbench/pkg/config"
 )
 
 func TestConfigRoundTrip(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	c := DefaultConfig()
-	c.DefaultModel = "claude"
+	c.DefaultModel = defaultModelKey
 	if err := AddStack("mystack", "/some/path"); err != nil {
 		t.Fatalf("AddStack() error = %v", err)
 	}
@@ -50,7 +53,7 @@ func TestAddStackConflictingPath(t *testing.T) {
 func TestMetaRoundTrip(t *testing.T) {
 	root := t.TempDir()
 	when := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
-	m := &Meta{Name: treeBerlin, Slug: treeBerlin, Stack: "s", Model: "claude", CreatedAt: when}
+	m := &Meta{Name: treeBerlin, Slug: treeBerlin, Stack: "s", Model: defaultModelKey, CreatedAt: when}
 	if err := m.Save(root); err != nil {
 		t.Fatalf("Save() error = %v", err)
 	}
@@ -58,7 +61,7 @@ func TestMetaRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadMeta() error = %v", err)
 	}
-	if got.Name != treeBerlin || got.Slug != treeBerlin || got.Model != "claude" {
+	if got.Name != treeBerlin || got.Slug != treeBerlin || got.Model != defaultModelKey {
 		t.Errorf("meta round-trip mismatch: %+v", got)
 	}
 	if got.MemberBranch(aliasTerraform) != "st/berlin/terraform" {
@@ -88,5 +91,52 @@ func TestSpecOrderedMembers(t *testing.T) {
 		if ordered[i] != want[i] {
 			t.Fatalf("OrderedMembers() = %v, want %v", ordered, want)
 		}
+	}
+}
+
+// Supatree's own models win; with none, workbench's (the migration bridge);
+// with neither, the built-in defaults. A model nobody defines names the file
+// to add it to.
+func TestModelResolutionOrder(t *testing.T) {
+	own := &Config{Models: map[string]config.Model{"mine": {Binary: "mine"}}}
+	if m, err := own.Model("mine"); err != nil || m.Binary != "mine" {
+		t.Errorf("own model = %+v, %v", m, err)
+	}
+	if _, err := own.Model(defaultModelKey); err == nil {
+		t.Error("a supatree config with its own models must not fall through to the defaults")
+	}
+
+	bridged := &Config{legacy: &config.Config{DefaultModel: "wbm", Models: map[string]config.Model{"wbm": {Binary: "wb"}}}}
+	if got := bridged.ResolveModel(""); got != "wbm" {
+		t.Errorf("ResolveModel with only workbench's config = %q, want its default", got)
+	}
+	if m, err := bridged.Model("wbm"); err != nil || m.Binary != "wb" {
+		t.Errorf("bridged model = %+v, %v", m, err)
+	}
+
+	bare := &Config{}
+	if got := bare.ResolveModel(""); got != defaultModelKey {
+		t.Errorf("ResolveModel with nothing configured = %q, want claude", got)
+	}
+	if m, err := bare.Model(defaultModelKey); err != nil || m.Binary != defaultModelKey {
+		t.Errorf("default model = %+v, %v", m, err)
+	}
+	if _, err := bare.Model("nosuch"); err == nil || !strings.Contains(err.Error(), "models:") {
+		t.Errorf("unknown model error = %v, want one naming the models section", err)
+	}
+}
+
+// Supatree must run with no workbench config at all.
+func TestLoadWithoutWorkbench(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.legacy != nil {
+		t.Error("loaded a workbench config that does not exist")
+	}
+	if _, err := c.baseClone("anything"); err == nil {
+		t.Error("resolved a member with no source for it")
 	}
 }

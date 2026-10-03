@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/panamafrancis/workbench/pkg/config"
 	"github.com/panamafrancis/workbench/pkg/git"
 )
 
@@ -19,9 +18,9 @@ type ScaffoldResult struct {
 // the given member aliases), AGENTS.md, a scripts/ directory, and a .gitignore,
 // then registers it in the supatree registry. It is placed at
 // ~/.supatree/stacks/<name>/ unless pathOverride is given. The member aliases
-// must be registered with workbench, and the target dir must not already be a
+// must resolve to repos supatree can clone from, and the target dir must not already be a
 // git repo.
-func Scaffold(name, pathOverride string, members []string, wb *config.Config) (*ScaffoldResult, error) {
+func Scaffold(c *Config, name, pathOverride string, members []string) (*ScaffoldResult, error) {
 	if err := git.ValidateName(name, nil); err != nil {
 		return nil, fmt.Errorf("invalid stack name %q: %w", name, err)
 	}
@@ -37,7 +36,7 @@ func Scaffold(name, pathOverride string, members []string, wb *config.Config) (*
 	if len(members) == 0 {
 		return nil, fmt.Errorf("no repos selected — pass --repos=<a,b,c> or pick some interactively")
 	}
-	if _, err := resolveRepos(members, wb); err != nil {
+	if _, err := c.baseClones(members); err != nil {
 		return nil, err
 	}
 	if isGitRepo(dir) {

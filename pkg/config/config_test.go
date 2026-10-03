@@ -343,53 +343,7 @@ func TestResolveWorktreeBaseDefault(t *testing.T) {
 	}
 }
 
-func TestRunStartupNoScript(t *testing.T) {
-	r := &Repo{}
-	if err := r.RunStartup("/some/path", "myname"); err != nil {
-		t.Errorf("RunStartup with no script = %v, want nil", err)
-	}
-}
-
-func TestRunCleanupNoScript(t *testing.T) {
-	r := &Repo{}
-	if err := r.RunCleanup("/some/path", "myname"); err != nil {
-		t.Errorf("RunCleanup with no script = %v, want nil", err)
-	}
-}
-
-func TestRunStartupScriptReceivesEnv(t *testing.T) {
-	dir := t.TempDir()
-	script := filepath.Join(dir, "startup.sh")
-	outFile := filepath.Join(dir, "out.txt")
-	content := "#!/bin/bash\necho \"$WORKBENCH_REPO_BASE_PATH $WORKBENCH_WORKTREE_PATH $WORKBENCH_WORKTREE_NAME\" > " + outFile + "\n"
-	if err := os.WriteFile(script, []byte(content), 0755); err != nil {
-		t.Fatal(err)
-	}
-
-	repoDir := t.TempDir()
-	r := &Repo{LocalPath: repoDir, StartupScript: script}
-	if err := r.RunStartup(dir, "myname"); err != nil {
-		t.Fatalf("RunStartup() error = %v", err)
-	}
-
-	got, err := os.ReadFile(outFile)
-	if err != nil {
-		t.Fatalf("read output: %v", err)
-	}
-	want := repoDir + " " + dir + " myname\n"
-	if string(got) != want {
-		t.Errorf("script output = %q, want %q", string(got), want)
-	}
-}
-
-func TestRunStartupScriptNotFound(t *testing.T) {
-	r := &Repo{StartupScript: "/nonexistent/script.sh"}
-	if err := r.RunStartup("/wt/path", "myname"); err == nil {
-		t.Error("RunStartup with missing script should return error")
-	}
-}
-
-func TestRunCopyFilesFile(t *testing.T) {
+func TestCopyFilesFile(t *testing.T) {
 	repoDir := t.TempDir()
 	wtDir := t.TempDir()
 
@@ -397,9 +351,8 @@ func TestRunCopyFilesFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	r := &Repo{LocalPath: repoDir, CopyFiles: []string{".env"}}
-	if err := r.RunCopyFiles(wtDir); err != nil {
-		t.Fatalf("RunCopyFiles() error = %v", err)
+	if missing, err := CopyFiles(repoDir, wtDir, []string{".env"}); err != nil || len(missing) != 0 {
+		t.Fatalf("CopyFiles() = %v, %v", missing, err)
 	}
 
 	got, err := os.ReadFile(filepath.Join(wtDir, ".env"))
@@ -411,7 +364,7 @@ func TestRunCopyFilesFile(t *testing.T) {
 	}
 }
 
-func TestRunCopyFilesDir(t *testing.T) {
+func TestCopyFilesDir(t *testing.T) {
 	repoDir := t.TempDir()
 	wtDir := t.TempDir()
 
@@ -423,9 +376,8 @@ func TestRunCopyFilesDir(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	r := &Repo{LocalPath: repoDir, CopyFiles: []string{".claude"}}
-	if err := r.RunCopyFiles(wtDir); err != nil {
-		t.Fatalf("RunCopyFiles() error = %v", err)
+	if _, err := CopyFiles(repoDir, wtDir, []string{".claude"}); err != nil {
+		t.Fatalf("CopyFiles() error = %v", err)
 	}
 
 	got, err := os.ReadFile(filepath.Join(wtDir, ".claude", "settings.json"))
@@ -437,38 +389,65 @@ func TestRunCopyFilesDir(t *testing.T) {
 	}
 }
 
-func TestRunCopyFilesMissingSrc(t *testing.T) {
+// A missing source is reported, not fatal: the rest of the list still copies.
+func TestCopyFilesMissingSrcContinues(t *testing.T) {
 	repoDir := t.TempDir()
 	wtDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoDir, ".env"), []byte("x"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
-	r := &Repo{LocalPath: repoDir, CopyFiles: []string{".nonexistent"}}
-	if err := r.RunCopyFiles(wtDir); err == nil {
-		t.Error("RunCopyFiles with missing source should return error")
+	missing, err := CopyFiles(repoDir, wtDir, []string{".nonexistent", ".env"})
+	if err != nil {
+		t.Fatalf("CopyFiles() error = %v, want nil", err)
+	}
+	if len(missing) != 1 || missing[0] != ".nonexistent" {
+		t.Errorf("missing = %v, want [.nonexistent]", missing)
+	}
+	if _, err := os.Stat(filepath.Join(wtDir, ".env")); err != nil {
+		t.Errorf(".env after a missing entry was not copied: %v", err)
 	}
 }
 
-func TestRunCopyFilesRejectsAbsPath(t *testing.T) {
-	r := &Repo{LocalPath: "/repo", CopyFiles: []string{"/etc/passwd"}}
-	if err := r.RunCopyFiles("/wt"); err == nil {
-		t.Error("RunCopyFiles with absolute path should return error")
+func TestCopyFilesRejectsAbsPath(t *testing.T) {
+	if _, err := CopyFiles("/repo", "/wt", []string{"/etc/passwd"}); err == nil {
+		t.Error("CopyFiles with absolute path should return error")
 	}
 }
 
-func TestRunCopyFilesRejectsTraversal(t *testing.T) {
-	r := &Repo{LocalPath: "/repo", CopyFiles: []string{"../etc/passwd"}}
-	err := r.RunCopyFiles("/wt")
+func TestCopyFilesRejectsTraversal(t *testing.T) {
+	_, err := CopyFiles("/repo", "/wt", []string{"../etc/passwd"})
 	if err == nil {
-		t.Error("RunCopyFiles with parent traversal should return error")
+		t.Error("CopyFiles with parent traversal should return error")
 	}
 	if err != nil && !strings.Contains(err.Error(), "escapes repo root") {
 		t.Errorf("unexpected error = %v, want 'escapes repo root'", err)
 	}
 }
 
-func TestRunCopyFilesEmpty(t *testing.T) {
-	r := &Repo{LocalPath: "/repo"}
-	if err := r.RunCopyFiles("/wt"); err != nil {
-		t.Errorf("RunCopyFiles with no files = %v, want nil", err)
+func TestCopyFilesEmpty(t *testing.T) {
+	if missing, err := CopyFiles("/repo", "/wt", nil); err != nil || len(missing) != 0 {
+		t.Errorf("CopyFiles with no files = %v, %v, want nil", missing, err)
+	}
+}
+
+func TestModelLookup(t *testing.T) {
+	cfg := DefaultConfig()
+	if m, err := cfg.Model(modelClaude); err != nil || m.Binary != modelClaude {
+		t.Errorf("Model(claude) = %+v, %v", m, err)
+	}
+	if _, err := cfg.Model("nosuchmodel"); err == nil || !strings.Contains(err.Error(), "models:") {
+		t.Errorf("Model(unknown) error = %v, want one naming the models section", err)
+	}
+}
+
+// DefaultModels hands out a fresh map: one caller adding an entry must not leak
+// into the next config built from it.
+func TestDefaultModelsIsFresh(t *testing.T) {
+	a := DefaultModels()
+	a["mine"] = Model{Binary: "x"}
+	if _, ok := DefaultModels()["mine"]; ok {
+		t.Error("DefaultModels returned a shared map")
 	}
 }
 

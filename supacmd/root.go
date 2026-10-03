@@ -9,17 +9,13 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/panamafrancis/workbench/pkg/config"
 	"github.com/panamafrancis/workbench/pkg/supatree"
 	"github.com/panamafrancis/workbench/pkg/zellij"
 )
 
-// stCfg is the supatree registry; wbCfg is workbench's config (repo/model
-// definitions). Both are loaded in PersistentPreRunE.
-var (
-	stCfg *supatree.Config
-	wbCfg *config.Config
-)
+// stCfg is supatree's config (stacks, models, repo settings), loaded in
+// PersistentPreRunE.
+var stCfg *supatree.Config
 
 // supatreeWorkspace is the zellij workspace for supatree sessions and layouts.
 func supatreeWorkspace() zellij.Workspace {
@@ -51,9 +47,6 @@ var rootCmd = &cobra.Command{
 		var err error
 		if stCfg, err = supatree.Load(); err != nil {
 			return fmt.Errorf("load supatree config: %w", err)
-		}
-		if wbCfg, err = config.Load(); err != nil {
-			return fmt.Errorf("load workbench config: %w", err)
 		}
 		return nil
 	},

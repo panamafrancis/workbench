@@ -9,11 +9,10 @@ import (
 	"github.com/panamafrancis/workbench/pkg/config"
 )
 
-func BuildNonoArgs(worktreePath, modelKey string, cfg *config.Config) ([]string, error) {
-	m, ok := cfg.Models[modelKey]
-	if !ok {
-		return nil, fmt.Errorf("unknown model %q (add it under 'models:' in config)", modelKey)
-	}
+// BuildNonoArgs builds nono args for model m confined to worktreePath. The
+// caller resolves m from its own config (config.Config.Model), so this package
+// never knows which tool's config a model came from.
+func BuildNonoArgs(worktreePath string, m config.Model) []string {
 	args := []string{"run", "--profile", m.NonoProfile, "--allow", worktreePath, "--"}
 	args = append(args, m.Binary)
 	args = append(args, m.Args...)
@@ -22,7 +21,7 @@ func BuildNonoArgs(worktreePath, modelKey string, cfg *config.Config) ([]string,
 	if len(m.ResumeArgs) > 0 && HasPriorSession(worktreePath) {
 		args = append(args, m.ResumeArgs...)
 	}
-	return args, nil
+	return args
 }
 
 // BuildAgentNonoArgs builds nono args for launching a named agent in
@@ -33,8 +32,8 @@ func BuildNonoArgs(worktreePath, modelKey string, cfg *config.Config) ([]string,
 // resume independently. When the model has no session-ID args, it falls back to
 // BuildNonoArgs semantics (append ResumeArgs iff a prior directory session
 // exists), which only supports a single directory-scoped agent.
-func BuildAgentNonoArgs(worktreePath, modelKey string, cfg *config.Config, sessionID string, resume bool) ([]string, error) {
-	return BuildNamedAgentNonoArgs(worktreePath, modelKey, cfg, sessionID, "", resume)
+func BuildAgentNonoArgs(worktreePath string, m config.Model, sessionID string, resume bool) []string {
+	return BuildNamedAgentNonoArgs(worktreePath, m, sessionID, "", resume)
 }
 
 // BuildNamedAgentNonoArgs is BuildAgentNonoArgs plus a bus address: when
@@ -45,11 +44,7 @@ func BuildAgentNonoArgs(worktreePath, modelKey string, cfg *config.Config, sessi
 // The directory-derived default is exactly what makes naming necessary here:
 // every agent in a supatree shares the tree root, so without this they would
 // all derive the same name and collide.
-func BuildNamedAgentNonoArgs(worktreePath, modelKey string, cfg *config.Config, sessionID, agentName string, resume bool) ([]string, error) {
-	m, ok := cfg.Models[modelKey]
-	if !ok {
-		return nil, fmt.Errorf("unknown model %q (add it under 'models:' in config)", modelKey)
-	}
+func BuildNamedAgentNonoArgs(worktreePath string, m config.Model, sessionID, agentName string, resume bool) []string {
 	tokens := map[string]string{"{session_id}": sessionID, "{agent_name}": agentName}
 	args := []string{"run", "--profile", m.NonoProfile, "--allow", worktreePath, "--"}
 	args = append(args, m.Binary)
@@ -68,16 +63,15 @@ func BuildNamedAgentNonoArgs(worktreePath, modelKey string, cfg *config.Config, 
 	if agentName != "" && len(m.AgentNameArgs) > 0 {
 		args = append(args, substituteTokens(m.AgentNameArgs, tokens)...)
 	}
-	return args, nil
+	return args
 }
 
 // AppendPrompt appends the model's PromptArgs with "{prompt}" substituted, so
 // the agent launches with prompt as its first message. A model without
 // PromptArgs, or an empty prompt, leaves args unchanged: the agent starts idle,
 // which is what every launch did before this existed.
-func AppendPrompt(args []string, modelKey string, cfg *config.Config, prompt string) []string {
-	m, ok := cfg.Models[modelKey]
-	if !ok || prompt == "" || len(m.PromptArgs) == 0 {
+func AppendPrompt(args []string, m config.Model, prompt string) []string {
+	if prompt == "" || len(m.PromptArgs) == 0 {
 		return args
 	}
 	return append(args, substituteTokens(m.PromptArgs, map[string]string{"{prompt}": prompt})...)
@@ -101,12 +95,11 @@ func SessionExists(worktreePath, sessionID string) bool {
 	return err == nil
 }
 
-// SupportsSessions reports whether modelKey defines explicit session-ID launch
-// args, i.e. whether multiple independently-resumable agents can share one
+// SupportsSessions reports whether m defines explicit session-ID launch args,
+// i.e. whether multiple independently-resumable agents can share one
 // directory. Callers use this to fall back to a single directory-scoped agent.
-func SupportsSessions(modelKey string, cfg *config.Config) bool {
-	m, ok := cfg.Models[modelKey]
-	return ok && len(m.NewSessionArgs) > 0
+func SupportsSessions(m config.Model) bool {
+	return len(m.NewSessionArgs) > 0
 }
 
 // substituteTokens replaces every token in each argument. It is a whole-argv
@@ -200,11 +193,7 @@ type Grants struct {
 //
 // agentName, when the model defines AgentNameArgs, gives it a bus address the
 // same way a supatree agent gets one.
-func BuildGrantedNonoArgs(modelKey string, cfg *config.Config, g Grants, sessionDir, agentName string, resume bool) ([]string, error) {
-	m, ok := cfg.Models[modelKey]
-	if !ok {
-		return nil, fmt.Errorf("unknown model %q (add it under 'models:' in config)", modelKey)
-	}
+func BuildGrantedNonoArgs(m config.Model, g Grants, sessionDir, agentName string, resume bool) ([]string, error) {
 	if len(g.Allow) == 0 && len(g.Read) == 0 {
 		return nil, fmt.Errorf("refusing to build a sandbox with no filesystem grants")
 	}

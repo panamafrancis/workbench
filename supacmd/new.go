@@ -20,7 +20,7 @@ var newCmd = &cobra.Command{
 	Use:   "new",
 	Short: "Create a supatree (one worktree per repo) from a stack",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		inst, report, err := supatree.New(stCfg, wbCfg, supatree.CreateOptions{
+		inst, report, err := supatree.New(stCfg, supatree.CreateOptions{
 			Stack:       newStack,
 			Name:        newName,
 			Model:       newModel,

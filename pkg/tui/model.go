@@ -618,7 +618,7 @@ func (m *Model) createWorktreeOptimistic(nameInput string) (tea.Model, tea.Cmd) 
 		}
 		// Copy gitignored files (copy_files) from the repo into the fresh
 		// worktree before persisting, matching the CLI add-worktree flow.
-		if err := createRepo.RunCopyFiles(wtPath); err != nil {
+		if _, err := config.CopyFiles(createRepo.LocalPath, wtPath, createRepo.CopyFiles); err != nil {
 			os.RemoveAll(wtPath) //nolint:errcheck
 			return createWorktreeMsg{name: name, err: err}
 		}
@@ -683,8 +683,6 @@ func (m *Model) deleteWorktree() tea.Cmd {
 	return func() tea.Msg {
 		repo := cfg.Repos[repoIdx]
 		wt := repo.Worktrees[wtIdx]
-
-		_ = repo.RunCleanup(wt.Path, wt.Name)
 
 		if err := git.RemoveWorktree(repo.LocalPath, wt.Path); err != nil {
 			return deleteWorktreeMsg{err: err}
@@ -754,24 +752,19 @@ func (m *Model) openWorktree(wt config.Worktree, repo config.Repo, modelOverride
 		if !zellij.IsInZellij() {
 			return openErrMsg{fmt.Errorf("not inside a Zellij session")}
 		}
-		nonoArgs, err := sandbox.BuildNonoArgs(wt.Path, modelKey, m.cfg)
+		model, err := m.cfg.Model(modelKey)
 		if err != nil {
 			return openErrMsg{err}
 		}
+		nonoArgs := sandbox.BuildNonoArgs(wt.Path, model)
 		envVars := map[string]string{
 			"WORKBENCH":               "1",
 			"WORKBENCH_WORKTREE_NAME": wt.Name,
 			"WORKBENCH_REPO_ALIAS":    repo.Alias,
 			"WORKBENCH_BRANCH":        wt.Branch,
 		}
-		created, err := m.ws.OpenOrFocusTab(wt.Name, wt.Path, m.cfg.ResolveSidebarWidth(), nonoArgs, envVars)
-		if err != nil {
+		if _, err := m.ws.OpenOrFocusTab(wt.Name, wt.Path, m.cfg.ResolveSidebarWidth(), nonoArgs, envVars); err != nil {
 			return openErrMsg{err}
-		}
-		if created {
-			if err := repo.RunStartup(wt.Path, wt.Name); err != nil {
-				return openErrMsg{fmt.Errorf("startup script: %w", err)}
-			}
 		}
 		return openDoneMsg{}
 	}

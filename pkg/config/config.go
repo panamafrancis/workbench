@@ -1,11 +1,8 @@
 package config
 
 import (
-	"bytes"
-	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -66,13 +63,10 @@ type Model struct {
 }
 
 type Repo struct {
-	Alias               string     `yaml:"alias"`
-	LocalPath           string     `yaml:"local_path"`
-	CopyFiles           []string   `yaml:"copy_files,omitempty"`
-	StartupScript       string     `yaml:"startup_script"`
-	CleanupScript       string     `yaml:"cleanup_script"`
-	StartupInstructions string     `yaml:"startup_instructions"`
-	Worktrees           []Worktree `yaml:"worktrees"`
+	Alias     string     `yaml:"alias"`
+	LocalPath string     `yaml:"local_path"`
+	CopyFiles []string   `yaml:"copy_files,omitempty"`
+	Worktrees []Worktree `yaml:"worktrees"`
 }
 
 type Worktree struct {
@@ -87,39 +81,46 @@ func DefaultConfig() *Config {
 	return &Config{
 		Version:      1,
 		DefaultModel: "claude",
-		Models: map[string]Model{
-			"claude": {
-				NonoProfile:       "claude-code",
-				Binary:            "claude",
-				Args:              []string{"--dangerously-skip-permissions"},
-				ResumeArgs:        []string{"--continue"},
-				NewSessionArgs:    []string{"--session-id", "{session_id}"},
-				ResumeSessionArgs: []string{"--resume", "{session_id}"},
-				AgentNameArgs:     []string{"--name", "{agent_name}"},
-				PromptArgs:        []string{"{prompt}"},
-			},
-			"codex": {
-				NonoProfile: "default",
-				Binary:      "codex",
-				Args:        []string{},
-			},
-			"opencode": {
-				NonoProfile: "default",
-				Binary:      "opencode",
-				Args:        []string{},
-			},
-			"dirac": {
-				NonoProfile: "default",
-				Binary:      "dirac",
-				Args:        []string{},
-			},
-			"shell": {
-				NonoProfile: "default",
-				Binary:      "bash",
-				Args:        []string{},
-			},
+		Models:       DefaultModels(),
+		Repos:        []Repo{},
+	}
+}
+
+// DefaultModels returns the built-in model entries, as a fresh map the caller
+// may modify. Both tools seed their own config from it, so the definitions live
+// in one place even though nothing on disk is shared.
+func DefaultModels() map[string]Model {
+	return map[string]Model{
+		"claude": {
+			NonoProfile:       "claude-code",
+			Binary:            "claude",
+			Args:              []string{"--dangerously-skip-permissions"},
+			ResumeArgs:        []string{"--continue"},
+			NewSessionArgs:    []string{"--session-id", "{session_id}"},
+			ResumeSessionArgs: []string{"--resume", "{session_id}"},
+			AgentNameArgs:     []string{"--name", "{agent_name}"},
+			PromptArgs:        []string{"{prompt}"},
 		},
-		Repos: []Repo{},
+		"codex": {
+			NonoProfile: "default",
+			Binary:      "codex",
+			Args:        []string{},
+		},
+		"opencode": {
+			NonoProfile: "default",
+			Binary:      "opencode",
+			Args:        []string{},
+		},
+		"dirac": {
+			NonoProfile: "default",
+			Binary:      "dirac",
+			Args:        []string{},
+		},
+		"shell": {
+			NonoProfile: "default",
+			Binary:      "bash",
+			Args:        []string{},
+		},
 	}
 }
 
@@ -137,20 +138,20 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
 	if cfg.Models == nil {
-		cfg.Models = DefaultConfig().Models
+		cfg.Models = DefaultModels()
 	}
-	backfillSessionArgs(cfg.Models)
+	BackfillModels(cfg.Models)
 	return &cfg, nil
 }
 
-// backfillSessionArgs fills in new_session_args/resume_session_args for models
+// BackfillModels fills in new_session_args/resume_session_args for models
 // that still match a shipped default (same key and binary) but predate those
 // fields. This lets multi-agent tools (supatree) resume distinct sessions in a
 // shared directory without requiring users to hand-edit an existing config. It
 // only adds capability — it never overwrites args the user already set — and is
 // invisible to workbench, which does not read these fields.
-func backfillSessionArgs(models map[string]Model) {
-	for key, dm := range DefaultConfig().Models {
+func BackfillModels(models map[string]Model) {
+	for key, dm := range DefaultModels() {
 		if len(dm.NewSessionArgs) == 0 && len(dm.ResumeSessionArgs) == 0 {
 			continue
 		}
@@ -167,7 +168,7 @@ func backfillSessionArgs(models map[string]Model) {
 	// PromptArgs arrived later than the session args, so a config that already
 	// had those backfilled still lacks it. Same rule: shipped key and binary,
 	// never overwriting.
-	for key, dm := range DefaultConfig().Models {
+	for key, dm := range DefaultModels() {
 		m, ok := models[key]
 		if !ok || m.Binary != dm.Binary || len(dm.PromptArgs) == 0 || len(m.PromptArgs) > 0 {
 			continue
@@ -316,52 +317,58 @@ func (c *Config) ResolveModel(model string) string {
 	return "claude"
 }
 
-func (r *Repo) RunStartup(worktreePath, worktreeName string) error {
-	if r.StartupScript == "" {
-		return nil
+// Model returns the models entry for key, or an error naming the config
+// section to add it to.
+func (c *Config) Model(key string) (Model, error) {
+	m, ok := c.Models[key]
+	if !ok {
+		return Model{}, fmt.Errorf("unknown model %q (add it under 'models:' in config)", key)
 	}
-	return runScript(r.StartupScript, r.LocalPath, worktreePath, worktreeName)
+	return m, nil
 }
 
-func (r *Repo) RunCleanup(worktreePath, worktreeName string) error {
-	if r.CleanupScript == "" {
-		return nil
-	}
-	return runScript(r.CleanupScript, r.LocalPath, worktreePath, worktreeName)
-}
-
-func (r *Repo) RunCopyFiles(worktreePath string) error {
-	repoRoot := filepath.Clean(r.LocalPath) + string(filepath.Separator)
-	for _, pattern := range r.CopyFiles {
+// CopyFiles copies each pattern (a file or directory relative to srcDir) into
+// the same relative place under dstDir. It is how gitignored local files —
+// credentials in a .env, mostly — reach a fresh worktree from the checkout
+// they were put in by hand.
+//
+// A pattern whose source does not exist is returned in missing rather than
+// failing the copy: a worktree without its .env is still a worktree, and the
+// caller says so. A pattern that is absolute or escapes srcDir is an error.
+func CopyFiles(srcDir, dstDir string, patterns []string) (missing []string, err error) {
+	root := filepath.Clean(srcDir) + string(filepath.Separator)
+	for _, pattern := range patterns {
 		if filepath.IsAbs(pattern) {
-			return fmt.Errorf("copy_files: absolute paths not allowed: %s", pattern)
+			return missing, fmt.Errorf("copy_files: absolute paths not allowed: %s", pattern)
 		}
-
-		src := filepath.Clean(filepath.Join(r.LocalPath, pattern))
-		if !strings.HasPrefix(src+string(filepath.Separator), repoRoot) && src != filepath.Clean(r.LocalPath) {
-			return fmt.Errorf("copy_files: path escapes repo root: %s", pattern)
+		src := filepath.Clean(filepath.Join(srcDir, pattern))
+		if !strings.HasPrefix(src+string(filepath.Separator), root) && src != filepath.Clean(srcDir) {
+			return missing, fmt.Errorf("copy_files: path escapes repo root: %s", pattern)
 		}
-		dst := filepath.Join(worktreePath, pattern)
+		dst := filepath.Join(dstDir, pattern)
 
-		info, err := os.Stat(src)
-		if err != nil {
-			return fmt.Errorf("copy_files: %s: %w", pattern, err)
+		info, statErr := os.Stat(src)
+		if os.IsNotExist(statErr) {
+			missing = append(missing, pattern)
+			continue
 		}
-
+		if statErr != nil {
+			return missing, fmt.Errorf("copy_files: %s: %w", pattern, statErr)
+		}
 		if info.IsDir() {
 			if err := copyDir(src, dst); err != nil {
-				return fmt.Errorf("copy_files: %s: %w", pattern, err)
+				return missing, fmt.Errorf("copy_files: %s: %w", pattern, err)
 			}
-		} else {
-			if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
-				return fmt.Errorf("copy_files: %s: %w", pattern, err)
-			}
-			if err := copyFile(src, dst, info.Mode()); err != nil {
-				return fmt.Errorf("copy_files: %s: %w", pattern, err)
-			}
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+			return missing, fmt.Errorf("copy_files: %s: %w", pattern, err)
+		}
+		if err := copyFile(src, dst, info.Mode()); err != nil {
+			return missing, fmt.Errorf("copy_files: %s: %w", pattern, err)
 		}
 	}
-	return nil
+	return missing, nil
 }
 
 func copyFile(src, dst string, mode os.FileMode) error {
@@ -387,28 +394,4 @@ func copyDir(src, dst string) error {
 		}
 		return copyFile(path, target, info.Mode())
 	})
-}
-
-func runScript(script, repoPath, worktreePath, worktreeName string) error {
-	script = filepath.Clean(script)
-	if _, err := os.Stat(script); err != nil {
-		return fmt.Errorf("script not found: %s", script)
-	}
-	cmd := exec.CommandContext(context.Background(), "bash", "--", script)
-	cmd.Env = append(os.Environ(),
-		"WORKBENCH_REPO_BASE_PATH="+repoPath,
-		"WORKBENCH_WORKTREE_PATH="+worktreePath,
-		"WORKBENCH_WORKTREE_NAME="+worktreeName,
-	)
-	cmd.Dir = worktreePath
-	var errBuf bytes.Buffer
-	cmd.Stderr = &errBuf
-	if err := cmd.Run(); err != nil {
-		msg := strings.TrimSpace(errBuf.String())
-		if msg != "" {
-			return fmt.Errorf("%s: %s", script, msg)
-		}
-		return fmt.Errorf("%s: %w", script, err)
-	}
-	return nil
 }

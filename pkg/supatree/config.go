@@ -47,6 +47,23 @@ type Config struct {
 	// authoring verb is refused, has no second use for the permission to
 	// withhold. A tree's own `outward` still overrides it.
 	ReviewOutward *bool `yaml:"review_outward,omitempty"`
+	// Models is supatree's own open map of launchable models — the same shape
+	// as workbench's, never read from it. Empty means the built-in defaults.
+	Models map[string]config.Model `yaml:"models,omitempty"`
+	// Repos holds personal per-repo settings, keyed by host/owner/repo. They
+	// are local to this machine and never belong in a shared supatree.yml.
+	Repos map[string]RepoSettings `yaml:"repos,omitempty"`
+
+	// legacy is workbench's config, read only while supatree's own config
+	// does not yet carry what used to come from it (see legacy.go).
+	legacy *config.Config
+}
+
+// RepoSettings are one repo's personal, machine-local settings.
+type RepoSettings struct {
+	// CopyFiles lists gitignored files (a .env, mostly) copied from the base
+	// clone's checkout into every new member worktree of this repo.
+	CopyFiles []string `yaml:"copy_files,omitempty"`
 }
 
 // Stack is a registered stack repo.
@@ -64,7 +81,9 @@ func DefaultConfig() *Config {
 func Load() (*Config, error) {
 	data, err := os.ReadFile(ConfigPath())
 	if os.IsNotExist(err) {
-		return DefaultConfig(), nil
+		c := DefaultConfig()
+		c.legacy = loadLegacy()
+		return c, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("read supatree config: %w", err)
@@ -73,6 +92,10 @@ func Load() (*Config, error) {
 	if err := yaml.Unmarshal(data, &c); err != nil {
 		return nil, fmt.Errorf("parse supatree config: %w", err)
 	}
+	if c.Models != nil {
+		config.BackfillModels(c.Models)
+	}
+	c.legacy = loadLegacy()
 	return &c, nil
 }
 
@@ -111,15 +134,42 @@ func (c *Config) ResolveTreesBase() string {
 }
 
 // ResolveModel returns the effective model key: explicit override, else the
-// registry default, else workbench's default.
-func (c *Config) ResolveModel(override string, wb *config.Config) string {
+// registry default, else "claude".
+func (c *Config) ResolveModel(override string) string {
 	if override != "" {
 		return override
 	}
 	if c.DefaultModel != "" {
 		return c.DefaultModel
 	}
-	return wb.ResolveModel("")
+	if wb := c.legacyModels(); wb != nil && wb.DefaultModel != "" {
+		return wb.DefaultModel
+	}
+	return defaultModelKey
+}
+
+// defaultModelKey is the model used when nothing names one.
+const defaultModelKey = "claude"
+
+// Model returns the models entry for key.
+func (c *Config) Model(key string) (config.Model, error) {
+	m, ok := c.models()[key]
+	if !ok {
+		return config.Model{}, fmt.Errorf("unknown model %q (add it under 'models:' in %s)", key, ConfigPath())
+	}
+	return m, nil
+}
+
+// models is the effective model map: supatree's own, else (for now) the one
+// workbench's config defines, else the built-in defaults.
+func (c *Config) models() map[string]config.Model {
+	if len(c.Models) > 0 {
+		return c.Models
+	}
+	if wb := c.legacyModels(); wb != nil {
+		return wb.Models
+	}
+	return config.DefaultModels()
 }
 
 // ResolveSidebarWidth returns the sidebar width or a default.

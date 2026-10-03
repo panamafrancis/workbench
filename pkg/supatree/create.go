@@ -5,7 +5,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/panamafrancis/workbench/pkg/config"
 	"github.com/panamafrancis/workbench/pkg/git"
 )
 
@@ -27,7 +26,7 @@ type CreateOptions struct {
 // <trees-base>/<name> on branch st/<name>, then creates one member worktree per
 // repo listed in the stack's supatree.yml. On failure it rolls back everything
 // it created unless KeepPartial is set.
-func New(c *Config, wb *config.Config, opts CreateOptions) (*Instance, *SyncReport, error) {
+func New(c *Config, opts CreateOptions) (*Instance, *SyncReport, error) {
 	stack, err := resolveStack(c, opts.Stack)
 	if err != nil {
 		return nil, nil, err
@@ -35,11 +34,11 @@ func New(c *Config, wb *config.Config, opts CreateOptions) (*Instance, *SyncRepo
 
 	name := opts.Name
 	if name == "" {
-		name, err = git.GenerateName(existingNames(c, wb))
+		name, err = git.GenerateName(Names(c))
 		if err != nil {
 			return nil, nil, err
 		}
-	} else if err := git.ValidateName(name, existingNames(c, wb)); err != nil {
+	} else if err := git.ValidateName(name, Names(c)); err != nil {
 		return nil, nil, err
 	}
 
@@ -53,15 +52,15 @@ func New(c *Config, wb *config.Config, opts CreateOptions) (*Instance, *SyncRepo
 		return nil, nil, fmt.Errorf("create supatree worktree: %w", err)
 	}
 
-	inst, report, err := finishCreate(c, wb, stack, root, name, opts)
+	inst, report, err := finishCreate(c, stack, root, name, opts)
 	if err != nil && !opts.KeepPartial {
-		rollback(stack.Path, root, name, wb)
+		rollback(c, stack.Path, root, name)
 		return nil, nil, err
 	}
 	return inst, report, err
 }
 
-func finishCreate(c *Config, wb *config.Config, stack *Stack, root, name string, opts CreateOptions) (*Instance, *SyncReport, error) {
+func finishCreate(c *Config, stack *Stack, root, name string, opts CreateOptions) (*Instance, *SyncReport, error) {
 	spec, err := LoadSpec(root)
 	if err != nil {
 		return nil, nil, err
@@ -74,7 +73,7 @@ func finishCreate(c *Config, wb *config.Config, stack *Stack, root, name string,
 		Name:      name,
 		Slug:      name,
 		Stack:     stack.Alias,
-		Model:     resolveModel(opts.Model, spec, c, wb),
+		Model:     resolveModel(opts.Model, spec, c),
 		CreatedAt: now,
 		Intent:    opts.Intent,
 		Review:    opts.Review,
@@ -86,7 +85,7 @@ func finishCreate(c *Config, wb *config.Config, stack *Stack, root, name string,
 		return nil, nil, err
 	}
 
-	report, err := Sync(root, wb, false)
+	report, err := Sync(c, root, false)
 	if err != nil {
 		return nil, report, err
 	}
@@ -99,14 +98,14 @@ func finishCreate(c *Config, wb *config.Config, stack *Stack, root, name string,
 
 // rollback tears down a partially-created supatree (member worktrees, then the
 // meta-worktree and its branch, then any leftover directory).
-func rollback(stackPath, root, name string, wb *config.Config) {
+func rollback(c *Config, stackPath, root, name string) {
 	if inst, err := LoadInstance(root); err == nil {
 		for i := len(inst.Members) - 1; i >= 0; i-- {
 			m := inst.Members[i]
 			if !m.Exists {
 				continue
 			}
-			removeMember(root, m.Alias, m.Branch, wb, &SyncReport{})
+			removeMember(c, root, m.Alias, m.Branch, &SyncReport{})
 		}
 	}
 	_ = git.RemoveWorktree(stackPath, root)
@@ -131,19 +130,12 @@ func resolveStack(c *Config, alias string) (*Stack, error) {
 	return s, nil
 }
 
-func resolveModel(override string, spec *Spec, c *Config, wb *config.Config) string {
+func resolveModel(override string, spec *Spec, c *Config) string {
 	if override != "" {
 		return override
 	}
 	if spec.Model != "" {
 		return spec.Model
 	}
-	return c.ResolveModel("", wb)
-}
-
-// existingNames is the union of supatree names and workbench worktree names, so
-// a generated city name never collides across the two tools.
-func existingNames(c *Config, wb *config.Config) []string {
-	names := Names(c)
-	return append(names, wb.AllWorktreeNames()...)
+	return c.ResolveModel("")
 }

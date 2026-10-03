@@ -31,7 +31,7 @@ var reviewCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		inst, report, err := supatree.NewReview(stCfg, wbCfg, supatree.ReviewOptions{
+		inst, report, err := supatree.NewReview(stCfg, supatree.ReviewOptions{
 			Stack:  reviewStack,
 			Name:   reviewName,
 			Model:  reviewModel,
@@ -77,7 +77,7 @@ var reviewRefreshCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		results, err := supatree.RefreshReview(stCfg, wbCfg, name)
+		results, err := supatree.RefreshReview(stCfg, name)
 		if err != nil {
 			return err
 		}
@@ -128,7 +128,7 @@ var reviewForkCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		results, err := supatree.ForkReview(stCfg, wbCfg, name)
+		results, err := supatree.ForkReview(stCfg, name)
 		if err != nil {
 			return err
 		}

@@ -39,7 +39,7 @@ var rmCmd = &cobra.Command{
 				return nil
 			}
 		}
-		res, err := supatree.Remove(stCfg, wbCfg, name, supatree.RemoveOptions{Force: rmForce, Push: rmPush})
+		res, err := supatree.Remove(stCfg, name, supatree.RemoveOptions{Force: rmForce, Push: rmPush})
 		if err != nil {
 			return err
 		}

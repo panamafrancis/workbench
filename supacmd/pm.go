@@ -28,7 +28,7 @@ var pmCmd = &cobra.Command{
 		// live PM tab rather than opening a second one, and PMTab is reserved so
 		// no supatree can collide with it. A lock would be theatre — nothing in
 		// this process stays alive to hold one on the agent's behalf.
-		_, err := supatree.OpenPM(stCfg, wbCfg, supatreeWorkspace(), stCfg.ResolveSidebarWidth())
+		_, err := supatree.OpenPM(stCfg, supatreeWorkspace(), stCfg.ResolveSidebarWidth())
 		return err
 	},
 }

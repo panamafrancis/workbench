@@ -3,7 +3,6 @@ package cmd
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -97,8 +96,7 @@ func ensureConfig() error {
 }
 
 func offerNonoProfile() error {
-	home, _ := os.UserHomeDir()
-	profilePath := filepath.Join(home, ".config", "nono", "profiles", "claude-code-local.json")
+	profilePath := setup.NonoProfilePath(localProfileName)
 	if _, err := os.Stat(profilePath); err == nil {
 		fmt.Printf("nono profile exists at %s\n", profilePath)
 		return nil
@@ -202,11 +200,12 @@ func offerMCPRegistration() error {
 	return nil
 }
 
-func generateNonoProfile() error {
-	home, _ := os.UserHomeDir()
-	profileDir := filepath.Join(home, ".config", "nono", "profiles")
-	profilePath := filepath.Join(profileDir, "claude-code-local.json")
+// localProfileName is the nono profile workbench init writes: claude-code plus
+// workbench's own dirs, the registered repos and the toolchain.
+const localProfileName = "claude-code-local"
 
+func generateNonoProfile() error {
+	profilePath := setup.NonoProfilePath(localProfileName)
 	if _, err := os.Stat(profilePath); err == nil {
 		fmt.Printf("Profile already exists at %s\n", profilePath)
 		if initNonInteractive || !promptYN("Overwrite?", false) {
@@ -214,100 +213,23 @@ func generateNonoProfile() error {
 		}
 	}
 
-	sshKeys := globSSHPublicKeys(home)
-
-	repoDirs := []string{}
+	allow := []string{config.ConfigDir()}
 	for _, r := range cfg.Repos {
-		parent := filepath.Dir(r.LocalPath)
-		repoDirs = append(repoDirs, parent)
+		allow = append(allow, filepath.Dir(r.LocalPath))
 	}
+	p := setup.Profile{
+		Name:        localProfileName,
+		Description: "claude-code with project repos, toolchain, and SSH agent",
+		Extends:     []string{"claude-code"},
+		Allow:       allow,
+	}.WithToolchain()
 
-	goPath := ""
-	if out, err := exec.CommandContext(context.Background(), "go", "env", "GOPATH").Output(); err == nil {
-		goPath = strings.TrimSpace(string(out))
-	}
-
-	allowDirs := []string{filepath.Join(home, ".workbench")}
-	allowDirs = append(allowDirs, repoDirs...)
-	if goPath != "" {
-		allowDirs = append(allowDirs,
-			filepath.Join(goPath, "pkg"),
-			filepath.Join(goPath, "bin"),
-			filepath.Join(goPath, "src"),
-		)
-	}
-	ghConfigDir := filepath.Join(home, ".config", "gh")
-	if _, err := os.Stat(ghConfigDir); err == nil {
-		allowDirs = append(allowDirs, ghConfigDir)
-	}
-
-	readFiles := make([]string, 0, 1+len(sshKeys))
-	readFiles = append(readFiles, filepath.Join(home, ".ssh", "config"))
-	readFiles = append(readFiles, sshKeys...)
-
-	allowFiles := []string{filepath.Join(home, ".ssh", "known_hosts")}
-	bypassFiles := append([]string{
-		filepath.Join(home, ".ssh", "config"),
-		filepath.Join(home, ".ssh", "known_hosts"),
-	}, sshKeys...)
-
-	profile := buildProfileJSON(allowDirs, readFiles, allowFiles, bypassFiles)
-
-	if err := os.MkdirAll(profileDir, 0755); err != nil {
-		return err
-	}
-	if err := os.WriteFile(profilePath, []byte(profile), 0644); err != nil {
-		return err
-	}
-	fmt.Printf("Wrote nono profile to %s\n", profilePath)
-	return nil
-}
-
-func globSSHPublicKeys(home string) []string {
-	pattern := filepath.Join(home, ".ssh", "*.pub")
-	matches, _ := filepath.Glob(pattern)
-	return matches
-}
-
-func buildProfileJSON(allowDirs, readFiles, allowFiles, bypassFiles []string) string {
-	profile := nonoProfile{
-		Extends: []string{"claude-code"},
-		Meta: nonoMeta{
-			Name:        "claude-code-local",
-			Description: "claude-code with project repos, toolchain, and SSH agent",
-		},
-		Filesystem: nonoFilesystem{
-			Allow:             allowDirs,
-			ReadFile:          readFiles,
-			AllowFile:         allowFiles,
-			UnixSocketSubtree: []string{"/private/tmp"},
-			BypassProtection:  bypassFiles,
-		},
-	}
-	data, err := json.MarshalIndent(profile, "", "  ")
+	path, err := p.Write()
 	if err != nil {
-		return "{}"
+		return err
 	}
-	return string(data) + "\n"
-}
-
-type nonoProfile struct {
-	Extends    []string       `json:"extends"`
-	Meta       nonoMeta       `json:"meta"`
-	Filesystem nonoFilesystem `json:"filesystem"`
-}
-
-type nonoMeta struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-}
-
-type nonoFilesystem struct {
-	Allow             []string `json:"allow"`
-	ReadFile          []string `json:"read_file"`
-	AllowFile         []string `json:"allow_file"`
-	UnixSocketSubtree []string `json:"unix_socket_subtree"`
-	BypassProtection  []string `json:"bypass_protection"`
+	fmt.Printf("Wrote nono profile to %s\n", path)
+	return nil
 }
 
 func promptDefault(label, defaultVal string) string {

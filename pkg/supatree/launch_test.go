@@ -96,7 +96,7 @@ func TestStartAgentBriefsThenQueues(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("ZELLIJ_SESSION_NAME", "st-main")
 	root := t.TempDir()
-	inst := &Instance{Name: treeA, Root: root, Model: "claude"}
+	inst := &Instance{Name: treeA, Root: root, Model: defaultModelKey}
 
 	// Nothing to do and nothing waiting is an error, not an idle launch.
 	if _, err := startAgent(inst, "", ""); err == nil {
@@ -123,7 +123,7 @@ func TestStartAgentBriefsThenQueues(t *testing.T) {
 func TestStartAgentDefaultsReviewBrief(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	root := t.TempDir()
-	inst := &Instance{Name: "hobart", Root: root, Model: "claude", Mode: ModeReviewing, Members: []Member{
+	inst := &Instance{Name: "hobart", Root: root, Model: defaultModelKey, Mode: ModeReviewing, Members: []Member{
 		{Alias: "api", Review: &ReviewRef{Repo: "o/api", Number: 12, URL: "https://github.com/o/api/pull/12"}},
 		{Alias: "docs"},
 	}}

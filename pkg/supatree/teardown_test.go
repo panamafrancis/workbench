@@ -38,7 +38,7 @@ func branchExists(t *testing.T, repo, branch string) bool {
 
 // setupMember checks a member worktree out of repo on branch, and returns the
 // tree root it lives under.
-func setupMember(t *testing.T, repo, alias, branch string) (root string, wb *config.Config) {
+func setupMember(t *testing.T, repo, alias, branch string) (root string, c *Config) {
 	t.Helper()
 	root = t.TempDir()
 	path := MemberPath(root, alias)
@@ -46,7 +46,17 @@ func setupMember(t *testing.T, repo, alias, branch string) (root string, wb *con
 		t.Fatal(err)
 	}
 	run(t, repo, "worktree", "add", "-q", "-b", branch, path, "main")
-	return root, &config.Config{Repos: []config.Repo{{Alias: alias, LocalPath: repo}}}
+	return root, withClone(&Config{}, alias, repo)
+}
+
+// withClone points a member alias at a base clone, the way a resolved repo
+// would, and returns c.
+func withClone(c *Config, alias, clone string) *Config {
+	if c.legacy == nil {
+		c.legacy = &config.Config{}
+	}
+	c.legacy.Repos = append(c.legacy.Repos, config.Repo{Alias: alias, LocalPath: clone})
+	return c
 }
 
 // Teardown deletes the branch it created. That is the ordinary path and must
@@ -54,10 +64,10 @@ func setupMember(t *testing.T, repo, alias, branch string) (root string, wb *con
 func TestRemoveMemberDeletesItsOwnBranch(t *testing.T) {
 	repo := originRepo(t)
 	const branch = "st/canberra/keystone"
-	root, wb := setupMember(t, repo, aliasKeystone, branch)
+	root, c := setupMember(t, repo, aliasKeystone, branch)
 
 	report := &SyncReport{}
-	removeMember(root, aliasKeystone, branch, wb, report)
+	removeMember(c, root, aliasKeystone, branch, report)
 
 	if branchExists(t, repo, branch) {
 		t.Errorf("branch %q survived teardown; the tree created it and owns it", branch)
@@ -73,10 +83,10 @@ func TestRemoveMemberDeletesItsOwnBranch(t *testing.T) {
 func TestRemoveMemberLeavesAForeignBranchAlone(t *testing.T) {
 	repo := originRepo(t)
 	const foreign = "feat/refunds-baseline-context"
-	root, wb := setupMember(t, repo, aliasKeystone, foreign)
+	root, c := setupMember(t, repo, aliasKeystone, foreign)
 
 	report := &SyncReport{}
-	removeMember(root, aliasKeystone, "st/canberra/keystone", wb, report)
+	removeMember(c, root, aliasKeystone, "st/canberra/keystone", report)
 
 	if !branchExists(t, repo, foreign) {
 		t.Fatalf("teardown deleted %q — a branch this tree did not create", foreign)
@@ -96,10 +106,10 @@ func TestRemoveMemberStillReapsItsOwnBranchWhenMemberIsForeign(t *testing.T) {
 	repo := originRepo(t)
 	const own = "st/canberra/keystone"
 	const foreign = "feat/refunds-baseline-context"
-	root, wb := setupMember(t, repo, aliasKeystone, own)
+	root, c := setupMember(t, repo, aliasKeystone, own)
 	run(t, MemberPath(root, aliasKeystone), "checkout", "-q", "-b", foreign)
 
-	removeMember(root, aliasKeystone, own, wb, &SyncReport{})
+	removeMember(c, root, aliasKeystone, own, &SyncReport{})
 
 	if branchExists(t, repo, own) {
 		t.Errorf("branch %q leaked: the tree created it and should reap it", own)
@@ -149,9 +159,8 @@ func TestForkReviewConvertsAndRecordsBase(t *testing.T) {
 	if err := os.Rename(root, named); err != nil {
 		t.Fatal(err)
 	}
-	wb := &config.Config{Repos: []config.Repo{{Alias: aliasKeystone, LocalPath: repo}}}
 
-	results, err := ForkReview(cfg, wb, treeA)
+	results, err := ForkReview(cfg, treeA)
 	if err != nil {
 		t.Fatalf("fork: %v", err)
 	}
@@ -194,8 +203,7 @@ func TestForkReviewRefusesAuthoringTree(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := &Config{TreesBase: filepath.Dir(named), Stacks: []Stack{{Alias: "s", Path: repo}}}
-	wb := &config.Config{Repos: []config.Repo{{Alias: aliasKeystone, LocalPath: repo}}}
-	if _, err := ForkReview(cfg, wb, "berlin"); err == nil {
+	if _, err := ForkReview(cfg, "berlin"); err == nil {
 		t.Error("forking an authoring tree was allowed")
 	}
 }
@@ -218,7 +226,6 @@ func TestForkedMembersStopKeyingOnTheReviewedPR(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := &Config{TreesBase: filepath.Dir(named), Stacks: []Stack{{Alias: "s", Path: repo}}}
-	wb := &config.Config{Repos: []config.Repo{{Alias: aliasKeystone, LocalPath: repo}}}
 
 	before, err := LoadInstance(named)
 	if err != nil {
@@ -228,7 +235,7 @@ func TestForkedMembersStopKeyingOnTheReviewedPR(t *testing.T) {
 		t.Fatalf("while reviewing, CacheKey = %q, want the PR-scoped key", got)
 	}
 
-	if _, err := ForkReview(cfg, wb, treeA); err != nil {
+	if _, err := ForkReview(cfg, treeA); err != nil {
 		t.Fatalf("fork: %v", err)
 	}
 

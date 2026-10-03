@@ -331,7 +331,6 @@ func (m *Model) validateTreeName(name string) error {
 	for _, inst := range m.insts {
 		existing = append(existing, inst.Name)
 	}
-	existing = append(existing, m.wbCfg.AllWorktreeNames()...)
 	return git.ValidateName(name, existing)
 }
 
@@ -416,7 +415,7 @@ func (m *Model) openAgent(tree, agent string) tea.Cmd {
 		if inst == nil {
 			return actionDoneMsg{err: fmt.Errorf("supatree %q gone", tree)}
 		}
-		_, err := supatree.OpenRootAgent(inst, m.wbCfg, m.ws, m.stCfg.ResolveSidebarWidth(), agent, "", nil)
+		_, err := supatree.OpenRootAgent(inst, m.stCfg, m.ws, m.stCfg.ResolveSidebarWidth(), agent, "", nil)
 		// Going to a supatree is what "I have seen this" means, so it clears the
 		// attention marker. Doing it here rather than per render keeps the
 		// per-tab sidebars off the ui.yml lock. Only on success: an open that
@@ -434,7 +433,7 @@ func (m *Model) openMember(tree, alias string) tea.Cmd {
 		if inst == nil {
 			return actionDoneMsg{err: fmt.Errorf("supatree %q gone", tree)}
 		}
-		_, err := supatree.OpenMemberAgent(inst, m.wbCfg, m.ws, m.stCfg.ResolveSidebarWidth(), alias, "")
+		_, err := supatree.OpenMemberAgent(inst, m.stCfg, m.ws, m.stCfg.ResolveSidebarWidth(), alias, "")
 		return actionDoneMsg{msg: "opened " + supatree.TabName(tree, alias), err: err}
 	}
 }
@@ -458,7 +457,7 @@ func (m *Model) syncTree(tree string) tea.Cmd {
 		if inst == nil {
 			return actionDoneMsg{err: fmt.Errorf("supatree %q gone", tree)}
 		}
-		report, err := supatree.Sync(inst.Root, m.wbCfg, false)
+		report, err := supatree.Sync(m.stCfg, inst.Root, false)
 		if err != nil {
 			return actionDoneMsg{err: err}
 		}
@@ -468,7 +467,7 @@ func (m *Model) syncTree(tree string) tea.Cmd {
 
 func (m *Model) removeTree(tree string) tea.Cmd {
 	return func() tea.Msg {
-		res, err := supatree.Remove(m.stCfg, m.wbCfg, tree, supatree.RemoveOptions{Force: true})
+		res, err := supatree.Remove(m.stCfg, tree, supatree.RemoveOptions{Force: true})
 		if err != nil {
 			return actionDoneMsg{err: err}
 		}
@@ -559,12 +558,12 @@ func handoffText(r row) string {
 // sandboxed agent rather than a command pane, so it goes through OpenOrFocusTab
 // with its own grants rather than OpenOrFocusCommandTab.
 func (m *Model) openPM() tea.Cmd {
-	stCfg, wbCfg, ws, width := m.stCfg, m.wbCfg, m.ws, m.stCfg.ResolveSidebarWidth()
+	stCfg, ws, width := m.stCfg, m.ws, m.stCfg.ResolveSidebarWidth()
 	return func() tea.Msg {
 		if !zellij.IsInZellij() {
 			return actionDoneMsg{msg: "not inside zellij — run: supatree pm"}
 		}
-		if _, err := supatree.OpenPM(stCfg, wbCfg, ws, width); err != nil {
+		if _, err := supatree.OpenPM(stCfg, ws, width); err != nil {
 			return actionDoneMsg{err: err}
 		}
 		return actionDoneMsg{msg: "PM"}
@@ -573,7 +572,7 @@ func (m *Model) openPM() tea.Cmd {
 
 func (m *Model) newTree(stack, name string) tea.Cmd {
 	return func() tea.Msg {
-		inst, _, err := supatree.New(m.stCfg, m.wbCfg, supatree.CreateOptions{Stack: stack, Name: name})
+		inst, _, err := supatree.New(m.stCfg, supatree.CreateOptions{Stack: stack, Name: name})
 		if err != nil {
 			return actionDoneMsg{err: err}
 		}

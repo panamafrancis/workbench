@@ -61,9 +61,10 @@ pkg/
     sync.go             # Sync — one fetch round: polls, fallback lookups, open-PR detail refresh
     create.go           # RecordCreatedPR — cache a PR straight from `gh pr create` output
   sandbox/
-    nono.go             # BuildNonoArgs(path, modelKey, cfg) → []string
+    nono.go             # BuildNonoArgs(path, config.Model) → []string
   setup/
     checks.go           # RunChecks — shared check engine for init/doctor
+    profile.go          # Profile — nono profile generator shared by both init commands
     update.go           # CheckForUpdate — GitHub releases API with 24h cache
   tui/
     model.go            # Root Bubble Tea model — modes, update, view, footer, help
@@ -158,7 +159,9 @@ Note that `zellij action dump-layout` reports a tab as *empty* once its `close_o
 
 ## nono sandbox
 
-`BuildNonoArgs` returns `["run", "--profile", <profile>, "--allow", <worktreePath>, "--", <binary>, <args...>]`. The profile and binary come from the model config entry — no hardcoded mapping.
+`BuildNonoArgs` returns `["run", "--profile", <profile>, "--allow", <worktreePath>, "--", <binary>, <args...>]`. The profile and binary come from the model config entry — no hardcoded mapping. Every `pkg/sandbox` builder takes a resolved `config.Model`, never a whole `Config`: each tool resolves the key against its own config (`config.Config.Model`, `supatree.Config.Model`), so the shared package never knows whose config a model came from. The built-in entries live in `config.DefaultModels()`, which both tools seed from.
+
+`workbench init` writes the `claude-code-local` profile through `setup.Profile` (`pkg/setup/profile.go`), which also adds the toolchain grants (`WithToolchain`). Each tool writes only its own profile.
 
 ## Adding features
 
@@ -166,7 +169,7 @@ Note that `zellij action dump-layout` reports a tab as *empty* once its `close_o
 - **New CLI command**: add file under `cmd/`, wire into `rootCmd` in `cmd/root.go` via `rootCmd.AddCommand(...)` in `init()`.
 - **New MCP tool**: `pkg/mcp` is a reusable framework — `rpc.go` has the JSON-RPC `Server{Name,Version,Tools,Prompts,Gate}` + stdio loop; `workbench.go` builds the workbench tool set. Add workbench tools there; supatree tools live in `pkg/supatree/mcp.go`. Input schemas are built with the shared helpers in `schema.go` (`ObjectSchema`/`StringProp`/`BoolProp`/`EnumProp`/`EmptyObject`) — both tool sets use them, so don't hand-roll the map literals. Tool handlers have signature `func(args map[string]any) (text string, isError bool)`.
 - **New config field**: add to structs in `pkg/config/config.go`, update `DefaultConfig()` if it needs a default.
-- **Worktree creation hooks**: `copy_files` runs first (copies gitignored files from repo), then `startup_script`.
+- **Worktree creation**: `config.CopyFiles(repo.LocalPath, wt, repo.CopyFiles)` copies gitignored files (a `.env`, mostly) from the clone's checkout; a missing file is returned, warned about, and skipped. There are no per-repo startup or cleanup hooks.
 - **Change what opens in a new tab**: edit the KDL template in `pkg/zellij/layout.go`.
 
 **Always update `README.md`** when adding or changing user-facing behavior: new config fields, new CLI flags, new keybindings, changed lifecycle behavior, or nono sandbox requirements.
@@ -175,7 +178,7 @@ Note that `zellij action dump-layout` reports a tab as *empty* once its `close_o
 
 `supatree` manages a set of worktrees — one per repo — for a single cross-repo issue. State lives under `~/.supatree/`.
 
-**Model.** A *stack* is a git repo (`supatree scaffold`) holding `supatree.yml` (member repo aliases + `deps` edges), `AGENTS.md`, and `scripts/`. A *supatree* is a worktree of that stack repo at `~/.supatree/trees/<name>/` on branch `st/<name>`, with each member repo checked out under `repos/<alias>/` on branch `st/<slug>/<alias>` (slug starts as the city name; `rename-branch` changes it). Member repo *definitions* come from workbench's `~/.workbench/config.yml` (resolved by alias) — supatree never duplicates them.
+**Model.** A *stack* is a git repo (`supatree scaffold`) holding `supatree.yml` (member repo aliases + `deps` edges), `AGENTS.md`, and `scripts/`. A *supatree* is a worktree of that stack repo at `~/.supatree/trees/<name>/` on branch `st/<name>`, with each member repo checked out under `repos/<alias>/` on branch `st/<slug>/<alias>` (slug starts as the city name; `rename-branch` changes it). Supatree's own `config.yml` holds its `models` (seeded from `config.DefaultModels()`) and per-repo personal `repos` settings (`copy_files`, keyed `host/owner/repo`); `Config.Model`/`ResolveModel` and `Config.baseClone(alias)` are the only ways in. Until `supatree migrate` exists, `legacy.go` is the one file that reads workbench's config, as a read-only fallback for member base clones and for models when supatree's own config has none — nothing else in supatree may import workbench's config loader.
 
 **Discovery.** The registry (`~/.supatree/config.yml`) lists only stacks + defaults; `~/.supatree/ui.yml` holds the sidebar's fold state (`uistate.go`). Live supatrees are discovered by scanning the trees base for `<name>/.supatree/meta.yml` (`supatree.List`). Per-tree state: `.supatree/meta.yml` (name/slug/stack/model), `.supatree/agents.yml` (named agents + session IDs), `.supatree/info.md` (generated). All three are gitignored, as is `repos/`.
 
@@ -239,7 +242,7 @@ It runs outside nono (it needs `osascript`) and therefore outside any zellij ses
 
 Two levels fold: `space` shuts the innermost section the cursor is in (the repositories list on a repo or section row, the supatree anywhere else), `h` shuts the repositories section first and only steps out to the supatree once it is already shut. The repositories header is its own `rowRepos` kind — selectable, unlike the `agents` subheader — and carries `prCounts`, one coloured glyph-and-count per PR status across the members. That badge is lifted onto the supatree row only while the whole supatree is folded, so it is never printed twice. `prGlyph`/`prStyle` are the single mapping from `github.PRStatus` to symbol and colour, shared with the per-member `prIcon`.
 
-**The footer is not a log.** `updateNormal` clears `m.err`/`m.msg` on every key, mirroring the workbench sidebar: an `actionDoneMsg` error otherwise outlived the moment it described (a rejected supatree name sat under the next create prompt). The new-tree prompt validates as you type — `validateTreeName` checks `git.ValidateName` against the names already in `m.insts` plus `wbCfg.AllWorktreeNames()` rather than re-scanning the trees base, since it runs per keystroke, and `enter` on an invalid name keeps the prompt open instead of firing a create that would only fail. `supatree.New` still re-validates against disk.
+**The footer is not a log.** `updateNormal` clears `m.err`/`m.msg` on every key, mirroring the workbench sidebar: an `actionDoneMsg` error otherwise outlived the moment it described (a rejected supatree name sat under the next create prompt). The new-tree prompt validates as you type — `validateTreeName` checks `git.ValidateName` against the names already in `m.insts` rather than re-scanning the trees base, since it runs per keystroke, and `enter` on an invalid name keeps the prompt open instead of firing a create that would only fail. `supatree.New` still re-validates against disk.
 
 **Enter is row-kind contextual.** The row sections carry different meanings and `openSelected` respects that: an agent row is a *process* (its `●`/`○` is liveness) so `enter` opens or focuses its tab via `OpenRootAgent`; a member row is a *place* reporting state (branch, dirty, PR) so `enter` calls `OpenMemberShell` — a plain `zellij.NewPane` at `repos/<alias>/`, outside nono because it is the user's own shell, and a pane rather than a tab because `<tree>:<alias>` is already the member *agent*'s tab name and a disposable shell needs no identity there. The member-scoped agent (`OpenMemberAgent`, nono allowing only that repo) moved to `a`, which reads as "give me an agent here" on every row — the tree-level name prompt on tree/agent rows, the repo-scoped agent on a member row. Don't collapse these back onto one key: the footer hint (`enter shell` / `enter open`, built from `m.selected()`) is what makes the split discoverable, so a new row kind needs its hint case too.
 
@@ -253,7 +256,7 @@ Two levels fold: `space` shuts the innermost section the cursor is in (the repos
 
 **Rename (`rename.go`).** `RenameBranchSlug` is phased so the tree is never half-renamed: every local `git branch -m` runs first and a failure part-way rolls the earlier ones back (`meta.Slug` derives `Member.Branch`, so a member left on the other slug falls outside its own tree and loses its PR and status); only then are meta + info written; only then does `--push` run, collecting per-member failures rather than aborting, since the rename has already been committed to meta.
 
-**Conventions.** Reuse workbench packages — never fork them. `git.CreateWorktree`/`RemoveWorktree`/`RenameBranch`/`CommitsAhead`, `repo.RunCopyFiles`/`RunStartup`/`RunCleanup`, `github.Sync`/`Cache`, `sandbox.BuildNonoArgs`/`BuildAgentNonoArgs`, `config.WithFileLock`. `make ci` + both e2e scripts must stay green.
+**Conventions.** Reuse workbench packages — never fork them. `git.CreateWorktree`/`RemoveWorktree`/`RenameBranch`/`CommitsAhead`, `config.CopyFiles`, `github.Sync`/`Cache`, `sandbox.BuildNonoArgs`/`BuildAgentNonoArgs`, `config.WithFileLock`. `make ci` + both e2e scripts must stay green.
 
 **e2e scripts: never pipe into `grep -q`.** Under `set -o pipefail`, `-q` exits on the first match, the Go process writing to the pipe dies of SIGPIPE (exit 141), and the pipeline fails even though the assertion passed. It fires on roughly 3% of calls, which reads as flakiness rather than a bug. Use plain `grep … >/dev/null`, which consumes its input.
 

@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/panamafrancis/workbench/pkg/config"
 	"github.com/panamafrancis/workbench/pkg/git"
 	"github.com/panamafrancis/workbench/pkg/github"
 	"github.com/panamafrancis/workbench/pkg/mcp"
@@ -294,28 +293,24 @@ func MCPServer(version string) *mcp.Server {
 
 // currentInstance resolves the supatree the MCP server is running inside, from
 // SUPATREE_ROOT (preferred) or SUPATREE_NAME via the registry.
-func currentInstance() (*Config, *config.Config, *Instance, error) {
+func currentInstance() (*Config, *Instance, error) {
 	c, err := Load()
 	if err != nil {
-		return nil, nil, nil, err
-	}
-	wb, err := config.Load()
-	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, err
 	}
 	if root := os.Getenv("SUPATREE_ROOT"); root != "" {
 		inst, err := LoadInstance(root)
-		return c, wb, inst, err
+		return c, inst, err
 	}
 	if name := os.Getenv("SUPATREE_NAME"); name != "" {
 		inst, err := Get(c, name)
-		return c, wb, inst, err
+		return c, inst, err
 	}
-	return nil, nil, nil, fmt.Errorf("cannot determine current supatree (SUPATREE_ROOT/SUPATREE_NAME unset)")
+	return nil, nil, fmt.Errorf("cannot determine current supatree (SUPATREE_ROOT/SUPATREE_NAME unset)")
 }
 
 func handleInfo(map[string]any) (string, bool) {
-	_, _, inst, err := currentInstance()
+	_, inst, err := currentInstance()
 	if err != nil {
 		return err.Error(), true
 	}
@@ -333,13 +328,12 @@ func handleInfo(map[string]any) (string, bool) {
 }
 
 func handleSync(args map[string]any) (string, bool) {
-	c, wb, inst, err := currentInstance()
+	c, inst, err := currentInstance()
 	if err != nil {
 		return err.Error(), true
 	}
-	_ = c
 	prune, _ := args["prune"].(bool)
-	report, err := Sync(inst.Root, wb, prune)
+	report, err := Sync(c, inst.Root, prune)
 	if err != nil {
 		return err.Error(), true
 	}
@@ -360,7 +354,7 @@ func handleSync(args map[string]any) (string, bool) {
 }
 
 func handleRenameBranches(args map[string]any) (string, bool) {
-	c, wb, inst, err := currentInstance()
+	c, inst, err := currentInstance()
 	if err != nil {
 		return err.Error(), true
 	}
@@ -372,14 +366,14 @@ func handleRenameBranches(args map[string]any) (string, bool) {
 		return "new_slug is required", true
 	}
 	push, _ := args["push"].(bool)
-	if err := RenameBranchSlug(c, wb, inst.Name, newSlug, push); err != nil {
+	if err := RenameBranchSlug(c, inst.Name, newSlug, push); err != nil {
 		return err.Error(), true
 	}
 	return fmt.Sprintf("renamed member branches to st/%s/<alias>", newSlug), false
 }
 
 func handleCreatePR(args map[string]any) (string, bool) {
-	_, _, inst, err := currentInstance()
+	_, inst, err := currentInstance()
 	if err != nil {
 		return err.Error(), true
 	}
@@ -412,7 +406,7 @@ func handleCreatePR(args map[string]any) (string, bool) {
 }
 
 func handleCreatePRs(args map[string]any) (string, bool) {
-	_, _, inst, err := currentInstance()
+	_, inst, err := currentInstance()
 	if err != nil {
 		return err.Error(), true
 	}
@@ -446,7 +440,7 @@ func handleCreatePRs(args map[string]any) (string, bool) {
 }
 
 func handleReviewPost(args map[string]any) (string, bool) {
-	_, _, inst, err := currentInstance()
+	_, inst, err := currentInstance()
 	if err != nil {
 		return err.Error(), true
 	}
@@ -533,14 +527,14 @@ func outwardDenied(inst *Instance, action string) string {
 }
 
 func handleReviewRefresh(map[string]any) (string, bool) {
-	c, wb, inst, err := currentInstance()
+	c, inst, err := currentInstance()
 	if err != nil {
 		return err.Error(), true
 	}
 	if !inst.Reviewing() {
 		return fmt.Sprintf("%s is not a review tree — nothing to refresh.", inst.Name), true
 	}
-	results, err := RefreshReview(c, wb, inst.Name)
+	results, err := RefreshReview(c, inst.Name)
 	if err != nil {
 		return err.Error(), true
 	}
@@ -610,7 +604,7 @@ func syncMembers(cache *github.Cache, members []*Member) (github.SyncReport, err
 }
 
 func handlePRStatus(map[string]any) (string, bool) {
-	_, _, inst, err := currentInstance()
+	_, inst, err := currentInstance()
 	if err != nil {
 		return err.Error(), true
 	}
@@ -1177,10 +1171,6 @@ func handleNewTree(args map[string]any) (string, bool) {
 	if err != nil {
 		return err.Error(), true
 	}
-	wb, err := config.Load()
-	if err != nil {
-		return err.Error(), true
-	}
 	// No tree exists yet to carry a level, which is exactly why the workspace
 	// default has to exist: otherwise the most dangerous verb here would be the
 	// one verb the permission model did not cover.
@@ -1197,7 +1187,7 @@ func handleNewTree(args map[string]any) (string, bool) {
 	start, _ := args["start"].(bool)
 	brief, _ := args["brief"].(string)
 	if prs, _ := args["prs"].(string); strings.TrimSpace(prs) != "" {
-		inst, out, isErr := createReviewTree(cfg, wb, stack, name, intent, prs)
+		inst, out, isErr := createReviewTree(cfg, stack, name, intent, prs)
 		if isErr || !start {
 			return out, isErr
 		}
@@ -1207,7 +1197,7 @@ func handleNewTree(args map[string]any) (string, bool) {
 	// Intent goes in at creation rather than being written back afterwards:
 	// info.md is generated from the meta, so a late intent is an intent missing
 	// from the one file the agent will actually read three weeks later.
-	inst, _, err := New(cfg, wb, CreateOptions{Stack: stack, Name: name, Intent: intent})
+	inst, _, err := New(cfg, CreateOptions{Stack: stack, Name: name, Intent: intent})
 	if err != nil {
 		return err.Error(), true
 	}
@@ -1309,11 +1299,7 @@ func handleRemoveTree(args map[string]any) (string, bool) {
 				inst.Name, sum.Trees[0].State), true
 		}
 	}
-	wb, err := config.Load()
-	if err != nil {
-		return err.Error(), true
-	}
-	res, err := Remove(cfg, wb, inst.Name, RemoveOptions{Force: force})
+	res, err := Remove(cfg, inst.Name, RemoveOptions{Force: force})
 	if err != nil {
 		return err.Error(), true
 	}
@@ -1369,7 +1355,7 @@ func stackPathFor(alias string) (string, error) {
 		return "", err
 	}
 	if alias == "" {
-		_, _, inst, err := currentInstance()
+		_, inst, err := currentInstance()
 		if err != nil {
 			return "", fmt.Errorf("name a stack: %w", err)
 		}
@@ -1431,7 +1417,7 @@ func resolveTree(args map[string]any) (*Instance, error) {
 		_, inst, err := pmTree(name)
 		return inst, err
 	}
-	_, _, inst, err := currentInstance()
+	_, inst, err := currentInstance()
 	if err != nil {
 		if os.Getenv("SUPATREE_PM") == "1" {
 			return nil, fmt.Errorf("name a supatree with `tree` — you are the PM and belong to none")
@@ -1620,12 +1606,12 @@ func foreignNote(t TreeStatus) string {
 
 // createReviewTree is new_tree's review branch: resolve the pull requests, then
 // build the tree around them.
-func createReviewTree(cfg *Config, wb *config.Config, stack, name, intent, prs string) (*Instance, string, bool) {
+func createReviewTree(cfg *Config, stack, name, intent, prs string) (*Instance, string, bool) {
 	refs, err := ResolvePRRefs(splitList(prs))
 	if err != nil {
 		return nil, err.Error(), true
 	}
-	inst, _, err := NewReview(cfg, wb, ReviewOptions{Stack: stack, Name: name, Intent: intent, PRs: refs})
+	inst, _, err := NewReview(cfg, ReviewOptions{Stack: stack, Name: name, Intent: intent, PRs: refs})
 	if err != nil {
 		return nil, err.Error(), true
 	}

@@ -8,7 +8,6 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/panamafrancis/workbench/pkg/config"
 	"github.com/panamafrancis/workbench/pkg/github"
 	"github.com/panamafrancis/workbench/pkg/supatree"
 	"github.com/panamafrancis/workbench/pkg/zellij"
@@ -29,7 +28,7 @@ func key(s string) tea.KeyMsg {
 
 func TestViewEmptyDoesNotPanic(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	m := New(supatree.DefaultConfig(), config.DefaultConfig(), zellij.Workspace{})
+	m := New(supatree.DefaultConfig(), zellij.Workspace{})
 	out := m.View()
 	if !strings.Contains(out, "supatree") {
 		t.Errorf("view missing header:\n%s", out)
@@ -41,7 +40,7 @@ func TestViewEmptyDoesNotPanic(t *testing.T) {
 
 func TestRebuildRowsStructure(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	m := New(supatree.DefaultConfig(), config.DefaultConfig(), zellij.Workspace{})
+	m := New(supatree.DefaultConfig(), zellij.Workspace{})
 	// Inject a synthetic instance and rebuild.
 	m.insts = []*supatree.Instance{{
 		Name: "berlin",
@@ -95,7 +94,7 @@ func TestNewTreeSingleStackAsksForName(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	cfg := supatree.DefaultConfig()
 	cfg.Stacks = []supatree.Stack{{Alias: "only", Path: "/tmp/only"}}
-	m := New(cfg, config.DefaultConfig(), zellij.Workspace{})
+	m := New(cfg, zellij.Workspace{})
 
 	m.updateNormal(key("n"))
 	if m.mode != modeNewTreeName {
@@ -110,7 +109,7 @@ func TestNewTreeMultiStackAsksForStackThenName(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	cfg := supatree.DefaultConfig()
 	cfg.Stacks = []supatree.Stack{{Alias: "a", Path: "/tmp/a"}, {Alias: "b", Path: "/tmp/b"}}
-	m := New(cfg, config.DefaultConfig(), zellij.Workspace{})
+	m := New(cfg, zellij.Workspace{})
 
 	m.updateNormal(key("n"))
 	if m.mode != modeNewTree {
@@ -132,7 +131,7 @@ func TestNewTreeMultiStackAsksForStackThenName(t *testing.T) {
 // supatree sorts in above it and shifts every row index down.
 func TestReloadWithSelectionPinsRow(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	m := New(supatree.DefaultConfig(), config.DefaultConfig(), zellij.Workspace{})
+	m := New(supatree.DefaultConfig(), zellij.Workspace{})
 	m.insts = []*supatree.Instance{{
 		Name:    "milan",
 		Members: []supatree.Member{{Alias: "web", Branch: "st/milan/web"}},
@@ -223,7 +222,7 @@ func TestSpaceOnMemberRowFoldsOnlyRepos(t *testing.T) {
 // carries the members' PR statuses as coloured counts while it is.
 func TestReposFoldedByDefaultWithCountBadge(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	m := New(supatree.DefaultConfig(), config.DefaultConfig(), zellij.Workspace{})
+	m := New(supatree.DefaultConfig(), zellij.Workspace{})
 	m.insts = []*supatree.Instance{{
 		Name: "oslo",
 		Members: []supatree.Member{
@@ -263,8 +262,8 @@ func TestReposFoldedByDefaultWithCountBadge(t *testing.T) {
 // tab has to show up in the next tab's reload, not just in the tab that made it.
 func TestFoldStateIsSharedAcrossSidebars(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	one := New(supatree.DefaultConfig(), config.DefaultConfig(), zellij.Workspace{})
-	two := New(supatree.DefaultConfig(), config.DefaultConfig(), zellij.Workspace{})
+	one := New(supatree.DefaultConfig(), zellij.Workspace{})
+	two := New(supatree.DefaultConfig(), zellij.Workspace{})
 
 	one.setCollapse("oslo", true)
 	one.setReposCollapse("bergen", false)
@@ -281,7 +280,7 @@ func TestFoldStateIsSharedAcrossSidebars(t *testing.T) {
 // The viewport keeps the cursor visible when the list is taller than the pane.
 func TestViewportScrollsToCursor(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	m := New(supatree.DefaultConfig(), config.DefaultConfig(), zellij.Workspace{})
+	m := New(supatree.DefaultConfig(), zellij.Workspace{})
 	m.rows = make([]row, 20)
 	for i := range m.rows {
 		m.rows[i] = row{kind: rowTree, tree: "t", label: "t"}
@@ -317,7 +316,7 @@ func TestViewportScrollsToCursor(t *testing.T) {
 // the hint.
 func TestPrMsgGhAvailabilityAndHint(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	m := New(supatree.DefaultConfig(), config.DefaultConfig(), zellij.Workspace{})
+	m := New(supatree.DefaultConfig(), zellij.Workspace{})
 
 	// Permanent error: unavailable, hint set, background loop drops the fetch.
 	m.Update(prMsg{err: github.ErrGHAuth})
@@ -356,7 +355,7 @@ func TestPrMsgGhAvailabilityAndHint(t *testing.T) {
 
 func TestActiveTreeMarkerInView(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	m := New(supatree.DefaultConfig(), config.DefaultConfig(), zellij.Workspace{})
+	m := New(supatree.DefaultConfig(), zellij.Workspace{})
 	m.insts = []*supatree.Instance{
 		{Name: "here", Members: []supatree.Member{{Alias: "x", Branch: "st/here/x"}}},
 		{Name: "there", Members: []supatree.Member{{Alias: "y", Branch: "st/there/y"}}},
@@ -381,7 +380,7 @@ const (
 func threeTrees(t *testing.T) *Model {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
-	m := New(supatree.DefaultConfig(), config.DefaultConfig(), zellij.Workspace{})
+	m := New(supatree.DefaultConfig(), zellij.Workspace{})
 	for _, name := range []string{berlin, cairo, delhi} {
 		m.insts = append(m.insts, &supatree.Instance{
 			Name: name, Slug: name,
@@ -428,7 +427,7 @@ func rowKinds(m *Model) []rowKind {
 func osloModel(t *testing.T) *Model {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
-	m := New(supatree.DefaultConfig(), config.DefaultConfig(), zellij.Workspace{})
+	m := New(supatree.DefaultConfig(), zellij.Workspace{})
 	m.insts = []*supatree.Instance{{
 		Name:    "oslo",
 		Members: []supatree.Member{{Alias: "web", Branch: "st/oslo/web"}},
@@ -633,7 +632,7 @@ func memberModel(t *testing.T) (*Model, string) {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
 	path := t.TempDir()
-	m := New(supatree.DefaultConfig(), config.DefaultConfig(), zellij.Workspace{})
+	m := New(supatree.DefaultConfig(), zellij.Workspace{})
 	m.insts = []*supatree.Instance{{
 		Name: berlin, Slug: berlin,
 		Members: []supatree.Member{
@@ -714,7 +713,7 @@ func TestFooterHintFollowsRowKind(t *testing.T) {
 // sit under the next attempt.
 func TestInvalidTreeNameWarnsInlineAndClears(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	m := New(supatree.DefaultConfig(), config.DefaultConfig(), zellij.Workspace{})
+	m := New(supatree.DefaultConfig(), zellij.Workspace{})
 
 	m.updateNormal(key("n"))
 	if m.mode != modeNewTreeName {
@@ -747,13 +746,12 @@ func TestInvalidTreeNameWarnsInlineAndClears(t *testing.T) {
 	}
 }
 
-// A name already taken by a supatree or a workbench worktree is refused too —
-// both would collide on the generated branch and tab names.
+// A name already taken by a supatree is refused too — it would collide on the
+// generated branch and tab names. Workbench's worktree names are not consulted:
+// the two tools share no namespace.
 func TestTreeNameValidationRejectsDuplicates(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	wb := config.DefaultConfig()
-	wb.Repos = []config.Repo{{Alias: "web", Worktrees: []config.Worktree{{Name: "lisbon"}}}}
-	m := New(supatree.DefaultConfig(), wb, zellij.Workspace{})
+	m := New(supatree.DefaultConfig(), zellij.Workspace{})
 	m.insts = []*supatree.Instance{{Name: berlin}}
 
 	if err := m.validateTreeName(""); err != nil {
@@ -764,9 +762,6 @@ func TestTreeNameValidationRejectsDuplicates(t *testing.T) {
 	}
 	if err := m.validateTreeName(berlin); err == nil {
 		t.Error("an existing supatree name was accepted")
-	}
-	if err := m.validateTreeName("lisbon"); err == nil {
-		t.Error("an existing workbench worktree name was accepted")
 	}
 }
 
@@ -811,7 +806,7 @@ func TestHelpOpensAndCloses(t *testing.T) {
 // the tree-scoped keys do nothing on it rather than acting on a tree named "".
 func TestPMRowPinnedAtTop(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	m := New(supatree.DefaultConfig(), config.DefaultConfig(), zellij.Workspace{})
+	m := New(supatree.DefaultConfig(), zellij.Workspace{})
 	if got := rowKinds(m); !slices.Equal(got, []rowKind{rowPM, rowDivider}) {
 		t.Fatalf("empty rows = %v, want the PM section alone", got)
 	}

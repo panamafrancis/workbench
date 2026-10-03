@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/panamafrancis/workbench/pkg/config"
 	"github.com/panamafrancis/workbench/pkg/git"
 	"github.com/panamafrancis/workbench/pkg/github"
 )
@@ -137,10 +136,10 @@ type ReviewOptions struct {
 // NewReview creates a review tree: a supatree whose members are checked out at
 // foreign pull request heads and whose authoring commands are refused.
 //
-// Members are mapped to the stack by workbench alias. A pull request whose
+// Members are mapped to the stack by their repository. A pull request whose
 // repository is not a member of the stack is an error naming both, rather than
 // a tree silently missing the repo the reviewer asked for.
-func NewReview(c *Config, wb *config.Config, opts ReviewOptions) (*Instance, *SyncReport, error) {
+func NewReview(c *Config, opts ReviewOptions) (*Instance, *SyncReport, error) {
 	if len(opts.PRs) == 0 {
 		return nil, nil, errors.New("no pull requests given")
 	}
@@ -149,12 +148,12 @@ func NewReview(c *Config, wb *config.Config, opts ReviewOptions) (*Instance, *Sy
 		return nil, nil, err
 	}
 
-	byAlias, err := mapPRsToMembers(stack.Path, opts.PRs, wb)
+	byAlias, err := mapPRsToMembers(c, stack.Path, opts.PRs)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	inst, report, err := New(c, wb, CreateOptions{
+	inst, report, err := New(c, CreateOptions{
 		Stack:  opts.Stack,
 		Name:   opts.Name,
 		Model:  opts.Model,
@@ -171,16 +170,16 @@ func NewReview(c *Config, wb *config.Config, opts ReviewOptions) (*Instance, *Sy
 	return inst, report, nil
 }
 
-// mapPRsToMembers keys the review set by workbench alias, matching each pull
+// mapPRsToMembers keys the review set by member alias, matching each pull
 // request's repository against the stack's members.
-func mapPRsToMembers(stackPath string, prs []ReviewRef, wb *config.Config) (map[string]ReviewRef, error) {
+func mapPRsToMembers(c *Config, stackPath string, prs []ReviewRef) (map[string]ReviewRef, error) {
 	spec, err := LoadSpec(stackPath)
 	if err != nil {
 		return nil, err
 	}
 	byAlias := make(map[string]ReviewRef, len(prs))
 	for _, pr := range prs {
-		alias, err := aliasForRepo(pr.Repo, spec.Members, wb)
+		alias, err := c.aliasForRepo(pr.Repo, spec.Members)
 		if err != nil {
 			return nil, err
 		}
@@ -194,13 +193,13 @@ func mapPRsToMembers(stackPath string, prs []ReviewRef, wb *config.Config) (map[
 }
 
 // aliasForRepo finds the stack member whose git remote is repo.
-func aliasForRepo(repo string, members []string, wb *config.Config) (string, error) {
+func (c *Config) aliasForRepo(repo string, members []string) (string, error) {
 	for _, alias := range members {
-		r, _ := wb.FindRepo(alias)
-		if r == nil {
+		r, err := c.baseClone(alias)
+		if err != nil {
 			continue
 		}
-		if remoteRepo(r.LocalPath) == strings.ToLower(repo) {
+		if remoteRepo(r.Clone) == strings.ToLower(repo) {
 			return alias, nil
 		}
 	}
@@ -267,7 +266,7 @@ type RefreshResult struct {
 // This exists because authors push during review. Without it you read a tree
 // that quietly stops matching the pull request you are commenting on, and
 // GitHub marks the inline comments outdated the moment they land.
-func RefreshReview(c *Config, wb *config.Config, name string) ([]RefreshResult, error) {
+func RefreshReview(c *Config, name string) ([]RefreshResult, error) {
 	inst, err := Get(c, name)
 	if err != nil {
 		return nil, err
@@ -287,13 +286,13 @@ func RefreshReview(c *Config, wb *config.Config, name string) ([]RefreshResult, 
 			continue
 		}
 		res := RefreshResult{Alias: m.Alias, PR: fmt.Sprintf("%s#%d", m.Review.Repo, m.Review.Number), Was: m.Review.Head}
-		repo, _ := wb.FindRepo(m.Alias)
-		if repo == nil || !m.Exists {
+		repo, repoErr := c.baseClone(m.Alias)
+		if repoErr != nil || !m.Exists {
 			res.Skipped = "worktree is not checked out — run sync"
 			out = append(out, res)
 			continue
 		}
-		sha, err := git.FetchRef(repo.LocalPath, fmt.Sprintf("refs/pull/%d/head", m.Review.Number))
+		sha, err := git.FetchRef(repo.Clone, fmt.Sprintf("refs/pull/%d/head", m.Review.Number))
 		if err != nil {
 			res.Skipped = err.Error()
 			out = append(out, res)
@@ -361,7 +360,7 @@ type ForkResult struct {
 // failure part-way rolls the earlier ones back, because the mode in meta is what
 // derives every member's branch name and a half-converted tree would strand
 // members outside their own tree.
-func ForkReview(c *Config, wb *config.Config, name string) ([]ForkResult, error) {
+func ForkReview(c *Config, name string) ([]ForkResult, error) {
 	inst, err := Get(c, name)
 	if err != nil {
 		return nil, err

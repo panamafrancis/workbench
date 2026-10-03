@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/panamafrancis/workbench/pkg/config"
 	"github.com/panamafrancis/workbench/pkg/sandbox"
 	"github.com/panamafrancis/workbench/pkg/zellij"
 )
@@ -66,11 +65,11 @@ func underDir(dir, path string) bool {
 // rather than in execution — it runs no third-party code, but every PR comment
 // it reads was written by someone else — so the profile it wants is narrower on
 // egress and credentials, not merely on the filesystem.
-func (c *Config) PMModel(wb *config.Config) string {
+func (c *Config) PMModel() string {
 	if c.PMModelKey != "" {
 		return c.PMModelKey
 	}
-	return c.ResolveModel("", wb)
+	return c.ResolveModel("")
 }
 
 // pmAgentsMD is scaffolded into the PM's home. It is the PM's standing
@@ -201,7 +200,7 @@ func PMEnv() map[string]string {
 }
 
 // OpenPM opens or focuses the PM tab.
-func OpenPM(cfg *Config, wb *config.Config, ws zellij.Workspace, sidebarWidth string) (bool, error) {
+func OpenPM(cfg *Config, ws zellij.Workspace, sidebarWidth string) (bool, error) {
 	if err := ScaffoldPM(); err != nil {
 		return false, err
 	}
@@ -214,7 +213,11 @@ func OpenPM(cfg *Config, wb *config.Config, ws zellij.Workspace, sidebarWidth st
 		// refuse to open.
 		_ = err
 	}
-	nonoArgs, err := sandbox.BuildGrantedNonoArgs(cfg.PMModel(wb), wb, PMGrants(cfg, insts), PMDir(), PMAddress, true)
+	model, err := cfg.Model(cfg.PMModel())
+	if err != nil {
+		return false, err
+	}
+	nonoArgs, err := sandbox.BuildGrantedNonoArgs(model, PMGrants(cfg, insts), PMDir(), PMAddress, true)
 	if err != nil {
 		return false, err
 	}

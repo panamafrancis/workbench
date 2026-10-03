@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/panamafrancis/workbench/pkg/config"
 	"github.com/panamafrancis/workbench/pkg/git"
 	"github.com/panamafrancis/workbench/pkg/github"
 )
@@ -33,7 +32,7 @@ type renamedMember struct {
 // still the only change made. The PR cache, info.md and the pushes all follow a
 // saved meta, so a failure in any of them cannot desync meta from the branches;
 // it is reported, but the rename itself stands.
-func RenameBranchSlug(c *Config, wb *config.Config, name, newSlug string, push bool) error {
+func RenameBranchSlug(c *Config, name, newSlug string, push bool) error {
 	if err := git.ValidateName(newSlug, nil); err != nil {
 		return err
 	}

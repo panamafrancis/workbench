@@ -13,7 +13,7 @@ func TestEnsureAgentCreatesThenResumes(t *testing.T) {
 	root := t.TempDir()
 	now := time.Now()
 
-	a1, created, err := EnsureAgent(root, "canberra", "main", "claude", now)
+	a1, created, err := EnsureAgent(root, "canberra", "main", defaultModelKey, now)
 	if err != nil {
 		t.Fatalf("EnsureAgent() error = %v", err)
 	}
@@ -24,7 +24,7 @@ func TestEnsureAgentCreatesThenResumes(t *testing.T) {
 		t.Error("agent should get a session id")
 	}
 
-	a2, created, err := EnsureAgent(root, "canberra", "main", "claude", now)
+	a2, created, err := EnsureAgent(root, "canberra", "main", defaultModelKey, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,7 +39,7 @@ func TestEnsureAgentCreatesThenResumes(t *testing.T) {
 func TestEnsureAgentRejectsUnsafeName(t *testing.T) {
 	root := t.TempDir()
 	for _, bad := range []string{"x=1 && curl evil", "a:b", "a b", ""} {
-		if _, _, err := EnsureAgent(root, "canberra", bad, "claude", time.Now()); err == nil {
+		if _, _, err := EnsureAgent(root, "canberra", bad, defaultModelKey, time.Now()); err == nil {
 			t.Errorf("EnsureAgent(%q) = nil error, want rejection", bad)
 		}
 	}
@@ -48,8 +48,8 @@ func TestEnsureAgentRejectsUnsafeName(t *testing.T) {
 func TestEnsureAgentDistinctSessions(t *testing.T) {
 	root := t.TempDir()
 	now := time.Now()
-	a, _, _ := EnsureAgent(root, "canberra", "main", "claude", now)
-	b, _, _ := EnsureAgent(root, "canberra", "reviewer", "claude", now)
+	a, _, _ := EnsureAgent(root, "canberra", "main", defaultModelKey, now)
+	b, _, _ := EnsureAgent(root, "canberra", "reviewer", defaultModelKey, now)
 	if a.SessionID == b.SessionID {
 		t.Error("distinct agents must get distinct session ids")
 	}
@@ -63,15 +63,12 @@ func TestSessionArgSubstitution(t *testing.T) {
 	cfg := config.DefaultConfig()
 	sid := "abc-123"
 	// Fresh session uses NewSessionArgs with {session_id} substituted.
-	args, err := sandbox.BuildAgentNonoArgs("/root", "claude", cfg, sid, false)
-	if err != nil {
-		t.Fatal(err)
-	}
+	args := sandbox.BuildAgentNonoArgs("/root", cfg.Models[defaultModelKey], sid, false)
 	if !containsSeq(args, "--session-id", sid) {
 		t.Errorf("new-session args missing --session-id %s: %v", sid, args)
 	}
 	// Resume uses ResumeSessionArgs.
-	rargs, _ := sandbox.BuildAgentNonoArgs("/root", "claude", cfg, sid, true)
+	rargs := sandbox.BuildAgentNonoArgs("/root", cfg.Models[defaultModelKey], sid, true)
 	if !containsSeq(rargs, "--resume", sid) {
 		t.Errorf("resume args missing --resume %s: %v", sid, rargs)
 	}
@@ -106,7 +103,7 @@ func TestAgentAddress(t *testing.T) {
 
 func TestEnsureAgentRecordsAddress(t *testing.T) {
 	root := t.TempDir()
-	a, _, err := EnsureAgent(root, "canberra", "reviewer", "claude", time.Now())
+	a, _, err := EnsureAgent(root, "canberra", "reviewer", defaultModelKey, time.Now())
 	if err != nil {
 		t.Fatalf("EnsureAgent: %v", err)
 	}

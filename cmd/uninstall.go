@@ -74,7 +74,6 @@ var uninstallCmd = &cobra.Command{
 				fmt.Printf("  skipping %s (dirty — use --force to remove)\n", w.name)
 				continue
 			}
-			_ = w.repo.RunCleanup(w.path, w.name)
 			if err := git.RemoveWorktree(w.repoPath, w.path); err != nil {
 				fmt.Fprintf(os.Stderr, "  warning: remove %s: %v\n", w.name, err)
 			}

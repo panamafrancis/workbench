@@ -21,7 +21,7 @@ type SyncReport struct {
 // and, when prune is true, removes member worktrees no longer listed. It then
 // regenerates .supatree/info.md. Members are created off the branch scheme in
 // the tree's meta (st/<slug>/<alias>).
-func Sync(root string, wb *config.Config, prune bool) (*SyncReport, error) {
+func Sync(c *Config, root string, prune bool) (*SyncReport, error) {
 	meta, err := LoadMeta(root)
 	if err != nil {
 		return nil, err
@@ -34,7 +34,7 @@ func Sync(root string, wb *config.Config, prune bool) (*SyncReport, error) {
 	if err != nil {
 		return nil, err
 	}
-	repos, err := resolveRepos(ordered, wb)
+	repos, err := c.baseClones(ordered)
 	if err != nil {
 		return nil, err
 	}
@@ -52,7 +52,7 @@ func Sync(root string, wb *config.Config, prune bool) (*SyncReport, error) {
 	}
 
 	if prune {
-		if err := pruneMembers(root, ordered, wb, report); err != nil {
+		if err := pruneMembers(c, root, ordered, report); err != nil {
 			return report, err
 		}
 	}
@@ -67,39 +67,47 @@ func Sync(root string, wb *config.Config, prune bool) (*SyncReport, error) {
 	return report, nil
 }
 
-func createMember(repo *config.Repo, path string, meta *Meta, alias string, report *SyncReport) error {
+func createMember(repo *baseClone, path string, meta *Meta, alias string, report *SyncReport) error {
 	branch := meta.MemberBranch(alias)
 	// A review member starts at the pull request's head rather than at the
 	// default branch. The commits live on refs/pull/<n>/head, which is also the
 	// only ref that reaches a PR opened from a fork.
 	if ref, ok := meta.Review[alias]; ok {
-		sha, err := git.FetchRef(repo.LocalPath, fmt.Sprintf("refs/pull/%d/head", ref.Number))
+		sha, err := git.FetchRef(repo.Clone, fmt.Sprintf("refs/pull/%d/head", ref.Number))
 		if err != nil {
 			return fmt.Errorf("fetch %s#%d: %w", ref.Repo, ref.Number, err)
 		}
-		if err := git.CreateWorktreeAt(repo.LocalPath, path, branch, sha); err != nil {
+		if err := git.CreateWorktreeAt(repo.Clone, path, branch, sha); err != nil {
 			return fmt.Errorf("create member %q at %s#%d: %w", repo.Alias, ref.Repo, ref.Number, err)
 		}
-		return repoCopyFiles(repo, path)
+		return repoCopyFiles(repo, path, report)
 	}
-	offline, err := git.CreateWorktree(repo.LocalPath, path, branch)
+	offline, err := git.CreateWorktree(repo.Clone, path, branch)
 	if err != nil {
 		return fmt.Errorf("create member %q: %w", repo.Alias, err)
 	}
 	if offline {
 		report.Warnings = append(report.Warnings, fmt.Sprintf("%s: offline — branched from last-fetched origin", repo.Alias))
 	}
-	return repoCopyFiles(repo, path)
+	return repoCopyFiles(repo, path, report)
 }
 
-func repoCopyFiles(repo *config.Repo, path string) error {
-	if err := repo.RunCopyFiles(path); err != nil {
+// repoCopyFiles copies the member's copy_files from its base clone into the new
+// worktree. A listed file that is missing is a warning, not a failure: a member
+// without its .env is still a member, and the warning says what to put where.
+func repoCopyFiles(repo *baseClone, path string, report *SyncReport) error {
+	missing, err := config.CopyFiles(repo.Clone, path, repo.CopyFiles)
+	if err != nil {
 		return fmt.Errorf("copy_files for %q: %w", repo.Alias, err)
+	}
+	for _, f := range missing {
+		report.Warnings = append(report.Warnings, fmt.Sprintf(
+			"%s: copy_files: %s not found in %s — put it there once and every new tree gets a copy", repo.Alias, f, repo.Clone))
 	}
 	return nil
 }
 
-func pruneMembers(root string, keep []string, wb *config.Config, report *SyncReport) error {
+func pruneMembers(c *Config, root string, keep []string, report *SyncReport) error {
 	keepSet := make(map[string]bool, len(keep))
 	for _, a := range keep {
 		keepSet[a] = true
@@ -124,7 +132,7 @@ func pruneMembers(root string, keep []string, wb *config.Config, report *SyncRep
 		return err
 	}
 	for _, alias := range stale {
-		removeMember(root, alias, meta.MemberBranch(alias), wb, report)
+		removeMember(c, root, alias, meta.MemberBranch(alias), report)
 		report.Pruned = append(report.Pruned, alias)
 	}
 	return nil
@@ -138,18 +146,18 @@ func pruneMembers(root string, keep []string, wb *config.Config, report *SyncRep
 // or by a review tree gone wrong — would otherwise have that branch destroyed by
 // an ordinary teardown. Anything else is left behind and reported, which is the
 // recoverable direction.
-func removeMember(root, alias, want string, wb *config.Config, report *SyncReport) {
+func removeMember(c *Config, root, alias, want string, report *SyncReport) {
 	path := MemberPath(root, alias)
-	if repo, _ := wb.FindRepo(alias); repo != nil {
+	if repo, err := c.baseClone(alias); err == nil {
 		branch, _ := git.CurrentBranch(path)
-		if err := git.RemoveWorktree(repo.LocalPath, path); err != nil {
+		if err := git.RemoveWorktree(repo.Clone, path); err != nil {
 			report.Warnings = append(report.Warnings, fmt.Sprintf("%s: %v", alias, err))
 		}
 		// Delete the branch this tree created, whether or not the worktree was
 		// still on it — leaving it behind would litter the clone every time a
 		// member had been checked out elsewhere.
 		if want != "" {
-			_ = git.DeleteBranch(repo.LocalPath, want)
+			_ = git.DeleteBranch(repo.Clone, want)
 		}
 		switch {
 		case branch == "" || branch == want:

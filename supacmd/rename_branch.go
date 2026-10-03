@@ -22,7 +22,7 @@ var renameBranchCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		if err := supatree.RenameBranchSlug(stCfg, wbCfg, name, newSlug, renameBranchPush); err != nil {
+		if err := supatree.RenameBranchSlug(stCfg, name, newSlug, renameBranchPush); err != nil {
 			return err
 		}
 		fmt.Printf("renamed member branches to st/%s/<alias>\n", newSlug)

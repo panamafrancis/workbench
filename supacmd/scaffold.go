@@ -54,7 +54,7 @@ After scaffolding, edit supatree.yml to add dependency edges, then:
 			return err
 		}
 
-		res, err := supatree.Scaffold(name, scaffoldPath, members, wbCfg)
+		res, err := supatree.Scaffold(stCfg, name, scaffoldPath, members)
 		if err != nil {
 			return err
 		}
@@ -78,7 +78,7 @@ func selectRepos() ([]string, error) {
 		return members, nil
 	}
 
-	aliases := repoAliases()
+	aliases := stCfg.LegacyRepoAliases()
 	if len(aliases) == 0 {
 		return nil, fmt.Errorf("no repos registered with workbench — run: workbench add repo <path> --alias=<alias>")
 	}
@@ -94,14 +94,6 @@ func selectRepos() ([]string, error) {
 		return nil, err
 	}
 	return members, nil
-}
-
-func repoAliases() []string {
-	aliases := make([]string, 0, len(wbCfg.Repos))
-	for _, r := range wbCfg.Repos {
-		aliases = append(aliases, r.Alias)
-	}
-	return aliases
 }
 
 func init() {

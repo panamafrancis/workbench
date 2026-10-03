@@ -202,8 +202,6 @@ repos:
   - alias: ss
     local_path: /path/to/scoring-service
     copy_files: [".claude", ".env"]  # copied from repo to new worktrees
-    startup_script: ""     # run before opening a worktree
-    cleanup_script: ""     # run before removing a worktree
     worktrees:
       - name: atlanta
         branch: wt/ss/atlanta
@@ -225,23 +223,6 @@ models:
 
 Then use it with `workbench open --model=mymodel` or set it as `default_model`.
 
-### Startup and cleanup scripts
-
-Scripts are run as `bash -- <script>` with these environment variables:
-
-| Variable | Value |
-|----------|-------|
-| `WORKBENCH_REPO_BASE_PATH` | Absolute path to the repo (the `local_path` from config) |
-| `WORKBENCH_WORKTREE_PATH` | Absolute path to the worktree |
-| `WORKBENCH_WORKTREE_NAME` | Worktree name |
-
-```yaml
-repos:
-  - alias: ss
-    startup_script: /path/to/setup.sh    # runs on workbench open
-    cleanup_script: /path/to/teardown.sh # runs on workbench rm worktree
-```
-
 ### Copying files to new worktrees
 
 Git worktrees only contain tracked files. To automatically copy gitignored files (like `.env` or `.claude/`) from the repo into each new worktree, use `copy_files`:
@@ -254,7 +235,7 @@ repos:
       - .env
 ```
 
-Paths are relative to the repo root. Both files and directories are supported. Directories are copied recursively. The copy runs after `git worktree add` and before any startup script.
+Paths are relative to the repo root. Both files and directories are supported. Directories are copied recursively. The copy runs right after `git worktree add`; a listed file that does not exist is reported as a warning and skipped.
 
 ### Sidebar width
 
@@ -270,9 +251,8 @@ sidebar_width: "20%"
 workbench open --repo=ss --worktree=atlanta --model=claude
   1. Resolve model → look up nono profile and binary from config
   2. If a tab with the same name exists but its command has exited, close it
-  3. Run startup_script (if configured)
-  4. Write ~/.workbench/layouts/atlanta.kdl (with WORKBENCH_* env vars)
-  5. zellij action new-tab --name atlanta --layout ~/.workbench/layouts/atlanta.kdl
+  3. Write ~/.workbench/layouts/atlanta.kdl (with WORKBENCH_* env vars)
+  4. zellij action new-tab --name atlanta --layout ~/.workbench/layouts/atlanta.kdl
 ```
 
 The agent pane receives these environment variables:

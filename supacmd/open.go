@@ -48,7 +48,7 @@ func openRootAgent(inst *supatree.Instance) error {
 	if openBackground {
 		prev = zellij.FocusedTab("")
 	}
-	_, err := supatree.OpenRootAgent(inst, wbCfg, supatreeWorkspace(), stCfg.ResolveSidebarWidth(), openAgent, openModel, os.Stderr)
+	_, err := supatree.OpenRootAgent(inst, stCfg, supatreeWorkspace(), stCfg.ResolveSidebarWidth(), openAgent, openModel, os.Stderr)
 	if err == nil && prev != "" && prev != supatree.TabName(inst.Name, openAgent) {
 		_ = zellij.GoToTab(prev)
 	}
@@ -58,7 +58,7 @@ func openRootAgent(inst *supatree.Instance) error {
 // openMemberAgent opens an agent scoped to a single member repo.
 func openMemberAgent(inst *supatree.Instance) error {
 	ensureZellij()
-	_, err := supatree.OpenMemberAgent(inst, wbCfg, supatreeWorkspace(), stCfg.ResolveSidebarWidth(), openRepo, openModel)
+	_, err := supatree.OpenMemberAgent(inst, stCfg, supatreeWorkspace(), stCfg.ResolveSidebarWidth(), openRepo, openModel)
 	return err
 }
 

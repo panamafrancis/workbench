@@ -5,13 +5,11 @@ import (
 	"os"
 	"sort"
 	"strings"
-
-	"github.com/panamafrancis/workbench/pkg/config"
 )
 
 // Instance is a live supatree: a worktree of a stack repo with its member repo
 // worktrees checked out underneath. It is reconstructed from the tracked spec,
-// the gitignored meta file, and workbench's repo definitions.
+// the gitignored meta file, and the member repos' base clones.
 type Instance struct {
 	Name    string   // city name; the dir under the trees base and the st/<name> branch
 	Slug    string   // branch slug for members: st/<slug>/<alias>
@@ -27,7 +25,7 @@ func (inst *Instance) Reviewing() bool { return inst.Mode == ModeReviewing }
 
 // Member is one repo participating in a supatree.
 type Member struct {
-	Alias     string   // workbench repo alias
+	Alias     string   // stack-local member alias
 	Path      string   // <root>/repos/<alias>
 	Branch    string   // st/<slug>/<alias>, or review/<slug>/<alias>
 	DependsOn []string // in-set dependency aliases
@@ -56,7 +54,7 @@ func (m Member) CacheKey() string {
 
 // LoadInstance reconstructs the supatree rooted at root from its meta + spec
 // files. Members are derived purely from the spec so a supatree lists even when
-// a repo alias has gone missing from workbench's config.
+// a member's repo cannot be resolved.
 func LoadInstance(root string) (*Instance, error) {
 	meta, err := LoadMeta(root)
 	if err != nil {
@@ -207,18 +205,4 @@ func (inst *Instance) modeName() Mode {
 		return "authoring"
 	}
 	return inst.Mode
-}
-
-// resolveRepos maps member aliases to their workbench repo definitions,
-// erroring if any alias is not registered with workbench.
-func resolveRepos(aliases []string, wb *config.Config) (map[string]*config.Repo, error) {
-	repos := make(map[string]*config.Repo, len(aliases))
-	for _, alias := range aliases {
-		r, _ := wb.FindRepo(alias)
-		if r == nil {
-			return nil, fmt.Errorf("repo %q is not registered with workbench — run: workbench add repo <path> --alias=%s", alias, alias)
-		}
-		repos[alias] = r
-	}
-	return repos, nil
 }

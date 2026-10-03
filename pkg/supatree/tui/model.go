@@ -11,7 +11,6 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/panamafrancis/workbench/pkg/config"
 	"github.com/panamafrancis/workbench/pkg/github"
 	"github.com/panamafrancis/workbench/pkg/supatree"
 	"github.com/panamafrancis/workbench/pkg/zellij"
@@ -81,7 +80,6 @@ type row struct {
 // Model is the supatree sidebar model.
 type Model struct {
 	stCfg       *supatree.Config
-	wbCfg       *config.Config
 	ws          zellij.Workspace
 	prCache     *github.Cache
 	insts       []*supatree.Instance
@@ -114,12 +112,11 @@ type Model struct {
 }
 
 // New builds the sidebar model.
-func New(stCfg *supatree.Config, wbCfg *config.Config, ws zellij.Workspace) *Model {
+func New(stCfg *supatree.Config, ws zellij.Workspace) *Model {
 	cache := github.NewCache(supatree.PRCachePath())
 	_ = cache.Load()
 	m := &Model{
 		stCfg:       stCfg,
-		wbCfg:       wbCfg,
 		ws:          ws,
 		prCache:     cache,
 		dirty:       map[string]bool{},

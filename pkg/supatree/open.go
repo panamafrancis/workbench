@@ -5,7 +5,6 @@ import (
 	"io"
 	"time"
 
-	"github.com/panamafrancis/workbench/pkg/config"
 	"github.com/panamafrancis/workbench/pkg/sandbox"
 	"github.com/panamafrancis/workbench/pkg/zellij"
 )
@@ -26,16 +25,16 @@ func TabName(tree, agent string) string {
 // OpenRootAgent opens or resumes a named agent running at the supatree root
 // (nono --allow the whole tree). Several agents share the root but resume
 // independently via their session IDs. On first open it runs startup scripts
-// (member repos + the stack's scripts/startup), reporting failures to startupW.
-func OpenRootAgent(inst *Instance, wb *config.Config, ws zellij.Workspace, sidebarWidth, agentName, modelOverride string, startupW io.Writer) (bool, error) {
+// (the stack's scripts/startup), reporting failures to startupW.
+func OpenRootAgent(inst *Instance, c *Config, ws zellij.Workspace, sidebarWidth, agentName, modelOverride string, startupW io.Writer) (bool, error) {
 	if agentName == "" {
 		agentName = MainAgent
 	}
-	model := inst.Model
+	key := inst.Model
 	if modelOverride != "" {
-		model = modelOverride
+		key = modelOverride
 	}
-	agent, _, err := EnsureAgent(inst.Root, inst.Name, agentName, model, time.Now())
+	agent, _, err := EnsureAgent(inst.Root, inst.Name, agentName, key, time.Now())
 	if err != nil {
 		return false, err
 	}
@@ -49,16 +48,17 @@ func OpenRootAgent(inst *Instance, wb *config.Config, ws zellij.Workspace, sideb
 	// created agent (or one whose id was never launched) starts a new session so
 	// it never lands in another agent's chat.
 	resume := sandbox.SessionExists(inst.Root, agent.SessionID)
-	nonoArgs, err := sandbox.BuildNamedAgentNonoArgs(inst.Root, agent.Model, wb, agent.SessionID, agent.Address, resume)
+	model, err := c.Model(agent.Model)
 	if err != nil {
 		return false, err
 	}
+	nonoArgs := sandbox.BuildNamedAgentNonoArgs(inst.Root, model, agent.SessionID, agent.Address, resume)
 	// Mail waiting means somebody briefed this agent before it was running —
 	// the PM starting it, or a sibling. Without a first message it would sit
 	// at an empty prompt until a human typed, and the brief would go unread.
 	// Ignored when the tab is already live: OpenOrFocusTab only focuses it.
 	if HasMail(inst.Root, agentName) {
-		nonoArgs = sandbox.AppendPrompt(nonoArgs, agent.Model, wb, KickoffPrompt)
+		nonoArgs = sandbox.AppendPrompt(nonoArgs, model, KickoffPrompt)
 	}
 	env := inst.AgentEnv(agentName)
 	tabCreated, err := ws.OpenOrFocusTab(TabName(inst.Name, agentName), inst.Root, sidebarWidth, nonoArgs, env)
@@ -66,7 +66,7 @@ func OpenRootAgent(inst *Instance, wb *config.Config, ws zellij.Workspace, sideb
 		return false, err
 	}
 	if tabCreated {
-		RunStartupScripts(inst, wb, startupW)
+		RunStartupScripts(inst, startupW)
 	}
 	return tabCreated, nil
 }
@@ -87,19 +87,20 @@ func requireMember(inst *Instance, alias string) (*Member, error) {
 // OpenMemberAgent opens an agent scoped to a single member repo (nono --allow
 // just that repo). Member worktrees have unique paths, so directory-based
 // resume works without session IDs.
-func OpenMemberAgent(inst *Instance, wb *config.Config, ws zellij.Workspace, sidebarWidth, alias, modelOverride string) (bool, error) {
+func OpenMemberAgent(inst *Instance, c *Config, ws zellij.Workspace, sidebarWidth, alias, modelOverride string) (bool, error) {
 	m, err := requireMember(inst, alias)
 	if err != nil {
 		return false, err
 	}
-	model := inst.Model
+	key := inst.Model
 	if modelOverride != "" {
-		model = modelOverride
+		key = modelOverride
 	}
-	nonoArgs, err := sandbox.BuildNonoArgs(m.Path, model, wb)
+	model, err := c.Model(key)
 	if err != nil {
 		return false, err
 	}
+	nonoArgs := sandbox.BuildNonoArgs(m.Path, model)
 	env := inst.AgentEnv(alias)
 	env["SUPATREE_MEMBER"] = alias
 	return ws.OpenOrFocusTab(TabName(inst.Name, alias), m.Path, sidebarWidth, nonoArgs, env)
