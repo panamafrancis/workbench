@@ -71,6 +71,10 @@ type Meta struct {
 	// a tree forked from a review targets the author's branch instead, so the
 	// change is proposed *to them* rather than opened as a rival PR.
 	Base map[string]string `yaml:"base,omitempty"`
+	// SetupAt is when the stack's scripts/setup ran for this tree; zero means
+	// it has not (or the stack has none). SetupErr is how it failed, if it did.
+	SetupAt  time.Time `yaml:"setup_at,omitempty"`
+	SetupErr string    `yaml:"setup_err,omitempty"`
 }
 
 // MemberBase returns the branch a member's pull request should target, or ""

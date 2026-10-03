@@ -126,7 +126,7 @@ func TestStartAgentDefaultsReviewBrief(t *testing.T) {
 	testutil.IsolateHome(t)
 	root := t.TempDir()
 	inst := &Instance{Name: "hobart", Root: root, Model: defaultModelKey, Mode: ModeReviewing, Members: []Member{
-		{Alias: "api", Review: &ReviewRef{Repo: "o/api", Number: 12, URL: "https://github.com/o/api/pull/12"}},
+		{Alias: aliasAPI, Review: &ReviewRef{Repo: "o/api", Number: 12, URL: "https://github.com/o/api/pull/12"}},
 		{Alias: "docs"},
 	}}
 	if _, err := startAgent(inst, "main", ""); err != nil {

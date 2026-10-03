@@ -285,7 +285,7 @@ When a worktree's command exits (e.g. typing `exit` in a claude session), the pa
 
 ### Deleting worktrees
 
-Deleting a worktree (`d` in the sidebar or `workbench rm worktree <name>`) runs the repo's cleanup script, removes the git worktree directory (`git worktree remove --force`), deletes the auto-created `wt/<alias>/<name>` branch, removes the config entry, and cleans up the generated Zellij layout. The sidebar and the CLI perform the same steps.
+Deleting a worktree (`d` in the sidebar or `workbench rm worktree <name>`) removes the git worktree directory (`git worktree remove --force`), deletes the auto-created `wt/<alias>/<name>` branch, removes the config entry, and cleans up the generated Zellij layout. The sidebar and the CLI perform the same steps.
 
 It also clears the agent's cached session transcripts for that path (e.g. `~/.claude/projects/<encoded-path>/`). This prevents a future worktree created at the same path from being silently resumed via `resume_args` (`--continue`) into an unrelated session. Config writes for create and delete are done as read-modify-write against the on-disk config, so an action in one process or sidebar instance never resurrects a worktree another deleted.
 
@@ -330,13 +330,29 @@ The MCP server gates on the `WORKBENCH` env var — tools return an error outsid
 
 ## supatree — multi-repo worktrees for one issue
 
-`supatree` is a companion binary (built and installed alongside `workbench`) for work that spans several repos at once — e.g. a change to `terraform`, then `keystone-api`, then `admin-frontend`. It creates one worktree per repo under a shared root so a single agent can run at the top and see every repo, and it orchestrates per-repo PR creation.
+`supatree` is a companion binary for work that spans several repos at once. It is independent of `workbench` at runtime — either installs and runs without the other, and they share no file on disk — — e.g. a change to `terraform`, then `keystone-api`, then `admin-frontend`. It creates one worktree per repo under a shared root so a single agent can run at the top and see every repo, and it orchestrates per-repo PR creation.
 
 ### Model
 
-- A **stack** is a git repo holding the repo selection (`supatree.yml`), an agent guide (`AGENTS.md`), and `scripts/`. Create one with `supatree scaffold`.
+- A **stack** is a git repo holding the repo selection (`supatree.yml`), an agent guide (`AGENTS.md`), and `scripts/`. Create one with `supatree scaffold`. It lives wherever you like — `~/supatree/stacks/` by default — and is self-describing: `supatree.yml` maps each member's alias to its git URL, so a teammate who clones the stack can use it as is.
+
+  ```yaml
+  members:
+    keystone: git@github.com:fraud-zero/keystone.git
+    admin-frontend: git@github.com:fraud-zero/admin-frontend.git
+  deps:
+    admin-frontend: [keystone]
+  ```
+- **Supatree owns its clones.** Each member is cloned once into supatree's repo cache, `~/supatree/repos/<host>/<owner>/<repo>/`, from the URL the stack gives, and every tree's worktree of it hangs off that clone. Supatree never uses a clone it did not make (your `~/code/…`, workbench's repos). A personal ssh alias (a second GitHub account) belongs in git's `url.<base>.insteadOf`, not in the shared spec.
 - A **supatree** is a worktree of that stack repo at `~/supatree/trees/<name>/`, with each member repo checked out under `repos/<alias>/`. Its state (`meta.yml`, `agents.yml`, `info.md`, `board.md`, mailboxes) lives in `~/.local/state/supatree/trees/<name>/`, and the tree's `.supatree` is a link to it — so `.supatree/info.md` reads as it always did, and a sandbox can be given every tree's state without being given anything inside a tree. It is named with a city name, like workbench worktrees.
-- Member repos are referenced by their **workbench alias** — supatree reuses workbench's registered repo definitions (path, `copy_files`, scripts). Register repos with `workbench add repo` first.
+- Personal files a worktree needs but git does not track — a `.env` with credentials — are `copy_files`, set per repository in `~/.config/supatree/config.yml` and copied from the cache clone's checkout into every new worktree. Put the file in the cache clone once; every tree gets a copy. A listed file that is missing is a warning, never a prompt:
+
+  ```yaml
+  repos:
+    github.com/fraud-zero/keystone:
+      copy_files: [.env.local]
+  ```
+- A stack's `scripts/setup`, if present, runs once per new tree — after the members exist and `copy_files` has run, before any agent tab opens — with stdin closed, so it can never wait on a person; it gets `SUPATREE_NAME`, `SUPATREE_ROOT` and `SUPATREE_MEMBERS`, its output goes to `.supatree/setup.log`, and a failure is a warning on a tree that still works. `sync` adding a member later runs that member's `copy_files` but not `setup` again.
 - Member branches are `st/<slug>/<alias>` (the slug starts as the city name; rename it before opening PRs). The stack worktree itself is on `st/<name>`.
 - A **review tree** (`supatree review`) is the same thing pointed at someone else's work: each member is checked out at a pull request's head on a tree-local `review/<slug>/<alias>` branch, and the tree records the PRs rather than deriving them from the branch name. The authoring commands (`rename-branch`, `create_pr`, `create_prs`) refuse there — the branches belong to the PRs' authors — and `.supatree/info.md` carries review instructions instead. The `docs` MCP tool with `topic: review` explains how to review in one. A review tree finishes as `reviewed` rather than `done` — the author's merge is their milestone, not work you shipped, and `history` counts the two separately.
 - **Review tooling.** `review_refresh` (MCP, or `supatree review refresh`) re-fetches the PR heads when an author pushes; `review_post` submits one batched review with inline comments anchored to the checked-out commit, and refuses if the head has moved since. Posting publishes in your name, so it requires the `outward` permission (off by default at every autonomy level). `supatree review fork` converts a review tree into an authoring one whose PRs target the authors' branches.
@@ -347,10 +363,8 @@ The MCP server gates on the `WORKBENCH` env var — tools return an error outsid
 
 ```sh
 supatree init                                   # dirs, config, supatree-agent nono profile, MCP
-workbench add repo ~/code/terraform --alias=terraform
-workbench add repo ~/code/keystone  --alias=keystone
-supatree scaffold fraud                         # pick repos interactively; stack at ~/supatree/stacks/fraud
-# (or non-interactively: supatree scaffold fraud --repos=terraform,keystone)
+supatree scaffold fraud --repos=fraud-zero/terraform,fraud-zero/keystone   # clones into the cache
+# (members are owner/repo, a git URL, or alias=<either>; omit --repos to pick from the cache)
 # edit ~/supatree/stacks/fraud/supatree.yml to add deps, commit it
 supatree start                                  # start the st-main Zellij session
 supatree new --stack=fraud                      # create a city-named supatree
@@ -376,6 +390,8 @@ supatree review fraud-zero/api#600 fraud-zero/web#988   # or owner/repo#number
 supatree review refresh <name>                  # authors pushed — re-fetch the heads
 supatree review fork <name>                     # turn the review into a proposal
 ```
+
+**Upgrading from a version that kept everything in `~/.supatree/`:** every command refuses until you migrate. Close every tree (`supatree rm`), quit every `st-*` zellij session, install, then run `supatree migrate` (`--dry-run` shows the plan). It moves config, state and cache to their XDG homes, clones each stack member into the repo cache, rewrites each stack's `supatree.yml` to name members by canonical URL (as a commit; it resolves a personal ssh alias to its real host and adds the `insteadOf` line that keeps that alias's key in use), and imports models and `copy_files` read-only from workbench's config. `~/.supatree` is renamed to `~/.supatree.pre-xdg`, not deleted. `workbench migrate` does the same for workbench's files; the two run in either order.
 
 `rename-branch` renames every member or none: if a member fails, the renames already made are rolled back, so the tree's recorded slug never points at a name only some members are on. With `--push` the pushes run after every local rename has landed, and a push failure is reported per repo without undoing the rename.
 

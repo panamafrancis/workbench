@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os/exec"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -148,7 +149,7 @@ func NewReview(c *Config, opts ReviewOptions) (*Instance, *SyncReport, error) {
 		return nil, nil, err
 	}
 
-	byAlias, err := mapPRsToMembers(c, stack.Path, opts.PRs)
+	byAlias, err := mapPRsToMembers(stack.Path, opts.PRs)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -172,14 +173,14 @@ func NewReview(c *Config, opts ReviewOptions) (*Instance, *SyncReport, error) {
 
 // mapPRsToMembers keys the review set by member alias, matching each pull
 // request's repository against the stack's members.
-func mapPRsToMembers(c *Config, stackPath string, prs []ReviewRef) (map[string]ReviewRef, error) {
+func mapPRsToMembers(stackPath string, prs []ReviewRef) (map[string]ReviewRef, error) {
 	spec, err := LoadSpec(stackPath)
 	if err != nil {
 		return nil, err
 	}
 	byAlias := make(map[string]ReviewRef, len(prs))
 	for _, pr := range prs {
-		alias, err := c.aliasForRepo(pr.Repo, spec.Members)
+		alias, err := aliasForRepo(pr.Repo, spec.Members)
 		if err != nil {
 			return nil, err
 		}
@@ -192,38 +193,21 @@ func mapPRsToMembers(c *Config, stackPath string, prs []ReviewRef) (map[string]R
 	return byAlias, nil
 }
 
-// aliasForRepo finds the stack member whose git remote is repo.
-func (c *Config) aliasForRepo(repo string, members []string) (string, error) {
-	for _, alias := range members {
-		r, err := c.baseClone(alias)
-		if err != nil {
-			continue
-		}
-		if remoteRepo(r.Clone) == strings.ToLower(repo) {
+// aliasForRepo finds the stack member whose URL is repo. The spec carries the
+// URLs, so this reads them rather than asking each clone for its origin.
+func aliasForRepo(repo string, members map[string]string) (string, error) {
+	aliases := make([]string, 0, len(members))
+	for alias := range members {
+		aliases = append(aliases, alias)
+	}
+	sort.Strings(aliases)
+	for _, alias := range aliases {
+		if r, ok := resolveRemote(members[alias]); ok && strings.EqualFold(r.Repo().String(), repo) {
 			return alias, nil
 		}
 	}
 	return "", fmt.Errorf("no member of this stack is %s — add its repo to supatree.yml, or review it in a stack that has it (members: %s)",
-		repo, strings.Join(members, ", "))
-}
-
-// remoteRepo returns the owner/name of a clone's origin, lowercased, or "".
-func remoteRepo(localPath string) string {
-	out, err := exec.CommandContext(context.Background(), "git", "-C", localPath,
-		"remote", "get-url", "origin").Output()
-	if err != nil {
-		return ""
-	}
-	url := strings.TrimSpace(string(out))
-	url = strings.TrimSuffix(url, ".git")
-	if _, after, ok := strings.Cut(url, ":"); ok && !strings.HasPrefix(url, "http") {
-		return strings.ToLower(after) // git@github.com:owner/name
-	}
-	parts := strings.Split(url, "/")
-	if len(parts) < 2 {
-		return ""
-	}
-	return strings.ToLower(strings.Join(parts[len(parts)-2:], "/"))
+		repo, strings.Join(aliases, ", "))
 }
 
 // seedPRCache writes what the review set already knows into the shared cache,
@@ -286,13 +270,14 @@ func RefreshReview(c *Config, name string) ([]RefreshResult, error) {
 			continue
 		}
 		res := RefreshResult{Alias: m.Alias, PR: fmt.Sprintf("%s#%d", m.Review.Repo, m.Review.Number), Was: m.Review.Head}
-		repo, repoErr := c.baseClone(m.Alias)
-		if repoErr != nil || !m.Exists {
+		if !m.Exists {
 			res.Skipped = "worktree is not checked out — run sync"
 			out = append(out, res)
 			continue
 		}
-		sha, err := git.FetchRef(repo.Clone, fmt.Sprintf("refs/pull/%d/head", m.Review.Number))
+		// Fetched from the worktree: it shares the clone's refs and objects,
+		// and it is where this agent's sandbox can reach.
+		sha, err := git.FetchRef(m.Path, fmt.Sprintf("refs/pull/%d/head", m.Review.Number))
 		if err != nil {
 			res.Skipped = err.Error()
 			out = append(out, res)

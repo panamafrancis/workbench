@@ -212,7 +212,11 @@ func generateNonoProfile() error {
 			return nil
 		}
 	}
+	return writeLocalProfile()
+}
 
+// writeLocalProfile (re)writes the claude-code-local profile from cfg.
+func writeLocalProfile() error {
 	// An agent reads workbench's config and writes the PR cache (create_pr);
 	// nothing else of workbench's. Not the state dir, not the layouts zellij
 	// runs unsandboxed — and nothing of supatree's.

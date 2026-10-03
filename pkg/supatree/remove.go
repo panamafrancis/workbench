@@ -49,7 +49,7 @@ func Remove(c *Config, name string, opts RemoveOptions) (*RemoveResult, error) {
 	for i := len(inst.Members) - 1; i >= 0; i-- {
 		m := inst.Members[i]
 		report := &SyncReport{}
-		removeMember(c, inst.Root, m.Alias, m.Branch, report)
+		removeMember(c, inst.Root, m.Alias, m.URL, m.Branch, report)
 		res.Warnings = append(res.Warnings, report.Warnings...)
 		archiveSessions(m.Path, name, &res.Archived)
 		_ = sandbox.ClearSessionCache(m.Path)

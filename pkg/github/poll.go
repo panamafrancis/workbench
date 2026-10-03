@@ -219,13 +219,13 @@ func RepoRefFromRemote(raw string) (RepoRef, bool) {
 	if ref, ok := ParseRemoteURL(raw); ok {
 		return ref, true
 	}
-	host, ref, ok := splitRemoteURL(raw)
-	if !ok {
+	r, ok := ResolveRemote(raw)
+	if !ok || !r.IsGitHub() {
 		return RepoRef{}, false
 	}
-	if !strings.EqualFold(sshResolve(host), "github.com") {
-		return RepoRef{}, false
-	}
+	// As written, not lowercased: this answers what GitHub calls it, and the
+	// API does not care about case.
+	_, ref, _ := splitRemoteURL(raw)
 	return ref, true
 }
 

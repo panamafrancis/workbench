@@ -53,10 +53,6 @@ type Config struct {
 	// Repos holds personal per-repo settings, keyed by host/owner/repo. They
 	// are local to this machine and never belong in a shared supatree.yml.
 	Repos map[string]RepoSettings `yaml:"repos,omitempty"`
-
-	// legacy is workbench's config, read only while supatree's own config
-	// does not yet carry what used to come from it (see legacy.go).
-	legacy *config.Config
 }
 
 // RepoSettings are one repo's personal, machine-local settings.
@@ -81,9 +77,7 @@ func DefaultConfig() *Config {
 func Load() (*Config, error) {
 	data, err := os.ReadFile(ConfigPath())
 	if os.IsNotExist(err) {
-		c := DefaultConfig()
-		c.legacy = loadLegacy()
-		return c, nil
+		return DefaultConfig(), nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("read supatree config: %w", err)
@@ -95,7 +89,6 @@ func Load() (*Config, error) {
 	if c.Models != nil {
 		config.BackfillModels(c.Models)
 	}
-	c.legacy = loadLegacy()
 	return &c, nil
 }
 
@@ -142,9 +135,6 @@ func (c *Config) ResolveModel(override string) string {
 	if c.DefaultModel != "" {
 		return c.DefaultModel
 	}
-	if wb := c.legacyModels(); wb != nil && wb.DefaultModel != "" {
-		return wb.DefaultModel
-	}
 	return defaultModelKey
 }
 
@@ -160,14 +150,11 @@ func (c *Config) Model(key string) (config.Model, error) {
 	return m, nil
 }
 
-// models is the effective model map: supatree's own, else (for now) the one
-// workbench's config defines, else the built-in defaults.
+// models is the effective model map: supatree's own, else the built-in
+// defaults.
 func (c *Config) models() map[string]config.Model {
 	if len(c.Models) > 0 {
 		return c.Models
-	}
-	if wb := c.legacyModels(); wb != nil {
-		return wb.Models
 	}
 	return DefaultModels()
 }

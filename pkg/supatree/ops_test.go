@@ -19,7 +19,7 @@ func TestOpRoundTrip(t *testing.T) {
 		defer close(done)
 		for i := 0; i < 50; i++ {
 			for _, c := range ClaimOps([]string{PMDir()}) {
-				_ = AnswerOp(c.Dir, OpResult{ID: c.Op.ID, Tree: "lima", Text: "did " + string(c.Op.Kind)})
+				_ = AnswerOp(c.Dir, OpResult{ID: c.Op.ID, Tree: treeLima, Text: "did " + string(c.Op.Kind)})
 				return
 			}
 			time.Sleep(20 * time.Millisecond)
@@ -30,7 +30,7 @@ func TestOpRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RequestOp: %v", err)
 	}
-	if res.Tree != "lima" || res.Text != "did new" {
+	if res.Tree != treeLima || res.Text != "did new" {
 		t.Errorf("result = %+v", res)
 	}
 	entries, _ := os.ReadDir(OpsDir(PMDir()))
@@ -43,7 +43,7 @@ func TestOpRoundTrip(t *testing.T) {
 // the caller's back, and the error says what to check.
 func TestOpNotPickedUpIsWithdrawn(t *testing.T) {
 	testutil.IsolateHome(t)
-	_, err := RequestOp(PMDir(), Op{Kind: OpRemove, Tree: "lima"}, 300*time.Millisecond)
+	_, err := RequestOp(PMDir(), Op{Kind: OpRemove, Tree: treeLima}, 300*time.Millisecond)
 	if err == nil || !strings.Contains(err.Error(), "supatree watch") {
 		t.Fatalf("err = %v, want one naming the watcher", err)
 	}

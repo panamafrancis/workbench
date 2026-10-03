@@ -34,18 +34,19 @@ func Sync(c *Config, root string, prune bool) (*SyncReport, error) {
 	if err != nil {
 		return nil, err
 	}
-	repos, err := c.baseClones(ordered)
-	if err != nil {
-		return nil, err
-	}
-
 	report := &SyncReport{}
 	for _, alias := range ordered {
 		path := MemberPath(root, alias)
 		if _, statErr := os.Stat(path); statErr == nil {
 			continue
 		}
-		if err := createMember(repos[alias], path, meta, alias, report); err != nil {
+		// The one network call creation may make: cloning a repository the
+		// cache does not have yet.
+		repo, err := c.ResolveMember(alias, spec.Members[alias])
+		if err != nil {
+			return report, err
+		}
+		if err := createMember(repo, path, meta, alias, report); err != nil {
 			return report, err
 		}
 		report.Created = append(report.Created, alias)
@@ -132,7 +133,7 @@ func pruneMembers(c *Config, root string, keep []string, report *SyncReport) err
 		return err
 	}
 	for _, alias := range stale {
-		removeMember(c, root, alias, meta.MemberBranch(alias), report)
+		removeMember(c, root, alias, "", meta.MemberBranch(alias), report)
 		report.Pruned = append(report.Pruned, alias)
 	}
 	return nil
@@ -146,18 +147,28 @@ func pruneMembers(c *Config, root string, keep []string, report *SyncReport) err
 // or by a review tree gone wrong — would otherwise have that branch destroyed by
 // an ordinary teardown. Anything else is left behind and reported, which is the
 // recoverable direction.
-func removeMember(c *Config, root, alias, want string, report *SyncReport) {
+//
+// The clone is read from the worktree itself, so a member that has already
+// left the spec can still be torn down; url is the fallback when the worktree
+// is too broken to say.
+func removeMember(c *Config, root, alias, url, want string, report *SyncReport) {
 	path := MemberPath(root, alias)
-	if repo, err := c.baseClone(alias); err == nil {
+	clone, ok := cloneOf(path)
+	if !ok && url != "" {
+		if bc, err := c.cachedClone(alias, url); err == nil && isClone(bc.Clone) {
+			clone, ok = bc.Clone, true
+		}
+	}
+	if ok {
 		branch, _ := git.CurrentBranch(path)
-		if err := git.RemoveWorktree(repo.Clone, path); err != nil {
+		if err := git.RemoveWorktree(clone, path); err != nil {
 			report.Warnings = append(report.Warnings, fmt.Sprintf("%s: %v", alias, err))
 		}
 		// Delete the branch this tree created, whether or not the worktree was
 		// still on it — leaving it behind would litter the clone every time a
 		// member had been checked out elsewhere.
 		if want != "" {
-			_ = git.DeleteBranch(repo.Clone, want)
+			_ = git.DeleteBranch(clone, want)
 		}
 		switch {
 		case branch == "" || branch == want:

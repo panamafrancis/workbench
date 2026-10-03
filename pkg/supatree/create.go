@@ -100,6 +100,9 @@ func finishCreate(c *Config, stack *Stack, root, name string, opts CreateOptions
 	if err != nil {
 		return nil, report, err
 	}
+	if w := RunSetup(inst); w != "" {
+		report.Warnings = append(report.Warnings, w)
+	}
 	return inst, report, nil
 }
 
@@ -112,7 +115,7 @@ func rollback(c *Config, stackPath, root, name string) {
 			if !m.Exists {
 				continue
 			}
-			removeMember(c, root, m.Alias, m.Branch, &SyncReport{})
+			removeMember(c, root, m.Alias, m.URL, m.Branch, &SyncReport{})
 		}
 	}
 	_ = git.RemoveWorktree(stackPath, root)

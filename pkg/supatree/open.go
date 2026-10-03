@@ -24,8 +24,8 @@ func TabName(tree, agent string) string {
 
 // OpenRootAgent opens or resumes a named agent running at the supatree root
 // (nono --allow the whole tree). Several agents share the root but resume
-// independently via their session IDs. On first open it runs startup scripts
-// (the stack's scripts/startup), reporting failures to startupW.
+// independently via their session IDs. Warnings that do not stop the open go
+// to startupW.
 func OpenRootAgent(inst *Instance, c *Config, ws zellij.Workspace, sidebarWidth, agentName, modelOverride string, startupW io.Writer) (bool, error) {
 	if agentName == "" {
 		agentName = MainAgent
@@ -61,14 +61,7 @@ func OpenRootAgent(inst *Instance, c *Config, ws zellij.Workspace, sidebarWidth,
 		nonoArgs = sandbox.AppendPrompt(nonoArgs, model, KickoffPrompt)
 	}
 	env := inst.AgentEnv(agentName)
-	tabCreated, err := ws.OpenOrFocusTab(TabName(inst.Name, agentName), inst.Root, sidebarWidth, nonoArgs, env)
-	if err != nil {
-		return false, err
-	}
-	if tabCreated {
-		RunStartupScripts(inst, startupW)
-	}
-	return tabCreated, nil
+	return ws.OpenOrFocusTab(TabName(inst.Name, agentName), inst.Root, sidebarWidth, nonoArgs, env)
 }
 
 // requireMember resolves a member alias to a worktree that actually exists on

@@ -775,7 +775,15 @@ Workflow:
 6. pr_comments to read what reviewers said — unresolved threads are what is
    still waiting on an answer.
 
-Edit supatree.yml and call sync to add/remove member repos.`
+Edit supatree.yml and call sync to add/remove member repos. Each member is an
+alias mapped to the repo's git URL:
+
+  members:
+    keystone: git@github.com:fraud-zero/keystone.git
+
+sync is carried out by the watcher, and clones a repository supatree has not
+seen before. An agent already running cannot commit in a member added after it
+started — restart it.`
 
 func handlePRComments(args map[string]any) (string, bool) {
 	alias, _ := args[argRepo].(string)

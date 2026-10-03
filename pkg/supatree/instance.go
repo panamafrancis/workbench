@@ -29,6 +29,7 @@ func (inst *Instance) Reviewing() bool { return inst.Mode == ModeReviewing }
 // Member is one repo participating in a supatree.
 type Member struct {
 	Alias     string   // stack-local member alias
+	URL       string   // the git URL the stack gives for it
 	Path      string   // <root>/repos/<alias>
 	Branch    string   // st/<slug>/<alias>, or review/<slug>/<alias>
 	DependsOn []string // in-set dependency aliases
@@ -99,6 +100,7 @@ func LoadInstance(root string) (*Instance, error) {
 		}
 		members = append(members, Member{
 			Alias:     alias,
+			URL:       spec.Members[alias],
 			Path:      path,
 			Branch:    meta.MemberBranch(alias),
 			DependsOn: deps,

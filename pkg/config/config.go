@@ -400,3 +400,23 @@ func copyDir(src, dst string) error {
 		return copyFile(path, target, info.Mode())
 	})
 }
+
+// CopyPath copies a file or a directory tree from src to dst, creating dst's
+// parents. A missing src copies nothing and is not an error: the migrations
+// move whatever of a layout exists.
+func CopyPath(src, dst string) error {
+	info, err := os.Stat(src)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if info.IsDir() {
+		return copyDir(src, dst)
+	}
+	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+		return err
+	}
+	return copyFile(src, dst, info.Mode())
+}

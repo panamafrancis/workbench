@@ -93,10 +93,8 @@ func memberGitDirs(c *Config, inst *Instance, only string) []string {
 				continue
 			}
 		}
-		if r, err := c.baseClone(m.Alias); err == nil {
-			if dir, err := GitCommonDir(r.Clone); err == nil {
-				out = append(out, dir)
-			}
+		if bc, err := c.cachedClone(m.Alias, m.URL); err == nil && isClone(bc.Clone) {
+			out = append(out, filepath.Join(bc.Clone, ".git"))
 		}
 	}
 	return out

@@ -24,9 +24,9 @@ _Generated file — do not edit. Regenerated on create, sync, and rename-branch.
 You are at the root of a multi-repo supatree. Each directory below is an
 independent git worktree with its own branch — commit in each repo separately.
 
-| Repo | Directory | Branch | PR target | Depends on |
-|------|-----------|--------|-----------|------------|
-{{range .Members}}| {{.Alias}} | ./{{$.ReposDir}}/{{.Alias}}/ | {{.Branch}} | {{if .Base}}` + "`{{.Base}}`" + `{{else}}default{{end}} | {{if .DependsOn}}{{join .DependsOn ", "}}{{else}}—{{end}} |
+| Repo | Directory | Branch | PR target | Depends on | Source |
+|------|-----------|--------|-----------|------------|--------|
+{{range .Members}}| {{.Alias}} | ./{{$.ReposDir}}/{{.Alias}}/ | {{.Branch}} | {{if .Base}}` + "`{{.Base}}`" + `{{else}}default{{end}} | {{if .DependsOn}}{{join .DependsOn ", "}}{{else}}—{{end}} | ` + "`{{.URL}}`" + ` |
 {{end}}{{if .Forked}}
 This tree was forked from a review, so each pull request targets the **author's
 branch** rather than the default one — the change is proposed on their pull
@@ -43,7 +43,7 @@ Create and merge PRs in dependency order:
 - Each ` + "`./{{.ReposDir}}/<repo>/`" + ` is a separate git worktree — ` + "`cd`" + ` into it to run that repo's tooling and to commit.
 - Branches share the slug ` + "`st/{{.Slug}}/…`" + `. Before opening any PR, give the slug a meaningful name with the ` + "`rename_branches`" + ` MCP tool (or ` + "`supatree rename-branch`" + `).
 - Open PRs with the supatree MCP tools (` + "`create_pr`" + ` / ` + "`create_prs`" + `), never with bare ` + "`gh pr create`" + ` — the tools enforce dependency order and cross-link the PRs.
-- To add or remove a repo, edit ` + "`supatree.yml`" + ` and run the ` + "`sync`" + ` tool (or ` + "`supatree sync`" + `).
+- To add or remove a repo, edit ` + "`supatree.yml`" + ` (` + "`members:`" + ` maps an alias to the repo's git URL) and run the ` + "`sync`" + ` tool (or ` + "`supatree sync`" + `). A member added that way cannot be committed to from an agent already running here until that agent restarts.
 - **Asked to review someone else's pull requests?** This is the wrong tree — its
   branches are yours and none of them contains their change. Tell the human to
   run ` + "`supatree review <pr-urls…>`" + `, which checks the pull requests out
@@ -225,7 +225,10 @@ Read ` + "`.supatree/info.md`" + ` for the current member list, branches, and me
   ` + "`rename_branches`" + ` MCP tool, or ` + "`supatree rename-branch <slug>`" + `.
 - Open PRs with the ` + "`create_pr`" + ` / ` + "`create_prs`" + ` MCP tools (dependency-ordered,
   cross-linked) — not with bare ` + "`gh pr create`" + `.
-- To change the repo set, edit ` + "`supatree.yml`" + ` then run the ` + "`sync`" + ` tool.
+- To change the repo set, edit ` + "`supatree.yml`" + ` — ` + "`members:`" + ` maps each alias
+  to the repo's git URL — then run the ` + "`sync`" + ` tool.
+- ` + "`scripts/setup`" + `, if present, runs once for every new tree made from this
+  stack, before any agent starts. It cannot prompt: stdin is closed.
 
 Add your issue-specific instructions below.
 `

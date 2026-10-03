@@ -13,12 +13,12 @@ import (
 // be granted all of it without being granted anything inside a tree.
 func TestStateLivesOutsideTheTree(t *testing.T) {
 	testutil.IsolateHome(t)
-	root := filepath.Join(t.TempDir(), "lima")
-	if err := (&Meta{Name: "lima", Root: root}).Save(root); err != nil {
+	root := filepath.Join(t.TempDir(), treeLima)
+	if err := (&Meta{Name: treeLima, Root: root}).Save(root); err != nil {
 		t.Fatal(err)
 	}
 	dir := StateDir(root)
-	if want := filepath.Join(TreesStateDir(), "lima"); dir != want {
+	if want := filepath.Join(TreesStateDir(), treeLima); dir != want {
 		t.Errorf("StateDir = %s, want %s", dir, want)
 	}
 	if strings.HasPrefix(dir, root) {
@@ -42,8 +42,8 @@ func TestStateLivesOutsideTheTree(t *testing.T) {
 // says it is checked out — not only under the current trees base.
 func TestListFindsTreesByState(t *testing.T) {
 	testutil.IsolateHome(t)
-	elsewhere := filepath.Join(t.TempDir(), "lima")
-	if err := (&Meta{Name: "lima", Root: elsewhere}).Save(elsewhere); err != nil {
+	elsewhere := filepath.Join(t.TempDir(), treeLima)
+	if err := (&Meta{Name: treeLima, Root: elsewhere}).Save(elsewhere); err != nil {
 		t.Fatal(err)
 	}
 	if err := SaveSpec(elsewhere, &Spec{}); err != nil {
@@ -57,7 +57,7 @@ func TestListFindsTreesByState(t *testing.T) {
 	if len(insts) != 1 || insts[0].Root != elsewhere {
 		t.Fatalf("List = %+v, want lima at %s", insts, elsewhere)
 	}
-	if _, err := Get(c, "lima"); err != nil {
+	if _, err := Get(c, treeLima); err != nil {
 		t.Errorf("Get: %v", err)
 	}
 }

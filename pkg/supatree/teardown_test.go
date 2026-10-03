@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/panamafrancis/workbench/pkg/config"
 	"github.com/panamafrancis/workbench/pkg/testutil"
 )
 
@@ -47,17 +46,7 @@ func setupMember(t *testing.T, repo, alias, branch string) (root string, c *Conf
 		t.Fatal(err)
 	}
 	run(t, repo, "worktree", "add", "-q", "-b", branch, path, "main")
-	return root, withClone(&Config{}, alias, repo)
-}
-
-// withClone points a member alias at a base clone, the way a resolved repo
-// would, and returns c.
-func withClone(c *Config, alias, clone string) *Config {
-	if c.legacy == nil {
-		c.legacy = &config.Config{}
-	}
-	c.legacy.Repos = append(c.legacy.Repos, config.Repo{Alias: alias, LocalPath: clone})
-	return c
+	return root, &Config{}
 }
 
 // Teardown deletes the branch it created. That is the ordinary path and must
@@ -69,7 +58,7 @@ func TestRemoveMemberDeletesItsOwnBranch(t *testing.T) {
 	root, c := setupMember(t, repo, aliasKeystone, branch)
 
 	report := &SyncReport{}
-	removeMember(c, root, aliasKeystone, branch, report)
+	removeMember(c, root, aliasKeystone, "", branch, report)
 
 	if branchExists(t, repo, branch) {
 		t.Errorf("branch %q survived teardown; the tree created it and owns it", branch)
@@ -89,7 +78,7 @@ func TestRemoveMemberLeavesAForeignBranchAlone(t *testing.T) {
 	root, c := setupMember(t, repo, aliasKeystone, foreign)
 
 	report := &SyncReport{}
-	removeMember(c, root, aliasKeystone, "st/canberra/keystone", report)
+	removeMember(c, root, aliasKeystone, "", "st/canberra/keystone", report)
 
 	if !branchExists(t, repo, foreign) {
 		t.Fatalf("teardown deleted %q — a branch this tree did not create", foreign)
@@ -113,7 +102,7 @@ func TestRemoveMemberStillReapsItsOwnBranchWhenMemberIsForeign(t *testing.T) {
 	root, c := setupMember(t, repo, aliasKeystone, own)
 	run(t, MemberPath(root, aliasKeystone), "checkout", "-q", "-b", foreign)
 
-	removeMember(c, root, aliasKeystone, own, &SyncReport{})
+	removeMember(c, root, aliasKeystone, "", own, &SyncReport{})
 
 	if branchExists(t, repo, own) {
 		t.Errorf("branch %q leaked: the tree created it and should reap it", own)
@@ -128,7 +117,11 @@ func TestRemoveMemberStillReapsItsOwnBranchWhenMemberIsForeign(t *testing.T) {
 func writeTree(t *testing.T, repo string, meta *Meta, aliases ...string) string {
 	t.Helper()
 	root := t.TempDir()
-	if err := SaveSpec(root, &Spec{Members: aliases}); err != nil {
+	members := make(map[string]string, len(aliases))
+	for _, a := range aliases {
+		members[a] = repo
+	}
+	if err := SaveSpec(root, &Spec{Members: members}); err != nil {
 		t.Fatal(err)
 	}
 	if err := meta.Save(root); err != nil {

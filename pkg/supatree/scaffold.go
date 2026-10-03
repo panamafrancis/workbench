@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/panamafrancis/workbench/pkg/git"
 )
@@ -14,13 +15,13 @@ type ScaffoldResult struct {
 	Path  string
 }
 
-// Scaffold creates a stack repo named name, seeded with supatree.yml (listing
-// the given member aliases), AGENTS.md, a scripts/ directory, and a .gitignore,
-// then registers it in the supatree registry. It is placed at
-// ~/supatree/stacks/<name>/ unless pathOverride is given. The member aliases
-// must resolve to repos supatree can clone from, and the target dir must not already be a
-// git repo.
-func Scaffold(c *Config, name, pathOverride string, members []string) (*ScaffoldResult, error) {
+// Scaffold creates a stack repo named name, seeded with supatree.yml (the
+// given members, alias → git URL), AGENTS.md, a scripts/ directory, and a
+// .gitignore, then registers it. It is placed at ~/supatree/stacks/<name>/
+// unless pathOverride is given, and the target dir must not already be a git
+// repo. Each member is cloned into the repo cache up front, so the first tree
+// does not pay for it.
+func Scaffold(c *Config, name, pathOverride string, members map[string]string) (*ScaffoldResult, error) {
 	if err := git.ValidateName(name, nil); err != nil {
 		return nil, fmt.Errorf("invalid stack name %q: %w", name, err)
 	}
@@ -34,10 +35,15 @@ func Scaffold(c *Config, name, pathOverride string, members []string) (*Scaffold
 	}
 	alias := name
 	if len(members) == 0 {
-		return nil, fmt.Errorf("no repos selected — pass --repos=<a,b,c> or pick some interactively")
+		return nil, fmt.Errorf("no repos selected — pass --repos=<owner/repo,...> or pick some interactively")
 	}
-	if _, err := c.baseClones(members); err != nil {
-		return nil, err
+	for alias, url := range members {
+		if err := git.ValidateName(alias, nil); err != nil {
+			return nil, fmt.Errorf("invalid member alias %q: %w", alias, err)
+		}
+		if _, err := c.ResolveMember(alias, url); err != nil {
+			return nil, err
+		}
 	}
 	if isGitRepo(dir) {
 		return nil, fmt.Errorf("%s is already a git repository; scaffold expects a fresh directory", dir)
@@ -79,4 +85,34 @@ func Scaffold(c *Config, name, pathOverride string, members []string) (*Scaffold
 		return nil, err
 	}
 	return &ScaffoldResult{Alias: alias, Path: dir}, nil
+}
+
+// ParseMemberArg reads how a person names a member on the command line:
+// "owner/repo" (a GitHub repository, over ssh), a git URL, or either with an
+// explicit alias as "alias=…". The alias defaults to the repository name.
+func ParseMemberArg(arg string) (alias, url string, err error) {
+	arg = strings.TrimSpace(arg)
+	if a, rest, ok := strings.Cut(arg, "="); ok && !strings.Contains(a, "/") && !strings.Contains(a, ":") {
+		alias, arg = strings.TrimSpace(a), strings.TrimSpace(rest)
+	}
+	url = arg
+	if !strings.Contains(arg, ":") && !filepath.IsAbs(arg) && strings.Count(arg, "/") == 1 {
+		url = "git@github.com:" + strings.TrimSuffix(arg, ".git") + ".git"
+	}
+	if _, err := CacheKey(url); err != nil {
+		return "", "", err
+	}
+	if alias == "" {
+		alias = repoName(url)
+	}
+	return alias, url, nil
+}
+
+// repoName is the last path element of a git URL, without .git.
+func repoName(url string) string {
+	url = strings.TrimSuffix(strings.TrimSuffix(url, "/"), ".git")
+	if i := strings.LastIndexAny(url, "/:"); i >= 0 {
+		url = url[i+1:]
+	}
+	return strings.ToLower(url)
 }

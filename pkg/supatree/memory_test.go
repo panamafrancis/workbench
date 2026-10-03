@@ -14,10 +14,10 @@ func TestHistoryFromLedger(t *testing.T) {
 	testutil.IsolateHome(t)
 	base := diffNow
 	evs := []Event{
-		{At: base, Kind: EventPROpened, Tree: treeA, Member: "api", PR: 1, Text: "x"},
-		{At: base.Add(time.Hour), Kind: EventMerged, Tree: treeA, Member: "api", PR: 1, Text: "x"},
+		{At: base, Kind: EventPROpened, Tree: treeA, Member: aliasAPI, PR: 1, Text: "x"},
+		{At: base.Add(time.Hour), Kind: EventMerged, Tree: treeA, Member: aliasAPI, PR: 1, Text: "x"},
 		{At: base.Add(2 * time.Hour), Kind: EventMerged, Tree: treeA, Member: "web", PR: 2, Text: "x"},
-		{At: base.Add(3 * time.Hour), Kind: EventClosed, Tree: treeB, Member: "api", PR: 3, Text: "x"},
+		{At: base.Add(3 * time.Hour), Kind: EventClosed, Tree: treeB, Member: aliasAPI, PR: 3, Text: "x"},
 	}
 	if err := AppendEvents(evs); err != nil {
 		t.Fatalf("AppendEvents: %v", err)

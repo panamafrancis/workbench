@@ -499,3 +499,15 @@ Where the implementation departed from the text above, and why.
   lock lived in workbench's cache (now the per-user temp dir), and failed
   zellij calls logged to workbench's logs from either tool (now
   `zellij.LogDir`, set by each tool).
+- **`migrate` refuses a dirty stack** rather than skipping it. A skipped
+  stack would be left in the old spec format, which nothing reads any more,
+  and `migrate` cannot be re-run once the old layout is set aside.
+- **Cache clones are seeded from the old local clone**, then pointed at the
+  canonical URL and fetched (best effort). Fast, works offline, and needs no
+  credentials until the first real fetch.
+- **Local repositories are members too**: a local path or `file://` URL is a
+  valid member URL, cached under `repos/local/<path>`. It is what the e2e
+  fixtures use, and it serves a repo that has no remote.
+- **`review_refresh` fetches from the member worktree**, which shares its
+  clone's refs and objects — so it needs no access to the clone beyond the
+  git dir the agent is already granted.

@@ -75,8 +75,12 @@ func TestSpecOrderedMembers(t *testing.T) {
 	testutil.IsolateHome(t)
 	root := t.TempDir()
 	spec := &Spec{
-		Members: []string{aliasAdmin, aliasKeystone, aliasTerraform},
-		Deps:    map[string][]string{aliasKeystone: {aliasTerraform}, aliasAdmin: {aliasKeystone}},
+		Members: map[string]string{
+			aliasAdmin:     "git@github.com:o/admin.git",
+			aliasKeystone:  "git@github.com:o/keystone.git",
+			aliasTerraform: "git@github.com:o/terraform.git",
+		},
+		Deps: map[string][]string{aliasKeystone: {aliasTerraform}, aliasAdmin: {aliasKeystone}},
 	}
 	if err := SaveSpec(root, spec); err != nil {
 		t.Fatal(err)
@@ -97,9 +101,9 @@ func TestSpecOrderedMembers(t *testing.T) {
 	}
 }
 
-// Supatree's own models win; with none, workbench's (the migration bridge);
-// with neither, the built-in defaults. A model nobody defines names the file
-// to add it to.
+// Supatree's own models win; with none, the built-in defaults, whose claude
+// runs under supatree's own profile. A model nobody defines names the file to
+// add it to.
 func TestModelResolutionOrder(t *testing.T) {
 	own := &Config{Models: map[string]config.Model{"mine": {Binary: "mine"}}}
 	if m, err := own.Model("mine"); err != nil || m.Binary != "mine" {
@@ -109,20 +113,16 @@ func TestModelResolutionOrder(t *testing.T) {
 		t.Error("a supatree config with its own models must not fall through to the defaults")
 	}
 
-	bridged := &Config{legacy: &config.Config{DefaultModel: "wbm", Models: map[string]config.Model{"wbm": {Binary: "wb"}}}}
-	if got := bridged.ResolveModel(""); got != "wbm" {
-		t.Errorf("ResolveModel with only workbench's config = %q, want its default", got)
-	}
-	if m, err := bridged.Model("wbm"); err != nil || m.Binary != "wb" {
-		t.Errorf("bridged model = %+v, %v", m, err)
-	}
-
 	bare := &Config{}
 	if got := bare.ResolveModel(""); got != defaultModelKey {
 		t.Errorf("ResolveModel with nothing configured = %q, want claude", got)
 	}
-	if m, err := bare.Model(defaultModelKey); err != nil || m.Binary != defaultModelKey {
+	m, err := bare.Model(defaultModelKey)
+	if err != nil || m.Binary != defaultModelKey {
 		t.Errorf("default model = %+v, %v", m, err)
+	}
+	if m.NonoProfile != AgentProfileName {
+		t.Errorf("default model runs under %q, want supatree's own %q", m.NonoProfile, AgentProfileName)
 	}
 	if _, err := bare.Model("nosuch"); err == nil || !strings.Contains(err.Error(), "models:") {
 		t.Errorf("unknown model error = %v, want one naming the models section", err)
@@ -136,10 +136,7 @@ func TestLoadWithoutWorkbench(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.legacy != nil {
-		t.Error("loaded a workbench config that does not exist")
-	}
-	if _, err := c.baseClone("anything"); err == nil {
-		t.Error("resolved a member with no source for it")
+	if len(c.Stacks) != 0 || len(c.Models) != 0 {
+		t.Errorf("fresh config = %+v", c)
 	}
 }
