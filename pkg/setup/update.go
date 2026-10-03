@@ -88,7 +88,7 @@ func compareVersions(current, latest string) string {
 	if !isNewer(latest, current) {
 		return ""
 	}
-	return fmt.Sprintf("workbench %s available (you have %s) — go install github.com/panamafrancis/workbench@latest github.com/panamafrancis/workbench/cmd/supatree@latest",
+	return fmt.Sprintf("workbench %s available (you have %s) — go install github.com/panamafrancis/workbench@latest",
 		latest, current)
 }
 

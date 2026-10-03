@@ -32,7 +32,8 @@ func WorkbenchServer(version string) *Server {
 				return "You're inside a supatree, not a plain workbench worktree. " +
 					"Use the supatree MCP tools instead: create_prs (all members, dependency-ordered) " +
 					"or create_pr (one member), and rename_branches for the st/<slug>/<alias> branches. " +
-					"If those tools aren't listed, run `supatree init` to register the supatree MCP server."
+					"If those tools aren't listed, run `supatree init` to register the supatree MCP server " +
+					"(supatree is github.com/panamafrancis/supatree)."
 			}
 			if os.Getenv("WORKBENCH") != "1" {
 				return "Not inside a workbench session (WORKBENCH env var not set)."
