@@ -117,15 +117,13 @@ func TreesStateDir() string {
 // tree keeps a .supatree symlink to it (LinkState), so every path agents and
 // docs use — .supatree/info.md — reads the same as it always did.
 //
-// A tree that already has its link resolves through it, so a tree root whose
-// directory name is not its name (or that was moved) still finds its state.
-// The PM is rooted in no tree; its own home is its state directory.
+// It is derived from the tree's name, never read from the link: the link sits
+// inside the tree, where its agents can rewrite it, and what it points at is
+// granted to them and deleted by Remove. The PM is rooted in no tree; its own
+// home is its state directory.
 func StateDir(root string) string {
 	if filepath.Clean(root) == PMDir() {
 		return PMDir()
-	}
-	if target, err := os.Readlink(StateLink(root)); err == nil && filepath.IsAbs(target) {
-		return target
 	}
 	return filepath.Join(TreesStateDir(), filepath.Base(root))
 }

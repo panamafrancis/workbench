@@ -125,6 +125,9 @@ func (c *Config) StackDep(stackAlias, from, to string) error {
 var errNoChange = errors.New("no change")
 
 func editSpec(stackPath, message string, edit func(*Spec) error) error {
+	if err := git.RequireSafeRepo(stackPath); err != nil {
+		return err
+	}
 	if out, err := gitOutput(stackPath, "status", "--porcelain", "--", SpecName); err != nil {
 		return err
 	} else if out != "" {
@@ -323,8 +326,25 @@ func FindCachedRepo(name string) (*CachedRepo, error) {
 }
 
 // RemoveCachedRepo deletes a clone from the cache. It refuses while any tree
-// has a worktree of it: that worktree's .git points into the clone.
+// has a worktree of it: that worktree's .git points into the clone, and its
+// branch and unpushed commits live in the clone. The clone's own worktree list
+// is the authority — a member that has left its tree's spec, or a tree List
+// cannot parse, still has one there.
 func RemoveCachedRepo(r *CachedRepo, insts []*Instance) error {
+	_ = runGit(r.Path, "worktree", "prune")
+	out, err := gitOutput(r.Path, "worktree", "list", "--porcelain")
+	if err != nil {
+		return fmt.Errorf("list %s's worktrees: %w", r.Key, err)
+	}
+	var others []string
+	for _, line := range strings.Split(out, "\n") {
+		if wt, ok := strings.CutPrefix(line, "worktree "); ok && realPath(wt) != realPath(r.Path) {
+			others = append(others, wt)
+		}
+	}
+	if len(others) > 0 {
+		return fmt.Errorf("%s still has worktrees: %s — remove the trees using it first", r.Key, strings.Join(others, ", "))
+	}
 	if uses := UsageOf(CacheUsage(insts), r.Path); len(uses) > 0 {
 		trees := make([]string, 0, len(uses))
 		for _, u := range uses {

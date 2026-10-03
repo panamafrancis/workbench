@@ -275,6 +275,11 @@ func localState(mem Member) MemberLocal {
 	if !mem.Exists {
 		return MemberLocal{}
 	}
+	// Status runs unsandboxed on every round; a repository whose config would
+	// run a command (a filter on a racily-clean file) gets no git at all.
+	if len(git.RepoConfigRisk(mem.Path)) > 0 {
+		return MemberLocal{Exists: true}
+	}
 	l := MemberLocal{Exists: true, Dirty: git.IsDirty(mem.Path)}
 	l.CheckedOut, _ = git.CurrentBranch(mem.Path)
 	l.LastCommit, _ = git.LastCommitTime(mem.Path)

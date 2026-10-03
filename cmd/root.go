@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/panamafrancis/workbench/pkg/config"
+	"github.com/panamafrancis/workbench/pkg/git"
 	"github.com/panamafrancis/workbench/pkg/zellij"
 )
 
@@ -31,6 +32,8 @@ var rootCmd = &cobra.Command{
 	},
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 		zellij.LogDir = config.LogsDir()
+		// Unsandboxed: git here runs in repos agents can write to.
+		git.HardenGit()
 		if config.OldLayout() && !layoutExempt[cmd.Name()] {
 			return errors.New(config.OldLayoutMessage)
 		}

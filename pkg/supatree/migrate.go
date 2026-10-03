@@ -14,6 +14,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/panamafrancis/workbench/pkg/config"
+	"github.com/panamafrancis/workbench/pkg/git"
 	"github.com/panamafrancis/workbench/pkg/github"
 	"github.com/panamafrancis/workbench/pkg/setup"
 	"github.com/panamafrancis/workbench/pkg/zellij"
@@ -241,9 +242,22 @@ func planStacks(old string, oldCfg *Config, wb *config.Config) ([]migrateStack, 
 		if underDir(oldStacks, s.Path) {
 			rel, _ := filepath.Rel(oldStacks, s.Path)
 			st.NewPath = filepath.Join(StacksDir(), rel)
-			if _, err := os.Stat(st.NewPath); err == nil {
+			_, oldErr := os.Stat(s.Path)
+			_, newErr := os.Stat(st.NewPath)
+			switch {
+			case oldErr != nil && newErr == nil:
+				// Moved by an earlier run that failed later on: carry on
+				// from where it is now.
+				st.Stack.Path = st.NewPath
+			case newErr == nil:
 				problems = append(problems, fmt.Sprintf("stack %s: %s already exists", s.Alias, st.NewPath))
+				continue
 			}
+		}
+		s = st.Stack
+		if err := git.RequireSafeRepo(s.Path); err != nil {
+			problems = append(problems, fmt.Sprintf("stack %s: %v", s.Alias, err))
+			continue
 		}
 		if dirty, err := hasUncommittedChanges(s.Path); err != nil {
 			problems = append(problems, fmt.Sprintf("stack %s at %s: %v", s.Alias, s.Path, err))
@@ -257,8 +271,15 @@ func planStacks(old string, oldCfg *Config, wb *config.Config) ([]migrateStack, 
 			problems = append(problems, fmt.Sprintf("stack %s: %v", s.Alias, err))
 			continue
 		}
-		if _, err := parseSpec(data); err == nil {
-			plans = append(plans, st) // already in the URL form
+		if spec, err := parseSpec(data); err == nil {
+			// Already in the URL form — rewritten by an earlier run. Its
+			// members still carry copy_files across from workbench.
+			for _, alias := range spec.Aliases() {
+				if m, ok := planConverted(alias, spec.Members[alias], wb); ok {
+					st.Members = append(st.Members, m)
+				}
+			}
+			plans = append(plans, st)
 			continue
 		}
 		var spec oldSpec
@@ -317,6 +338,20 @@ func planMember(alias string, wb *config.Config) (migrateMember, error) {
 	}
 	m.Key = key
 	return m, nil
+}
+
+// planConverted is planMember for a member already in the URL form: the clone
+// workbench knew it by, if it has one, supplies the cache seed and copy_files.
+func planConverted(alias, url string, wb *config.Config) (migrateMember, bool) {
+	if wb == nil {
+		return migrateMember{}, false
+	}
+	repo, _ := wb.FindRepo(alias)
+	key, err := CacheKey(url)
+	if repo == nil || err != nil {
+		return migrateMember{}, false
+	}
+	return migrateMember{Alias: alias, Local: repo.LocalPath, URL: url, Key: key, CopyFiles: repo.CopyFiles}, true
 }
 
 func isSSHForm(url string) bool {

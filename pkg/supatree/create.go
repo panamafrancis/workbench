@@ -47,6 +47,10 @@ func New(c *Config, opts CreateOptions) (*Instance, *SyncReport, error) {
 		return nil, nil, fmt.Errorf("path %s already exists", root)
 	}
 
+	// The stack's .git is writable from inside every tree made from it.
+	if err := git.RequireSafeRepo(stack.Path); err != nil {
+		return nil, nil, err
+	}
 	// Create the meta-worktree (checks out the stack's tracked files).
 	if _, err := git.CreateWorktree(stack.Path, root, "st/"+name); err != nil {
 		return nil, nil, fmt.Errorf("create supatree worktree: %w", err)

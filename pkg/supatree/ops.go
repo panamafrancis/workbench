@@ -105,6 +105,9 @@ func RequestOp(dir string, op Op, timeout time.Duration) (*OpResult, error) {
 	}
 	req := filepath.Join(qdir, op.ID+opRequestExt)
 	if err := os.Remove(req); err == nil {
+		if busy := runningOps(); busy != "" {
+			return nil, fmt.Errorf("the watcher is busy with another operation (%s) and did not get to this one in %s; ask again shortly", busy, timeout)
+		}
 		return nil, ErrOpNotPickedUp
 	}
 	if res, ok := takeResult(qdir, op.ID); ok {
@@ -135,6 +138,24 @@ type ClaimedOp struct {
 	Op  Op
 }
 
+// runningOps names an operation some watcher has claimed and not yet
+// answered, if any: the difference between "nobody is listening" and "busy".
+func runningOps() string {
+	matches, _ := filepath.Glob(filepath.Join(PMDir(), "ops", "*"+opRunningExt))
+	more, _ := filepath.Glob(filepath.Join(TreesStateDir(), "*", "ops", "*"+opRunningExt))
+	for _, m := range append(matches, more...) {
+		var op Op
+		if readJSON(m, &op) == nil {
+			return string(op.Kind) + " " + op.Tree + op.Name
+		}
+	}
+	return ""
+}
+
+// staleResultAge is how long an answer nobody collected is kept: its asker
+// gave up waiting and will not come back for it.
+const staleResultAge = time.Hour
+
 // ClaimOps takes every waiting request from dirs, oldest first. Claiming is a
 // rename, so a request is run once even if two watchers ever raced, and a
 // requester that gave up and removed its request is never run.
@@ -148,6 +169,12 @@ func ClaimOps(dirs []string) []ClaimedOp {
 		}
 		for _, e := range entries {
 			name := e.Name()
+			if strings.HasSuffix(name, opResultExt) {
+				if info, err := e.Info(); err == nil && time.Since(info.ModTime()) > staleResultAge {
+					_ = os.Remove(filepath.Join(qdir, name))
+				}
+				continue
+			}
 			if !strings.HasSuffix(name, opRequestExt) {
 				continue
 			}
@@ -232,7 +259,7 @@ func (c *Config) RunOp(claimed ClaimedOp, hooks OpHooks) OpResult {
 	case OpRemove:
 		err = c.runRemove(op, &res, hooks)
 	case OpSync:
-		err = c.runSync(op, &res)
+		err = c.runSync(op, &res, filepath.Clean(claimed.Dir) != PMDir())
 	default:
 		err = fmt.Errorf("unknown operation %q", op.Kind)
 	}
@@ -310,10 +337,19 @@ func (c *Config) runRemove(op Op, res *OpResult, hooks OpHooks) error {
 	return nil
 }
 
-func (c *Config) runSync(op Op, res *OpResult) error {
+// runSync reconciles a tree. Asked for by the tree itself, the spec it syncs
+// is one its agents can edit, so a member it adds must be one the stack
+// already names or the cache already holds: otherwise an agent could have the
+// watcher clone any repository on the machine into its tree, and read it.
+func (c *Config) runSync(op Op, res *OpResult, fromTree bool) error {
 	inst, err := Get(c, op.Tree)
 	if err != nil {
 		return err
+	}
+	if fromTree {
+		if err := c.vetTreeSpec(inst); err != nil {
+			return err
+		}
 	}
 	report, err := Sync(c, inst.Root, op.Prune)
 	res.Tree = op.Tree
@@ -352,4 +388,31 @@ func reportWarnings(report *SyncReport) string {
 		return ""
 	}
 	return "\nwarnings: " + strings.Join(report.Warnings, "; ")
+}
+
+// vetTreeSpec refuses a tree spec that names a repository neither its stack
+// (as committed in the stack's own checkout, which no agent can write) nor the
+// repo cache knows.
+func (c *Config) vetTreeSpec(inst *Instance) error {
+	known := map[string]bool{}
+	if stack := c.FindStack(inst.Stack); stack != nil {
+		if spec, err := LoadSpec(stack.Path); err == nil {
+			for _, url := range spec.Members {
+				if key, err := CacheKey(url); err == nil {
+					known[key] = true
+				}
+			}
+		}
+	}
+	for _, m := range inst.Members {
+		key, err := CacheKey(m.URL)
+		if err != nil {
+			return fmt.Errorf("member %q: %w", m.Alias, err)
+		}
+		if !known[key] && !isClone(filepath.Join(ReposDir(), key)) {
+			return fmt.Errorf("member %q (%s) is neither in stack %s nor in the repo cache — add it to the stack first: supatree stack add %s %s",
+				m.Alias, m.URL, inst.Stack, inst.Stack, m.URL)
+		}
+	}
+	return nil
 }

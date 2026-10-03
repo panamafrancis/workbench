@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/panamafrancis/workbench/pkg/git"
 	"github.com/panamafrancis/workbench/pkg/supatree"
 	"github.com/panamafrancis/workbench/pkg/zellij"
 )
@@ -46,6 +47,8 @@ var rootCmd = &cobra.Command{
 	},
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 		zellij.LogDir = supatree.LogsDir()
+		// Unsandboxed: git here runs in clones agents can write to.
+		git.HardenGit()
 		if supatree.OldLayout() && !layoutExempt[cmd.Name()] {
 			return errors.New(supatree.OldLayoutMessage)
 		}

@@ -145,6 +145,14 @@ func TestRemoveCachedRepoRefusesInUse(t *testing.T) {
 	if err := RemoveCachedRepo(r, []*Instance{inst}); err == nil || !strings.Contains(err.Error(), treeLima) {
 		t.Errorf("err = %v, want a refusal naming the tree", err)
 	}
+	// Even with no tree reporting it — a member pruned from the spec, a tree
+	// List could not parse — the clone's own worktree list keeps it.
+	if err := RemoveCachedRepo(r, nil); err == nil {
+		t.Error("removed a clone that still has a worktree")
+	}
+	if _, err := Remove(c, treeLima, RemoveOptions{Force: true}); err != nil {
+		t.Fatal(err)
+	}
 	if err := RemoveCachedRepo(r, nil); err != nil {
 		t.Errorf("unused clone not removed: %v", err)
 	}

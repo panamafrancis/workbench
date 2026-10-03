@@ -116,7 +116,11 @@ func TestRemoveMemberStillReapsItsOwnBranchWhenMemberIsForeign(t *testing.T) {
 // worktrees checked out of repo. It returns the tree root.
 func writeTree(t *testing.T, repo string, meta *Meta, aliases ...string) string {
 	t.Helper()
-	root := t.TempDir()
+	// Named for the tree: state is found by the root's name.
+	root := filepath.Join(t.TempDir(), meta.Name)
+	if err := os.MkdirAll(root, 0755); err != nil {
+		t.Fatal(err)
+	}
 	members := make(map[string]string, len(aliases))
 	for _, a := range aliases {
 		members[a] = repo
@@ -152,11 +156,7 @@ func TestForkReviewConvertsAndRecordsBase(t *testing.T) {
 	root := writeTree(t, repo, meta, aliasKeystone)
 
 	cfg := &Config{TreesBase: filepath.Dir(root), Stacks: []Stack{{Alias: "s", Path: repo}}}
-	// Get() resolves by name under the trees base, so the dir must be the name.
-	named := filepath.Join(filepath.Dir(root), treeA)
-	if err := os.Rename(root, named); err != nil {
-		t.Fatal(err)
-	}
+	named := root
 
 	results, err := ForkReview(cfg, treeA)
 	if err != nil {
@@ -197,10 +197,7 @@ func TestForkReviewRefusesAuthoringTree(t *testing.T) {
 	repo := originRepo(t)
 	meta := &Meta{Name: "berlin", Slug: "berlin", Stack: "s"}
 	root := writeTree(t, repo, meta, aliasKeystone)
-	named := filepath.Join(filepath.Dir(root), "berlin")
-	if err := os.Rename(root, named); err != nil {
-		t.Fatal(err)
-	}
+	named := root
 	cfg := &Config{TreesBase: filepath.Dir(named), Stacks: []Stack{{Alias: "s", Path: repo}}}
 	if _, err := ForkReview(cfg, "berlin"); err == nil {
 		t.Error("forking an authoring tree was allowed")
@@ -221,10 +218,7 @@ func TestForkedMembersStopKeyingOnTheReviewedPR(t *testing.T) {
 		},
 	}
 	root := writeTree(t, repo, meta, aliasKeystone)
-	named := filepath.Join(filepath.Dir(root), treeA)
-	if err := os.Rename(root, named); err != nil {
-		t.Fatal(err)
-	}
+	named := root
 	cfg := &Config{TreesBase: filepath.Dir(named), Stacks: []Stack{{Alias: "s", Path: repo}}}
 
 	before, err := LoadInstance(named)

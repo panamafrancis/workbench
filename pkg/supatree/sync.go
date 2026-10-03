@@ -123,7 +123,7 @@ func pruneMembers(c *Config, root string, keep []string, report *SyncReport) err
 	}
 	var stale []string
 	for _, e := range entries {
-		if e.IsDir() && !keepSet[e.Name()] {
+		if e.IsDir() && !keepSet[e.Name()] && git.ValidateName(e.Name(), nil) == nil {
 			stale = append(stale, e.Name())
 		}
 	}
@@ -152,11 +152,21 @@ func pruneMembers(c *Config, root string, keep []string, report *SyncReport) err
 // left the spec can still be torn down; url is the fallback when the worktree
 // is too broken to say.
 func removeMember(c *Config, root, alias, url, want string, report *SyncReport) {
+	if err := git.ValidateName(alias, nil); err != nil {
+		report.Warnings = append(report.Warnings, fmt.Sprintf("refusing to remove member %q: %v", alias, err))
+		return
+	}
 	path := MemberPath(root, alias)
 	clone, ok := cloneOf(path)
 	if !ok && url != "" {
 		if bc, err := c.cachedClone(alias, url); err == nil && isClone(bc.Clone) {
 			clone, ok = bc.Clone, true
+		}
+	}
+	if ok {
+		if err := git.RequireSafeRepo(clone); err != nil {
+			report.Warnings = append(report.Warnings, fmt.Sprintf("%s: %v — removed the directory only", alias, err))
+			ok = false
 		}
 	}
 	if ok {

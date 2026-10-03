@@ -73,6 +73,12 @@ func Remove(c *Config, name string, opts RemoveOptions) (*RemoveResult, error) {
 	archiveSessions(inst.Root, name, &res.Archived)
 	_ = sandbox.ClearSessionCache(inst.Root)
 	if stack != nil {
+		if err := git.RequireSafeRepo(stack.Path); err != nil {
+			res.Warnings = append(res.Warnings, err.Error()+" — left the stack's worktree record and branch")
+			stack = nil
+		}
+	}
+	if stack != nil {
 		if err := git.RemoveWorktree(stack.Path, inst.Root); err != nil {
 			res.Warnings = append(res.Warnings, fmt.Sprintf("remove worktree: %v", err))
 		}

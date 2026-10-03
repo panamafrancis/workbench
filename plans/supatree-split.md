@@ -511,3 +511,13 @@ Where the implementation departed from the text above, and why.
 - **`review_refresh` fetches from the member worktree**, which shares its
   clone's refs and objects — so it needs no access to the clone beyond the
   git dir the agent is already granted.
+- **Hardened after review** (a pass over steps 1–4 found these): the spec,
+  the `.supatree` link and `meta.yml` are all writable by a tree's agents, so
+  nothing unsandboxed trusts them — aliases are validated, state and roots
+  are derived from names (a tree is found under the current `trees_base`
+  only; `meta.root` is informational), and a tree's own sync may only add
+  repositories its stack or the cache already knows. Agents can also write
+  the git dirs the watcher runs git in, so unsandboxed processes pin
+  command-running git settings (`git.HardenGit`) and refuse repositories
+  whose local config sets the ones that cannot be pinned. `repo rm` asks the
+  clone's own worktree list, and a failed `migrate` can be re-run.

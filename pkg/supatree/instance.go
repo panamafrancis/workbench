@@ -3,11 +3,10 @@ package supatree
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 
-	"gopkg.in/yaml.v3"
+	"github.com/panamafrancis/workbench/pkg/git"
 )
 
 // Instance is a live supatree: a worktree of a stack repo with its member repo
@@ -121,9 +120,8 @@ func LoadInstance(root string) (*Instance, error) {
 	}, nil
 }
 
-// List discovers every supatree from the per-tree state directories. Each
-// meta.yml records where its tree is checked out, so a tree is found wherever
-// trees_base put it — including a base that has since been changed.
+// List discovers every supatree from the per-tree state directories; each is
+// checked out under the trees base (rootFor).
 func List(c *Config) ([]*Instance, error) {
 	entries, err := os.ReadDir(TreesStateDir())
 	if os.IsNotExist(err) {
@@ -162,15 +160,12 @@ func Get(c *Config, name string) (*Instance, error) {
 }
 
 // rootFor is where the tree with this state directory is checked out: the
-// root its meta records, else (a meta written before it recorded one) the
-// tree of that name under the trees base.
+// tree of that name under the trees base. Deliberately not meta.Root — meta is
+// in the tree's state, which its agents can write, and a root taken from there
+// would point Remove's RemoveAll, and the next launch's grants, anywhere.
 func rootFor(c *Config, name string) string {
-	data, err := os.ReadFile(filepath.Join(TreesStateDir(), name, "meta.yml"))
-	if err == nil {
-		var m Meta
-		if yaml.Unmarshal(data, &m) == nil && m.Root != "" {
-			return m.Root
-		}
+	if git.ValidateName(name, nil) != nil {
+		return ""
 	}
 	return treeRoot(c.ResolveTreesBase(), name)
 }

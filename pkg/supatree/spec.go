@@ -8,6 +8,8 @@ import (
 	"sort"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/panamafrancis/workbench/pkg/git"
 )
 
 // Spec is the tracked repo-selection file (supatree.yml) at a stack/supatree
@@ -59,9 +61,23 @@ func parseSpec(data []byte) (*Spec, error) {
 	if err := yaml.Unmarshal(data, &s); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", SpecName, err)
 	}
+	// Aliases become paths (repos/<alias>) that unsandboxed processes create
+	// and delete, and the spec is writable from inside the tree — so an alias
+	// is held to the same charset as every other name supatree turns into a
+	// path, and a "../" can never reach a RemoveAll.
 	for alias, url := range s.Members {
+		if err := git.ValidateName(alias, nil); err != nil {
+			return nil, fmt.Errorf("%s: member alias %q: %w", SpecName, alias, err)
+		}
 		if url == "" {
 			return nil, fmt.Errorf("%s: member %q has no git URL", SpecName, alias)
+		}
+	}
+	for from, tos := range s.Deps {
+		for _, a := range append([]string{from}, tos...) {
+			if err := git.ValidateName(a, nil); err != nil {
+				return nil, fmt.Errorf("%s: deps: %q: %w", SpecName, a, err)
+			}
 		}
 	}
 	return &s, nil

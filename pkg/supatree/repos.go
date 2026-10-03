@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/panamafrancis/workbench/pkg/config"
+	"github.com/panamafrancis/workbench/pkg/git"
 	"github.com/panamafrancis/workbench/pkg/github"
 )
 
@@ -99,7 +100,7 @@ func (c *Config) ResolveMember(alias, url string) (*baseClone, error) {
 		return nil, err
 	}
 	if isClone(bc.Clone) {
-		return bc, nil
+		return bc, git.RequireSafeRepo(bc.Clone)
 	}
 	lock := filepath.Join(StateRoot(), "locks", strings.ReplaceAll(bc.Key, "/", "_")+".lock")
 	err = config.WithFileLock(lock, func() error {
@@ -112,7 +113,7 @@ func (c *Config) ResolveMember(alias, url string) (*baseClone, error) {
 	if err != nil {
 		return nil, fmt.Errorf("clone %s for %q: %w", url, alias, err)
 	}
-	return bc, nil
+	return bc, git.RequireSafeRepo(bc.Clone)
 }
 
 // cloneInto clones url to dest by way of a sibling temp dir, so an interrupted
@@ -129,7 +130,7 @@ func cloneInto(url, dest string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), cloneTimeout)
 	defer cancel()
 	// Stdin closed: tree creation must never stop to ask a human anything.
-	cmd := exec.CommandContext(ctx, "git", "clone", "--quiet", url, tmp)
+	cmd := exec.CommandContext(ctx, "git", "clone", "--quiet", "--", url, tmp)
 	cmd.Stdin = nil
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
 	if out, err := cmd.CombinedOutput(); err != nil {

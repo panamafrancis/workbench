@@ -38,27 +38,57 @@ func TestStateLivesOutsideTheTree(t *testing.T) {
 	}
 }
 
-// Discovery comes from the state dirs, and a tree is found wherever its meta
-// says it is checked out — not only under the current trees base.
+// Discovery comes from the state dirs, and a tree is where the trees base says
+// — never where its own meta.yml says, which its agents can write.
 func TestListFindsTreesByState(t *testing.T) {
 	testutil.IsolateHome(t)
-	elsewhere := filepath.Join(t.TempDir(), treeLima)
-	if err := (&Meta{Name: treeLima, Root: elsewhere}).Save(elsewhere); err != nil {
+	base := t.TempDir()
+	root := filepath.Join(base, treeLima)
+	elsewhere := t.TempDir()
+	if err := (&Meta{Name: treeLima, Root: elsewhere}).Save(root); err != nil {
 		t.Fatal(err)
 	}
-	if err := SaveSpec(elsewhere, &Spec{}); err != nil {
+	if err := SaveSpec(root, &Spec{}); err != nil {
 		t.Fatal(err)
 	}
-	c := &Config{TreesBase: t.TempDir()}
+	c := &Config{TreesBase: base}
 	insts, err := List(c)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(insts) != 1 || insts[0].Root != elsewhere {
-		t.Fatalf("List = %+v, want lima at %s", insts, elsewhere)
+	if len(insts) != 1 || insts[0].Root != root {
+		t.Fatalf("List = %+v, want lima at %s (meta.Root %s must be ignored)", insts, root, elsewhere)
 	}
-	if _, err := Get(c, treeLima); err != nil {
-		t.Errorf("Get: %v", err)
+	if inst, err := Get(c, treeLima); err != nil || inst.Root != root {
+		t.Errorf("Get = %+v, %v", inst, err)
+	}
+}
+
+// A rewritten .supatree link changes nothing: state is derived from the name.
+func TestStateDirIgnoresTheLink(t *testing.T) {
+	testutil.IsolateHome(t)
+	root := filepath.Join(t.TempDir(), treeLima)
+	if err := (&Meta{Name: treeLima}).Save(root); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(StateLink(root)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(TreesStateDir(), "other"), StateLink(root)); err != nil {
+		t.Fatal(err)
+	}
+	if got := StateDir(root); got != filepath.Join(TreesStateDir(), treeLima) {
+		t.Errorf("StateDir followed a rewritten link to %s", got)
+	}
+}
+
+// Aliases are held to the name charset: one that climbs out of repos/ would
+// put an unsandboxed RemoveAll anywhere.
+func TestSpecRejectsPathAliases(t *testing.T) {
+	for _, bad := range []string{"members:\n  ../../x: /tmp/r\n", "members:\n  a: /tmp/r\ndeps:\n  a: [../b]\n"} {
+		if _, err := parseSpec([]byte(bad)); err == nil {
+			t.Errorf("accepted %q", bad)
+		}
 	}
 }
 
