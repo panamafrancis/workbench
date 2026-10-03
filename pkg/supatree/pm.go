@@ -213,6 +213,10 @@ func PMEnv() map[string]string {
 
 // OpenPM opens or focuses the PM tab.
 func OpenPM(cfg *Config, ws zellij.Workspace, sidebarWidth string) (bool, error) {
+	// nono refuses a grant on a path that does not exist.
+	if err := EnsureLayout(); err != nil {
+		return false, err
+	}
 	if err := ScaffoldPM(); err != nil {
 		return false, err
 	}

@@ -30,6 +30,10 @@ func OpenRootAgent(inst *Instance, c *Config, ws zellij.Workspace, sidebarWidth,
 	if agentName == "" {
 		agentName = MainAgent
 	}
+	// nono refuses a grant on a path that does not exist.
+	if err := EnsureLayout(); err != nil {
+		return false, err
+	}
 	key := inst.Model
 	if modelOverride != "" {
 		key = modelOverride
@@ -83,6 +87,9 @@ func requireMember(inst *Instance, alias string) (*Member, error) {
 func OpenMemberAgent(inst *Instance, c *Config, ws zellij.Workspace, sidebarWidth, alias, modelOverride string) (bool, error) {
 	m, err := requireMember(inst, alias)
 	if err != nil {
+		return false, err
+	}
+	if err := EnsureLayout(); err != nil {
 		return false, err
 	}
 	key := inst.Model
