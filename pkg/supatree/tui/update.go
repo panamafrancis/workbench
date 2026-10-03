@@ -234,6 +234,11 @@ func (m *Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.mode = modeHelp
 	case "D":
 		return m, m.openDashboard()
+	case "S":
+		m.mode = modeNewStackName
+		m.input.SetValue("")
+		m.input.Placeholder = "stack name"
+		m.input.Focus()
 	case "P":
 		return m, m.openPM()
 	case "m":
@@ -298,6 +303,15 @@ func (m *Model) updateInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.inputErr = nil
 			m.input.Blur()
 			return m, m.newTree(stack, val)
+		case modeNewStackName:
+			if err := m.validateStackName(val); err != nil {
+				m.inputErr = err
+				return m, nil
+			}
+			m.mode = modeNormal
+			m.inputErr = nil
+			m.input.Blur()
+			return m, m.openStackNew(val)
 		case modeNormal, modeNewTree, modeConfirmDelete, modeConfirmQuit, modeHelp:
 			// Not text-input modes; handled earlier in updateInput.
 		}
@@ -307,11 +321,19 @@ func (m *Model) updateInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	default:
 		var cmd tea.Cmd
 		m.input, cmd = m.input.Update(msg)
-		if m.mode == modeNewTreeName {
+		switch m.mode {
+		case modeNewTreeName:
 			// Re-validate on every keystroke so the warning tracks what is in the
 			// field: it appears the moment the name goes bad and is gone again by
 			// the time the offending character has been deleted.
 			m.inputErr = m.validateTreeName(m.input.Value())
+		case modeNewStackName:
+			if v := m.input.Value(); v != "" {
+				m.inputErr = m.validateStackName(v)
+			} else {
+				m.inputErr = nil
+			}
+		case modeNormal, modeNewAgent, modeNewTree, modeConfirmDelete, modeConfirmQuit, modeHelp:
 		}
 		return m, cmd
 	}
@@ -475,6 +497,38 @@ func (m *Model) removeTree(tree string) tea.Cmd {
 		// sidebar is in one of them, this process; it is closed last.
 		_ = supatree.CloseTree(m.ws, tree, res)
 		return actionDoneMsg{msg: "removed " + tree}
+	}
+}
+
+// validateStackName reports why a typed stack name would be rejected.
+func (m *Model) validateStackName(name string) error {
+	existing := make([]string, 0, len(m.stCfg.Stacks))
+	for _, s := range m.stCfg.Stacks {
+		existing = append(existing, s.Alias)
+	}
+	return git.ValidateName(name, existing)
+}
+
+// StackTab is the tab `S` runs `supatree stack new` in. Reserved like DashTab.
+const StackTab = "supatree-stack"
+
+// openStackNew runs `supatree stack new <name>` in its own tab: the same flow
+// as the CLI, picker included, which needs a whole terminal rather than a
+// sidebar's footer. The tab waits for enter before closing, so whatever the
+// command said — an error above all — can be read. The name reaches the script
+// as an argument, never spliced into it.
+func (m *Model) openStackNew(name string) tea.Cmd {
+	ws := m.ws
+	return func() tea.Msg {
+		if !zellij.IsInZellij() {
+			return actionDoneMsg{msg: "not inside zellij — run: supatree stack new " + name}
+		}
+		script := `supatree stack new "$1"; printf '
+[enter to close] '; read -r _`
+		if err := ws.OpenOrFocusCommandTab(StackTab, []string{"bash", "-c", script, "supatree-stack", name}); err != nil {
+			return actionDoneMsg{err: err}
+		}
+		return actionDoneMsg{msg: "new stack " + name}
 	}
 }
 

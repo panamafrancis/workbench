@@ -363,8 +363,15 @@ The MCP server gates on the `WORKBENCH` env var — tools return an error outsid
 
 ```sh
 supatree init                                   # dirs, config, supatree-agent nono profile, MCP
-supatree scaffold fraud --repos=fraud-zero/terraform,fraud-zero/keystone   # clones into the cache
-# (members are owner/repo, a git URL, or alias=<either>; omit --repos to pick from the cache)
+supatree stack new fraud --repos=fraud-zero/terraform,fraud-zero/keystone  # clones into the cache
+# (or --from ~/code/fraud-zero to pick from local checkouts' origins, --from-org fraud-zero via gh;
+#  members are owner/repo, a git URL, or alias=<either>; `scaffold` is an alias of `stack new`)
+supatree stack dep fraud keystone terraform     # keystone's PR merges after terraform's
+supatree stack add fraud fraud-zero/admin-frontend --as admin
+supatree stack rm  fraud admin
+supatree stack clone git@github.com:you/fraud-stack.git   # adopt a teammate's stack
+supatree repo ls                                # the repo cache: clones, size, trees using each
+supatree repo rm fraud-zero/keystone            # refuses while a tree has a worktree of it
 # edit ~/supatree/stacks/fraud/supatree.yml to add deps, commit it
 supatree start                                  # start the st-main Zellij session
 supatree new --stack=fraud                      # create a city-named supatree
@@ -427,6 +434,8 @@ The mouse works too: the wheel scrolls the list and a click selects a row. Wheel
 Pressing `n` prompts for a **name** (leave it blank to auto-generate a city name). If more than one stack is registered you first pick which stack from a list (`↑`/`↓` or `j`/`k` to move, `enter` to select, `esc` to cancel), then the name. The name is checked as you type — a name that would be rejected (`feature-v1.1`, or one already taken by a supatree or a workbench worktree) shows the reason under the field and `enter` leaves the prompt open so you can fix it in place; the warning clears with the character that caused it. After creation the cursor lands on the new supatree so it scrolls into view.
 
 Each supatree's **repositories section starts folded**, so a long list of supatrees stays readable. Its header carries a coloured count per PR status instead (`◌1 ◉2 ✓1 ✕1 ·3` — draft, open, merged, closed, and members with no PR yet); the same summary moves up onto the supatree row when the whole supatree is folded. Unfold the section (`Space`, `l` or `enter` on the `repositories` row) to see the member rows, which show each repo's PR state and number in full (`◉ open #871`).
+
+`S` creates a stack: it asks for a name, then runs `supatree stack new <name>` (its picker over the repo cache) in a tab of its own.
 
 Folds are shared: they live in `~/.local/state/supatree/ui.yml` rather than in each sidebar process, so folding a supatree in one tab folds it in every other tab's sidebar on its next reload (focus or the 30s tick) instead of leaving each tab with its own shape of the same list.
 

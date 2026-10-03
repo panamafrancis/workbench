@@ -261,6 +261,27 @@ git -C "$(cache_clone keystone)" rev-parse --verify --quiet refs/heads/feat/not-
     || fail "supatree rm deleted a branch the tree did not create"
 echo "    foreign branch survived teardown"
 
+# Stack and repo commands: every stack edit is one commit of supatree.yml.
+echo "--- stack + repo commands ---"
+supatree stack new t --repos="terraform=$SRC/terraform" >/dev/null || fail "stack new failed"
+T="$HOME/supatree/stacks/t"
+supatree stack add t "$SRC/keystone" >/dev/null || fail "stack add failed"
+supatree stack add t "$SRC/admin" --as web >/dev/null || fail "stack add --as failed"
+supatree stack dep t keystone terraform >/dev/null || fail "stack dep failed"
+supatree stack dep t terraform keystone >/dev/null 2>&1 && fail "stack dep accepted a cycle"
+supatree stack rm t web >/dev/null || fail "stack rm failed"
+grep "keystone: $SRC/keystone" "$T/supatree.yml" >/dev/null || fail "stack add did not record the URL"
+grep "web:" "$T/supatree.yml" >/dev/null && fail "stack rm left the member"
+[ "$(git -C "$T" log --oneline | wc -l | tr -d ' ')" = "5" ] || fail "stack edits are not one commit each"
+supatree repo ls | grep "local$SRC/keystone" >/dev/null || fail "repo ls does not list the cache"
+supatree new --stack t --name kyiv >/dev/null
+supatree repo rm "$SRC/keystone" >/dev/null 2>&1 && fail "repo rm removed a clone a tree uses"
+supatree repo ls | grep "kyiv:keystone" >/dev/null || fail "repo ls does not show which tree uses a clone"
+supatree rm kyiv -y --force >/dev/null
+supatree stack clone "$T" --as t2 >/dev/null || fail "stack clone failed"
+supatree new --stack t2 --name riga >/dev/null || fail "new tree from a cloned stack failed"
+supatree rm riga -y --force >/dev/null
+
 # Old layout: every command but migrate/version refuses, with one line saying
 # what to do, rather than half-working against files it no longer reads. Then
 # both migrations, and a tree from the migrated stack. (The ssh-alias origin

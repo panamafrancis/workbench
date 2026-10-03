@@ -14,82 +14,109 @@ import (
 )
 
 var (
-	scaffoldPath  string
-	scaffoldRepos string
+	stackPath    string
+	stackRepos   string
+	stackFrom    string
+	stackFromOrg string
 )
 
-var scaffoldCmd = &cobra.Command{
-	Use:   "scaffold <name>",
-	Short: "Create a reusable stack (repo set) for future supatrees",
-	Long: `Create a "stack": the reusable definition of which repos a cross-repo
+const stackNewLong = `Create a "stack": the reusable definition of which repos a cross-repo
 issue spans and how they depend on each other. Later, "supatree new --stack
 <name>" spins up a fresh set of worktrees (one per repo) from it.
 
 A stack is itself a small git repo — it holds supatree.yml (each member's
 alias and git URL, plus dependency edges), AGENTS.md (instructions for agents
 working in it), and a scripts/ directory. By default it is created at
-~/supatree/stacks/<name>/; pass --path to put it somewhere you'll push to a
-remote and share. Everything in it is shareable: members are named by URL,
-never by a local path.
+~/supatree/stacks/<name>/; pass --path to put it anywhere, for instance
+somewhere you push to a remote and share. Everything in it is shareable:
+members are named by URL, never by a local path.
 
-Members are given as owner/repo (a GitHub repository over ssh), as a git URL,
-or as alias=<either>. Each is cloned into supatree's own repo cache
-(~/supatree/repos/) if it is not there yet. Omit --repos to pick from the
-repositories already in the cache.
+Members come from one of:
+  --repos      owner/repo (GitHub, over ssh), a git URL, or alias=<either>
+  --from DIR   the origin of each git repo directly under DIR — only the URL
+               is read; supatree clones its own copy
+  --from-org   an organization's repositories, via gh (archived repos and
+               forks skipped)
+  (nothing)    a picker over the repositories already in supatree's cache
+
+--from and --from-org open a picker; each chosen repository is cloned into
+supatree's repo cache (~/supatree/repos/) if it is not there yet.
 
 Examples:
-  supatree scaffold fraud --repos=fraud-zero/terraform,fraud-zero/keystone-api
-  supatree scaffold fraud --repos=api=git@github.com:fraud-zero/keystone-api.git
-  supatree scaffold fraud --repos=fraud-zero/terraform --path=~/stacks/fraud
+  supatree stack new fraud --repos=fraud-zero/terraform,fraud-zero/keystone-api
+  supatree stack new fraud --from ~/code/fraud-zero
+  supatree stack new fraud --from-org fraud-zero --path ~/stacks/fraud
 
-After scaffolding, edit supatree.yml to add dependency edges, then:
-  supatree new --stack=fraud`,
-	Args: cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		name := args[0]
+Then: supatree stack dep fraud keystone-api terraform; supatree new --stack fraud`
 
-		members, err := selectRepos()
-		if err != nil {
-			return err
-		}
-
-		res, err := supatree.Scaffold(stCfg, name, scaffoldPath, members)
-		if err != nil {
-			return err
-		}
-		fmt.Printf("Scaffolded stack %q at %s\n", res.Alias, res.Path)
-		for _, alias := range sortedKeys(members) {
-			fmt.Printf("  %-20s %s\n", alias, members[alias])
-		}
-		fmt.Printf("  add dependency edges in %s/%s, then: supatree new --stack %s\n", res.Path, supatree.SpecName, res.Alias)
-		return nil
-	},
+func runStackNew(cmd *cobra.Command, args []string) error {
+	name := args[0]
+	members, err := selectRepos()
+	if err != nil {
+		return err
+	}
+	res, err := supatree.Scaffold(stCfg, name, stackPath, members)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Created stack %q at %s\n", res.Alias, res.Path)
+	for _, alias := range sortedKeys(members) {
+		fmt.Printf("  %-20s %s\n", alias, members[alias])
+	}
+	fmt.Printf("Add dependency edges with: supatree stack dep %s <from> <to>\nThen: supatree new --stack %s\n", res.Alias, res.Alias)
+	return nil
 }
 
-// selectRepos resolves the members, alias → URL: from --repos when given,
-// otherwise via an interactive picker over the repo cache, otherwise an error.
-func selectRepos() (map[string]string, error) {
-	if scaffoldRepos != "" {
-		return parseMemberArgs(strings.Split(scaffoldRepos, ","))
-	}
+// scaffoldCmd is the original name of `stack new`, kept as an alias.
+var scaffoldCmd = &cobra.Command{
+	Use:   "scaffold <name>",
+	Short: "Create a stack (alias of: supatree stack new)",
+	Long:  stackNewLong,
+	Args:  cobra.ExactArgs(1),
+	RunE:  runStackNew,
+}
 
-	cached, err := supatree.ListCachedRepos()
-	if err != nil {
-		return nil, err
+// selectRepos resolves the members, alias → URL, from whichever source was
+// given.
+func selectRepos() (map[string]string, error) {
+	if stackRepos != "" {
+		return parseMemberArgs(strings.Split(stackRepos, ","))
 	}
-	if len(cached) == 0 {
-		return nil, fmt.Errorf("no repos given — pass --repos=<owner/repo,...> (the repo cache is empty, so there is nothing to pick from)")
+	var candidates map[string]string
+	var source string
+	switch {
+	case stackFrom != "":
+		dir := expandHome(stackFrom)
+		found, err := supatree.ScanOrigins(dir)
+		if err != nil {
+			return nil, err
+		}
+		candidates, source = found, "git repos with an origin under "+dir
+	case stackFromOrg != "":
+		found, err := supatree.OrgRepos(stackFromOrg)
+		if err != nil {
+			return nil, err
+		}
+		candidates, source = found, stackFromOrg+"'s repositories"
+	default:
+		cached, err := supatree.ListCachedRepos()
+		if err != nil {
+			return nil, err
+		}
+		candidates = map[string]string{}
+		for _, r := range cached {
+			candidates[r.Key] = r.URL
+		}
+		source = "the repo cache"
 	}
-	byKey := make(map[string]string, len(cached))
-	keys := make([]string, 0, len(cached))
-	for _, r := range cached {
-		byKey[r.Key] = r.URL
-		keys = append(keys, r.Key)
+	if len(candidates) == 0 {
+		return nil, fmt.Errorf("nothing to pick from in %s — pass --repos=<owner/repo,...>, --from <dir> or --from-org <org>", source)
 	}
+	names := sortedKeys(candidates)
 	if !isInteractive() {
-		return nil, fmt.Errorf("no repos given — pass --repos=<owner/repo,...> (cached: %s)", strings.Join(keys, ", "))
+		return nil, fmt.Errorf("pick members with --repos (from %s: %s)", source, strings.Join(names, ", "))
 	}
-	picked, err := stui.PickRepos(keys)
+	picked, err := stui.PickRepos(names)
 	if err != nil {
 		if errors.Is(err, stui.ErrPickerCancelled) {
 			fmt.Fprintln(os.Stderr, "cancelled")
@@ -99,7 +126,7 @@ func selectRepos() (map[string]string, error) {
 	}
 	args := make([]string, 0, len(picked))
 	for _, k := range picked {
-		args = append(args, byKey[k])
+		args = append(args, candidates[k])
 	}
 	return parseMemberArgs(args)
 }
@@ -124,6 +151,15 @@ func parseMemberArgs(args []string) (map[string]string, error) {
 	return members, nil
 }
 
+func expandHome(p string) string {
+	if rest, ok := strings.CutPrefix(p, "~/"); ok {
+		if home, err := os.UserHomeDir(); err == nil {
+			return home + "/" + rest
+		}
+	}
+	return p
+}
+
 func sortedKeys(m map[string]string) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {
@@ -133,7 +169,14 @@ func sortedKeys(m map[string]string) []string {
 	return out
 }
 
+func addStackNewFlags(cmd *cobra.Command) {
+	cmd.Flags().StringVar(&stackRepos, "repos", "", "comma-separated members: owner/repo, a git URL, or alias=<either>")
+	cmd.Flags().StringVar(&stackFrom, "from", "", "pick from the origins of the git repos directly under this directory")
+	cmd.Flags().StringVar(&stackFromOrg, "from-org", "", "pick from a GitHub organization's repositories (via gh)")
+	cmd.Flags().StringVar(&stackPath, "path", "", "location for the stack repo (default: ~/supatree/stacks/<name>)")
+	cmd.MarkFlagsMutuallyExclusive("repos", "from", "from-org")
+}
+
 func init() {
-	scaffoldCmd.Flags().StringVar(&scaffoldRepos, "repos", "", "comma-separated members: owner/repo, a git URL, or alias=<either> (omit to pick from the repo cache)")
-	scaffoldCmd.Flags().StringVar(&scaffoldPath, "path", "", "location for the stack repo (default: ~/supatree/stacks/<name>)")
+	addStackNewFlags(scaffoldCmd)
 }

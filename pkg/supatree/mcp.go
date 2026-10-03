@@ -220,13 +220,13 @@ func MCPServer(version string) *mcp.Server {
 				Name:        "new_tree",
 				Description: "PM: create a supatree from a stack — or, with `prs`, a review tree for someone else's pull requests. Needs autonomy 'auto' to do unasked, or `asked` when the human has asked you to. With `start`, its main agent is also launched in the background and set to work on `brief` (a review tree gets a full review brief by default); without it, the tree just waits for the human.",
 				InputSchema: mcp.ObjectSchema(map[string]any{
-					"stack":  mcp.StringProp("Stack alias (omit if only one is registered)"),
-					"name":   mcp.StringProp("Supatree name (omit to auto-generate)"),
-					"intent": mcp.StringProp("What this supatree is for — the issue or task. Recorded, and worth filling in: the branch rename discards the generated name."),
-					"prs":    mcp.StringProp("Comma-separated pull request URLs (or owner/repo#number). Given these, the tree is a REVIEW tree instead: each repo is checked out at its PR head and the authoring commands are refused. Use this when the task is reviewing someone else's cross-repo change rather than writing one."),
-					"asked":  mcp.BoolProp("The human asked for this in this turn. Set it only then — it is what distinguishes a request from your own initiative, and below autonomy 'auto' it is the difference between doing this and reporting that you could"),
-					"start":  mcp.BoolProp("Also launch the tree's main agent in the background and have it start on `brief` straight away. Focus returns to wherever the human was."),
-					"brief":  mcp.StringProp("What the started agent should do. Delivered to its mailbox before it launches. Omit on a review tree for the default: a full review written to .supatree/review.md, posted if permitted, and a summary back to you."),
+					argStack:     mcp.StringProp("Stack alias (omit if only one is registered)"),
+					"name":       mcp.StringProp("Supatree name (omit to auto-generate)"),
+					"intent":     mcp.StringProp("What this supatree is for — the issue or task. Recorded, and worth filling in: the branch rename discards the generated name."),
+					"prs":        mcp.StringProp("Comma-separated pull request URLs (or owner/repo#number). Given these, the tree is a REVIEW tree instead: each repo is checked out at its PR head and the authoring commands are refused. Use this when the task is reviewing someone else's cross-repo change rather than writing one."),
+					argAskedName: mcp.BoolProp("The human asked for this in this turn. Set it only then — it is what distinguishes a request from your own initiative, and below autonomy 'auto' it is the difference between doing this and reporting that you could"),
+					"start":      mcp.BoolProp("Also launch the tree's main agent in the background and have it start on `brief` straight away. Focus returns to wherever the human was."),
+					"brief":      mcp.StringProp("What the started agent should do. Delivered to its mailbox before it launches. Omit on a review tree for the default: a full review written to .supatree/review.md, posted if permitted, and a summary back to you."),
 				}, nil),
 				Handler: handleNewTree,
 			},
@@ -234,10 +234,10 @@ func MCPServer(version string) *mcp.Server {
 				Name:        "start_agent",
 				Description: "PM: launch an agent in an existing supatree, in the background, briefed and working. The brief is left in its mailbox and the agent is started with an instruction to read it; if the agent is already running, it gets the brief on its next turn instead. Same autonomy rule as new_tree.",
 				InputSchema: mcp.ObjectSchema(map[string]any{
-					argTree: mcp.StringProp("Supatree name"),
-					"agent": mcp.StringProp("Agent name (default main)"),
-					"brief": mcp.StringProp("What it should do. Omit on a review tree for the default review brief; omit elsewhere to start it on whatever mail is already waiting"),
-					"asked": mcp.BoolProp("The human asked for this in this turn. Set it only then — it is what distinguishes a request from your own initiative, and below autonomy 'auto' it is the difference between doing this and reporting that you could"),
+					argTree:      mcp.StringProp("Supatree name"),
+					"agent":      mcp.StringProp("Agent name (default main)"),
+					"brief":      mcp.StringProp("What it should do. Omit on a review tree for the default review brief; omit elsewhere to start it on whatever mail is already waiting"),
+					argAskedName: mcp.BoolProp("The human asked for this in this turn. Set it only then — it is what distinguishes a request from your own initiative, and below autonomy 'auto' it is the difference between doing this and reporting that you could"),
 				}, []string{argTree}),
 				Handler: handleStartAgent,
 			},
@@ -245,11 +245,43 @@ func MCPServer(version string) *mcp.Server {
 				Name:        "remove_tree",
 				Description: "PM: remove a finished supatree and its member worktrees. Needs autonomy 'auto' to do unasked, or `asked` when the human has asked you to; refuses a tree that is not done unless forced.",
 				InputSchema: mcp.ObjectSchema(map[string]any{
-					"tree":  mcp.StringProp("Supatree name"),
-					"force": mcp.BoolProp("Remove even though it is not finished"),
-					"asked": mcp.BoolProp("The human asked for this in this turn. Set it only then — it is what distinguishes a request from your own initiative, and below autonomy 'auto' it is the difference between doing this and reporting that you could"),
+					"tree":       mcp.StringProp("Supatree name"),
+					"force":      mcp.BoolProp("Remove even though it is not finished"),
+					argAskedName: mcp.BoolProp("The human asked for this in this turn. Set it only then — it is what distinguishes a request from your own initiative, and below autonomy 'auto' it is the difference between doing this and reporting that you could"),
 				}, []string{argTree}),
 				Handler: handleRemoveTree,
+			},
+			{
+				Name:        "stack_add",
+				Description: "PM: add a member repo to a stack, committed to the stack repo. Trees get it on their next sync; the repository is cloned when a tree first needs it. Needs autonomy 'auto' to do unasked, or `asked`.",
+				InputSchema: mcp.ObjectSchema(map[string]any{
+					argStack:     mcp.StringProp("Stack alias"),
+					"repo":       mcp.StringProp("owner/repo (GitHub, over ssh) or a git URL"),
+					"as":         mcp.StringProp("Member alias (default: the repository name)"),
+					argAskedName: mcp.BoolProp("The human asked for this in this turn"),
+				}, []string{"stack", "repo"}),
+				Handler: handleStackAdd,
+			},
+			{
+				Name:        "stack_rm",
+				Description: "PM: remove a member from a stack (and its dependency edges), committed to the stack repo. Existing trees keep it until synced with prune. Needs autonomy 'auto' to do unasked, or `asked`.",
+				InputSchema: mcp.ObjectSchema(map[string]any{
+					argStack:     mcp.StringProp("Stack alias"),
+					"alias":      mcp.StringProp("Member alias"),
+					argAskedName: mcp.BoolProp("The human asked for this in this turn"),
+				}, []string{"stack", "alias"}),
+				Handler: handleStackRm,
+			},
+			{
+				Name:        "stack_dep",
+				Description: "PM: record in a stack that member `from` depends on member `to` (to's pull request merges first), committed to the stack repo. Needs autonomy 'auto' to do unasked, or `asked`.",
+				InputSchema: mcp.ObjectSchema(map[string]any{
+					argStack:     mcp.StringProp("Stack alias"),
+					"from":       mcp.StringProp("The dependent member"),
+					"to":         mcp.StringProp("The member it depends on"),
+					argAskedName: mcp.BoolProp("The human asked for this in this turn"),
+				}, []string{"stack", "from", "to"}),
+				Handler: handleStackDep,
 			},
 			{
 				Name:        "history",
@@ -264,8 +296,8 @@ func MCPServer(version string) *mcp.Server {
 				Name:        "recall",
 				Description: "Search this stack's durable notes. Use it for judgement and hard-won context — never for status: git, list_trees and history are authoritative for facts, and a memory store must not be asked what is true now.",
 				InputSchema: mcp.ObjectSchema(map[string]any{
-					"query": mcp.StringProp("What you are trying to remember"),
-					"stack": mcp.StringProp("Stack alias (omit to use the current supatree's)"),
+					"query":  mcp.StringProp("What you are trying to remember"),
+					argStack: mcp.StringProp("Stack alias (omit to use the current supatree's)"),
 				}, []string{"query"}),
 				Handler: handleRecall,
 			},
@@ -275,7 +307,7 @@ func MCPServer(version string) *mcp.Server {
 				InputSchema: mcp.ObjectSchema(map[string]any{
 					"slug":     mcp.StringProp("Short kebab-case file name, e.g. \"clicktracking-backfill\""),
 					"markdown": mcp.StringProp("The note"),
-					"stack":    mcp.StringProp("Stack alias (omit to use the current supatree's)"),
+					argStack:   mcp.StringProp("Stack alias (omit to use the current supatree's)"),
 				}, []string{"slug", "markdown"}),
 				Handler: handleRemember,
 			},
@@ -961,8 +993,12 @@ func handleInbox(args map[string]any) (string, bool) {
 }
 
 // argTree is the tool-argument name for a supatree; goconst objects to the
-// literal appearing in every PM tool's schema.
-const argTree = "tree"
+// literal appearing in every PM tool's schema. argStack and argAskedName likewise.
+const (
+	argTree      = "tree"
+	argStack     = "stack"
+	argAskedName = "asked"
+)
 
 // pmTools are the cross-tree tools, gated on SUPATREE_PM rather than SUPATREE.
 // A PM is rooted in no supatree, so the tree-scoped gate would lock it out of
@@ -978,6 +1014,9 @@ var pmTools = map[string]bool{
 	"start_agent": true,
 	"remove_tree": true,
 	"history":     true,
+	"stack_add":   true,
+	"stack_rm":    true,
+	"stack_dep":   true,
 }
 
 // recallTools work in both contexts: an agent inside a supatree recalls its own
@@ -1144,7 +1183,7 @@ func handleBoard(args map[string]any) (string, bool) {
 // argAsked reads the `asked` flag the mutating tools carry: the PM's assertion
 // that this action is one the human asked for in this turn, not its own idea.
 func argAsked(args map[string]any) bool {
-	asked, _ := args["asked"].(bool)
+	asked, _ := args[argAskedName].(bool)
 	return asked
 }
 
@@ -1188,7 +1227,7 @@ func handleNewTree(args map[string]any) (string, bool) {
 	if p := cfg.Resolve(nil).AsAsked(argAsked(args)); !p.AllowsMutation() {
 		return p.Deny("creating a supatree"), true
 	}
-	stack, _ := args["stack"].(string)
+	stack, _ := args[argStack].(string)
 	name, _ := args["name"].(string)
 	intent, _ := args["intent"].(string)
 	start, _ := args["start"].(bool)
@@ -1382,7 +1421,7 @@ func stackPathFor(alias string) (string, error) {
 
 func handleRecall(args map[string]any) (string, bool) {
 	query, _ := args["query"].(string)
-	alias, _ := args["stack"].(string)
+	alias, _ := args[argStack].(string)
 	path, err := stackPathFor(alias)
 	if err != nil {
 		return err.Error(), true
@@ -1397,7 +1436,7 @@ func handleRecall(args map[string]any) (string, bool) {
 func handleRemember(args map[string]any) (string, bool) {
 	slug, _ := args["slug"].(string)
 	markdown, _ := args["markdown"].(string)
-	alias, _ := args["stack"].(string)
+	alias, _ := args[argStack].(string)
 	if strings.TrimSpace(slug) == "" || strings.TrimSpace(markdown) == "" {
 		return "slug and markdown are both required", true
 	}
@@ -1626,4 +1665,64 @@ func splitList(s string) []string {
 		}
 	}
 	return out
+}
+
+// stackEdit gates a stack edit on mutation autonomy — a stack is shared, and a
+// change to it reaches every tree made from it afterwards — and runs it.
+func stackEdit(args map[string]any, action string, edit func(*Config) error) (string, bool) {
+	cfg, err := Load()
+	if err != nil {
+		return err.Error(), true
+	}
+	if p := cfg.Resolve(nil).AsAsked(argAsked(args)); !p.AllowsMutation() {
+		return p.Deny(action), true
+	}
+	if err := edit(cfg); err != nil {
+		return err.Error(), true
+	}
+	return "", false
+}
+
+func handleStackAdd(args map[string]any) (string, bool) {
+	stack, _ := args[argStack].(string)
+	repo, _ := args["repo"].(string)
+	as, _ := args["as"].(string)
+	if as != "" {
+		repo = as + "=" + repo
+	}
+	alias, url, err := ParseMemberArg(repo)
+	if err != nil {
+		return err.Error(), true
+	}
+	// No clone here: the repo cache is outside the PM's sandbox. The watcher
+	// clones it when a tree first needs it.
+	if out, isErr := stackEdit(args, "changing a stack", func(c *Config) error {
+		return c.StackAdd(stack, alias, url, false)
+	}); isErr {
+		return out, true
+	}
+	return fmt.Sprintf("added %s (%s) to %s. Trees get it on their next sync.", alias, url, stack), false
+}
+
+func handleStackRm(args map[string]any) (string, bool) {
+	stack, _ := args[argStack].(string)
+	alias, _ := args["alias"].(string)
+	if out, isErr := stackEdit(args, "changing a stack", func(c *Config) error {
+		return c.StackRm(stack, alias)
+	}); isErr {
+		return out, true
+	}
+	return fmt.Sprintf("removed %s from %s. Trees that have it keep it until synced with prune.", alias, stack), false
+}
+
+func handleStackDep(args map[string]any) (string, bool) {
+	stack, _ := args[argStack].(string)
+	from, _ := args["from"].(string)
+	to, _ := args["to"].(string)
+	if out, isErr := stackEdit(args, "changing a stack", func(c *Config) error {
+		return c.StackDep(stack, from, to)
+	}); isErr {
+		return out, true
+	}
+	return fmt.Sprintf("%s now depends on %s in %s.", from, to, stack), false
 }

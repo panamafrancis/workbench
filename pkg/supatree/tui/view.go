@@ -269,6 +269,12 @@ func (m *Model) footer() string {
 			prompt += "\n" + styleDirty.Render(wrapText(m.inputErr.Error(), m.width))
 		}
 		return prompt
+	case modeNewStackName:
+		prompt := "new stack — name: " + m.input.View()
+		if m.inputErr != nil {
+			prompt += "\n" + styleDirty.Render(wrapText(m.inputErr.Error(), m.width))
+		}
+		return prompt
 	case modeConfirmDelete:
 		return styleDirty.Render(fmt.Sprintf("delete %q? [y/N]", m.actionTree))
 	case modeConfirmQuit:
@@ -425,6 +431,7 @@ func helpView() string {
 		"  n        new supatree",
 		"  s        sync members",
 		"  d        delete supatree",
+		"  S        new stack",
 		"",
 		styleHeader.Render("Global"),
 		"  r        refresh",

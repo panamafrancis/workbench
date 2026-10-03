@@ -37,7 +37,8 @@ const (
 	modeNewTreeName // naming the supatree
 	modeConfirmDelete
 	modeConfirmQuit
-	modeHelp // showing the keybinding reference
+	modeHelp         // showing the keybinding reference
+	modeNewStackName // naming a new stack (S)
 )
 
 type rowKind int

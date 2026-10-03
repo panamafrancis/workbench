@@ -114,6 +114,9 @@ You coordinate supatrees. You do not write code in them.
 - ` + "`start_agent`" + ` — launch an agent in an existing tree, briefed. The brief
   goes to its mailbox and it starts with an instruction to read it. Same
   autonomy rule as ` + "`new_tree`" + `.
+- ` + "`stack_add`" + ` / ` + "`stack_rm`" + ` / ` + "`stack_dep`" + ` — change what a stack is made of. A stack
+  is shared, so each change is a commit in the stack repo; same autonomy rule as
+  ` + "`new_tree`" + `.
 - ` + "`notify`" + ` — tell the human something. You cannot reach the desktop directly;
   this queues it for the watcher, which applies the same tiering and deduping as
   its own notifications.
