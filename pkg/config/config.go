@@ -170,15 +170,22 @@ func BackfillModels(models map[string]Model) {
 			models[key] = m
 		}
 	}
-	// PromptArgs arrived later than the session args, so a config that already
-	// had those backfilled still lacks it. Same rule: shipped key and binary,
-	// never overwriting.
+	// PromptArgs and AgentNameArgs arrived later than the session args, each on
+	// its own, so a config that already had one backfilled can still lack the
+	// other. Same rule: shipped key and binary, never overwriting. Without the
+	// name args a supatree agent records a bus address it was never launched
+	// under, and messages to it go nowhere.
 	for key, dm := range DefaultModels() {
 		m, ok := models[key]
-		if !ok || m.Binary != dm.Binary || len(dm.PromptArgs) == 0 || len(m.PromptArgs) > 0 {
+		if !ok || m.Binary != dm.Binary {
 			continue
 		}
-		m.PromptArgs = dm.PromptArgs
+		if len(dm.PromptArgs) > 0 && len(m.PromptArgs) == 0 {
+			m.PromptArgs = dm.PromptArgs
+		}
+		if len(dm.AgentNameArgs) > 0 && len(m.AgentNameArgs) == 0 {
+			m.AgentNameArgs = dm.AgentNameArgs
+		}
 		models[key] = m
 	}
 }
