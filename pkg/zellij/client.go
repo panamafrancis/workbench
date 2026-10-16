@@ -91,28 +91,6 @@ func TabNames() (map[string]bool, error) {
 	return names, nil
 }
 
-func tabHasCommandPane(tabName string) bool {
-	stdout, _, err := runZellij("dump-layout")
-	if err != nil {
-		return true
-	}
-	inTab := false
-	for _, line := range strings.Split(stdout, "\n") {
-		trimmed := strings.TrimSpace(line)
-		if strings.Contains(trimmed, "tab name=\""+tabName+"\"") {
-			inTab = true
-			continue
-		}
-		if inTab && strings.HasPrefix(trimmed, "tab ") {
-			break
-		}
-		if inTab && strings.Contains(trimmed, "command=") && !strings.Contains(trimmed, "name=\"sidebar\"") {
-			return true
-		}
-	}
-	return false
-}
-
 // TabIDs maps every tab name to its stable Zellij id. Ids are what let a tab be
 // closed without focusing it first — and closing by focus is exactly what a
 // sidebar must never do to its own tab (see OpenOrFocusTab).
@@ -165,7 +143,10 @@ func closeTabByID(id int) error {
 //
 // The session's focused tab, if it matches, is closed last: the caller may be
 // running in it (a sidebar removing its own tree), and nothing it asked for
-// may be left undone when it dies. "" targets the caller's own session.
+// may be left undone when it dies. If it does not match, it is focused again
+// afterwards — zellij moves an attached client off its tab when tabs close
+// around it, and a removal somebody else asked for must not take the human's
+// terminal with it. "" targets the caller's own session.
 func CloseTabsIn(session string, match func(name string) bool) ([]string, error) {
 	stdout, _, err := runZellijIn(session, "list-tabs")
 	if err != nil {
@@ -196,6 +177,10 @@ func CloseTabsIn(session string, match func(name string) bool) ([]string, error)
 		}
 		closed = append(closed, name)
 	}
+	if id, ok := ids[focused]; ok && len(closed) > 0 && !match(focused) {
+		// Best effort: the tabs are closed, which is what was asked for.
+		_, _, _ = runZellijIn(session, "go-to-tab-by-id", strconv.Itoa(id))
+	}
 	return closed, firstErr
 }
 
@@ -209,47 +194,82 @@ func closeTab(name string) {
 	_, _, _ = runZellij("close-tab")
 }
 
+// OpenAction is what OpenOrFocusTabAction did.
+type OpenAction int
+
+const (
+	// TabFocused: the tab was live (or could not be shown to be dead), so it
+	// was only focused and the command passed in was not run.
+	TabFocused OpenAction = iota
+	// TabCreated: there was no such tab; one was opened.
+	TabCreated
+	// TabReplaced: the tab's command had exited; a fresh tab replaced it.
+	TabReplaced
+)
+
+func (a OpenAction) String() string {
+	switch a {
+	case TabCreated:
+		return "created"
+	case TabReplaced:
+		return "replaced"
+	case TabFocused:
+		return "focused"
+	}
+	return "focused"
+}
+
+// OpenOrFocusTab is OpenOrFocusTabAction reduced to whether a tab was opened.
 func (w Workspace) OpenOrFocusTab(name, cwd, sidebarWidth string, nonoArgs []string, envVars map[string]string) (created bool, err error) {
-	tabs, queryErr := TabNames()
-	if queryErr != nil {
-		if errors.Is(queryErr, ErrCircuitOpen) {
-			return false, queryErr
-		}
-		err = w.OpenTab(name, cwd, sidebarWidth, nonoArgs, envVars)
-		return err == nil, err
+	action, err := w.OpenOrFocusTabAction(name, cwd, sidebarWidth, nonoArgs, envVars)
+	return err == nil && action != TabFocused, err
+}
+
+// OpenOrFocusTabAction focuses the tab named name if its agent is running, and
+// otherwise opens one running it, reporting which it did.
+//
+// Only a tab shown to be dead is replaced. An unreadable pane listing focuses
+// the tab instead, and an unreadable tab list is an error rather than a cue to
+// open a tab anyway: either guess, wrong, starts a second agent on the same
+// session and leaves a tab name that matches two tabs.
+func (w Workspace) OpenOrFocusTabAction(name, cwd, sidebarWidth string, nonoArgs []string, envVars map[string]string) (OpenAction, error) {
+	tabs, err := TabNames()
+	if err != nil {
+		return TabFocused, err
 	}
-	if tabs[name] {
-		if tabHasCommandPane(name) {
-			return false, GoToTab(name)
-		}
-		// The tab is still there but its agent has exited, so it has to be
-		// replaced. Create the replacement FIRST and only then close the husk,
-		// by id — the old order (close, then create) killed the caller whenever
-		// it was the sidebar of that very tab: closing the tab kills every pane
-		// in it, so the process died before it could create anything, and the
-		// user was left in a neighbouring tab with nothing opened.
-		//
-		// Zellij tolerates the two same-named tabs that exist in between. If the
-		// id cannot be resolved, fall back to closing by focus rather than
-		// leaving a duplicate behind: a duplicate name makes every later tab
-		// lookup ambiguous, which is worse.
-		ids, idErr := TabIDs()
-		staleID, haveID := ids[name]
-		if idErr != nil || !haveID {
-			closeTab(name)
-			err = w.OpenTab(name, cwd, sidebarWidth, nonoArgs, envVars)
-			return err == nil, err
-		}
-		if err = w.OpenTab(name, cwd, sidebarWidth, nonoArgs, envVars); err != nil {
-			return false, err
-		}
-		// Best effort: the replacement is already up, and this may well be the
-		// call that kills this process along with the husk.
-		_ = closeTabByID(staleID)
-		return true, nil
+	if !tabs[name] {
+		return TabCreated, w.OpenTab(name, cwd, sidebarWidth, nonoArgs, envVars)
 	}
-	err = w.OpenTab(name, cwd, sidebarWidth, nonoArgs, envVars)
-	return err == nil, err
+	if TabLiveness("", name) != LivenessDead {
+		return TabFocused, GoToTab(name)
+	}
+	// The tab is still there but its agent has exited, so it has to be
+	// replaced. Create the replacement FIRST and only then close the husk,
+	// by id — the old order (close, then create) killed the caller whenever
+	// it was the sidebar of that very tab: closing the tab kills every pane
+	// in it, so the process died before it could create anything, and the
+	// user was left in a neighbouring tab with nothing opened.
+	//
+	// Zellij tolerates the two same-named tabs that exist in between. If the
+	// id cannot be resolved, fall back to closing by focus rather than
+	// leaving a duplicate behind: a duplicate name makes every later tab
+	// lookup ambiguous, which is worse.
+	ids, idErr := TabIDs()
+	staleID, haveID := ids[name]
+	if idErr != nil || !haveID {
+		closeTab(name)
+		if err := w.OpenTab(name, cwd, sidebarWidth, nonoArgs, envVars); err != nil {
+			return TabFocused, err
+		}
+		return TabReplaced, nil
+	}
+	if err := w.OpenTab(name, cwd, sidebarWidth, nonoArgs, envVars); err != nil {
+		return TabFocused, err
+	}
+	// Best effort: the replacement is already up, and this may well be the
+	// call that kills this process along with the husk.
+	_ = closeTabByID(staleID)
+	return TabReplaced, nil
 }
 
 // runZellij runs a `zellij action` subcommand against the session the caller is
@@ -347,7 +367,7 @@ func (w Workspace) OpenOrFocusCommandTab(name string, argv []string) error {
 		return err
 	}
 	if tabs[name] {
-		if tabHasCommandPane(name) {
+		if TabLiveness("", name) != LivenessDead {
 			return GoToTab(name)
 		}
 		// The tab outlived its command (the user quit the dashboard); replace it

@@ -75,7 +75,8 @@ pkg/
     keys.go             # KeyMap + DefaultKeyMap (j/k/h/l/space/etc.)
     styles.go           # Lipgloss palette
   zellij/
-    client.go           # IsInZellij, OpenTab, GoToTab, TabNames, OpenOrFocusTab
+    client.go           # IsInZellij, OpenTab, GoToTab, TabNames, OpenOrFocusTab(Action), CloseTabsIn
+    panes.go            # ListPanes, TabLiveness, AgentPane, SubmitToPane
     layout.go           # WriteTabLayout — per-worktree KDL with env injection
     session.go          # ListSessions, WriteSessionLayout (go:embed), CreateBackgroundSession
     session.kdl.tmpl    # Embedded session layout template
@@ -163,7 +164,11 @@ Layout/session writing hangs off a `zellij.Workspace` (`pkg/zellij/workspace.go`
 
 **Never close a tab by focusing it.** `zellij action close-tab` closes the *client's current tab*, and closing a tab kills every process in it — including the sidebar that asked for the close. That is why `OpenOrFocusTab` replaces a tab whose agent has exited by creating the replacement **first** and only then closing the husk via `close-tab-by-id` (ids come from `TabIDs`): the caller may well be that tab's own sidebar, and it dies on the close, so nothing may be left to do afterwards. The old close-then-create order silently did nothing at all when an agent was reopened from its own tab's sidebar. `closeTab` (by focus) survives only as the fallback for when an id cannot be resolved.
 
-Note that `zellij action dump-layout` reports a tab as *empty* once its `close_on_exit=true` command pane has exited, even though the sidebar pane is still running — so `tabHasCommandPane` answers "no agent here", which is what triggers the replacement path.
+**Liveness is three-valued, and only `LivenessDead` replaces a tab.** `TabLiveness` reads `list-panes --all --json`, which says outright whether each pane has `exited`; a tab whose only panes are its sidebar is dead (the `close_on_exit=true` agent pane is gone), a tab missing from the listing is unknown, and on a zellij without `list-panes` it falls back to the dumped layout (`layoutTabHasCommandPane`). An unreadable listing focuses rather than replaces, and `OpenOrFocusTabAction` returns an error rather than opening a tab when `TabNames` fails: either guess, when wrong, starts a second agent on the same session id and leaves its first process running with no pane (supatree #1, #3). `OpenOrFocusTabAction` reports `TabFocused`/`TabCreated`/`TabReplaced`; `OpenOrFocusTab` is the old `created bool` view of it.
+
+**`CloseTabsIn` restores focus.** Zellij moves an attached client off its tab when tabs are closed around it, so after closing it `go-to-tab-by-id`s back to the tab that was focused — unless that tab was itself one of those closed (supatree #14).
+
+**Typing into an agent (`SubmitToPane`).** `write-chars --pane-id` then `write --pane-id … 13` submits a turn to an idle interactive agent without focusing it — the only way to make an agent at its prompt read mail it would otherwise see on a turn it is not going to take. `AgentPane` picks the target among the panes running `nono`: the one titled after its tab, else the only one; a title match alone never wins over a known non-nono command (a user's shell is often titled with a path ending in the tab name), so never a sidebar or a user's shell. Pass fixed text only — whatever is written, the agent reads as its user's words.
 
 ## nono sandbox
 

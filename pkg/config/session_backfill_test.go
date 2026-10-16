@@ -62,3 +62,31 @@ func TestBackfillPromptArgs(t *testing.T) {
 		t.Error("must not inject claude's prompt into a differently-binaried model")
 	}
 }
+
+// A config saved before agent_name_args existed — with session and prompt args
+// already backfilled — still gains it, or every agent launches under a name
+// other than the bus address it reports.
+func TestBackfillAgentNameArgs(t *testing.T) {
+	models := map[string]Model{
+		modelClaude: {Binary: modelClaude, NewSessionArgs: []string{"--session-id", "{session_id}"}, PromptArgs: []string{"{prompt}"}},
+		"shell":     {Binary: "bash"},
+	}
+	BackfillModels(models)
+	if got := models[modelClaude].AgentNameArgs; len(got) != 2 || got[0] != "--name" || got[1] != "{agent_name}" {
+		t.Errorf("claude should gain agent name args, got %v", got)
+	}
+	if got := models["shell"].AgentNameArgs; len(got) != 0 {
+		t.Errorf("a model with no shipped name args must not gain any, got %v", got)
+	}
+
+	mine := map[string]Model{modelClaude: {Binary: modelClaude, AgentNameArgs: []string{"-n", "{agent_name}"}}}
+	BackfillModels(mine)
+	if got := mine[modelClaude].AgentNameArgs; got[0] != "-n" {
+		t.Errorf("must not overwrite user name args, got %v", got)
+	}
+	other := map[string]Model{modelClaude: {Binary: "some-other-cli"}}
+	BackfillModels(other)
+	if len(other[modelClaude].AgentNameArgs) != 0 {
+		t.Error("must not inject claude's name args into a differently-binaried model")
+	}
+}
