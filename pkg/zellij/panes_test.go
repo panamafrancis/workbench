@@ -41,8 +41,8 @@ func TestTabLiveness(t *testing.T) {
 		{"oslo", LivenessAlive},     // a shell the user opened keeps the tab
 		{"madrid", LivenessUnknown}, // not in the listing at all
 	} {
-		if got := tabLiveness(panes, tc.tab); got != tc.want {
-			t.Errorf("tabLiveness(%s) = %s, want %s", tc.tab, got, tc.want)
+		if got := LivenessIn(panes, tc.tab); got != tc.want {
+			t.Errorf("LivenessIn(%s) = %s, want %s", tc.tab, got, tc.want)
 		}
 	}
 }

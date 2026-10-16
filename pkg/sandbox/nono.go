@@ -91,16 +91,27 @@ func AppendPrompt(args []string, m config.Model, prompt string) []string {
 // launched under a model that ignored it) has no transcript, so the agent
 // starts fresh with --session-id rather than failing to --resume a phantom id.
 func SessionExists(worktreePath, sessionID string) bool {
-	if sessionID == "" {
+	p := SessionTranscript(worktreePath, sessionID)
+	if p == "" {
 		return false
+	}
+	_, err := os.Stat(p)
+	return err == nil
+}
+
+// SessionTranscript is where the transcript of sessionID, run in worktreePath,
+// lives — whether or not it exists yet — or "" when that cannot be known. It
+// grows on every turn, so its mtime is the cheapest answer to "is this agent
+// working right now" that needs nothing from the agent itself.
+func SessionTranscript(worktreePath, sessionID string) string {
+	if sessionID == "" {
+		return ""
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return false
+		return ""
 	}
-	p := filepath.Join(home, ".claude", "projects", encodeProjectPath(worktreePath), sessionID+".jsonl")
-	_, err = os.Stat(p)
-	return err == nil
+	return filepath.Join(home, ".claude", "projects", encodeProjectPath(worktreePath), sessionID+".jsonl")
 }
 
 // SupportsSessions reports whether m defines explicit session-ID launch args,

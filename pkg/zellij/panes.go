@@ -73,7 +73,7 @@ func (l Liveness) String() string {
 // zellij too old for it.
 func TabLiveness(session, name string) Liveness {
 	if panes, err := ListPanes(session); err == nil {
-		return tabLiveness(panes, name)
+		return LivenessIn(panes, name)
 	}
 	stdout, _, err := runZellijIn(session, "dump-layout")
 	if err != nil {
@@ -85,11 +85,12 @@ func TabLiveness(session, name string) Liveness {
 	return LivenessDead
 }
 
-// tabLiveness is TabLiveness over a pane listing. A tab whose only panes are
+// LivenessIn is TabLiveness over a pane listing already read, for callers
+// judging many tabs from one listing. A tab whose only panes are
 // its sidebar is dead (the agent pane closes on exit); a tab missing from the
 // listing altogether is unknown — it was there a moment ago, when the caller
 // looked up its name.
-func tabLiveness(panes []Pane, name string) Liveness {
+func LivenessIn(panes []Pane, name string) Liveness {
 	seen := false
 	for _, p := range panes {
 		if p.TabName != name {
