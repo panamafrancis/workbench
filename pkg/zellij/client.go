@@ -258,7 +258,10 @@ func (w Workspace) OpenOrFocusTabAction(name, cwd, sidebarWidth string, nonoArgs
 	staleID, haveID := ids[name]
 	if idErr != nil || !haveID {
 		closeTab(name)
-		return TabReplaced, w.OpenTab(name, cwd, sidebarWidth, nonoArgs, envVars)
+		if err := w.OpenTab(name, cwd, sidebarWidth, nonoArgs, envVars); err != nil {
+			return TabFocused, err
+		}
+		return TabReplaced, nil
 	}
 	if err := w.OpenTab(name, cwd, sidebarWidth, nonoArgs, envVars); err != nil {
 		return TabFocused, err

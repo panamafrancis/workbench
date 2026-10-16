@@ -129,11 +129,14 @@ func layoutTabHasCommandPane(layout, tabName string) bool {
 	return false
 }
 
-// AgentPane finds the running agent pane of the tab named name: the terminal
-// pane WriteTabLayout titled after the tab (or "<alias>/<tab>"), or — since an
-// agent may retitle its own terminal — the one pane in the tab running nono,
-// which every agent tab launches. Anything else is no match: the caller is
-// about to type into it, and a shell the user opened is not the agent.
+// AgentPane finds the running agent pane of the tab named name. Every agent
+// tab launches its agent in nono, so the candidates are the panes running nono:
+// the one WriteTabLayout titled after the tab (or "<alias>/<tab>") wins, else
+// — since an agent may retitle its own terminal — the only one. A title alone
+// is not enough while the pane's command is known to be something else: a
+// user's shell rooted in the worktree is commonly titled with a path ending in
+// the tab's name, and the caller is about to type into the match. Only when the
+// listing carries no command at all does a lone title match count.
 func AgentPane(session, name string) (Pane, bool, error) {
 	panes, err := ListPanes(session)
 	if err != nil {
@@ -144,20 +147,27 @@ func AgentPane(session, name string) (Pane, bool, error) {
 }
 
 func agentPane(panes []Pane, name string) (Pane, bool) {
-	var running []Pane
+	var nono, titledUnknown []Pane
 	for _, p := range panes {
 		if p.TabName != name || p.IsPlugin || p.Exited || p.IsHeld || p.Title == sidebarPaneName {
 			continue
 		}
-		if p.Title == name || strings.HasSuffix(p.Title, "/"+name) {
-			return p, true
-		}
-		if runsNono(p.Command) {
-			running = append(running, p)
+		titled := p.Title == name || strings.HasSuffix(p.Title, "/"+name)
+		switch {
+		case runsNono(p.Command):
+			if titled {
+				return p, true
+			}
+			nono = append(nono, p)
+		case titled && strings.TrimSpace(p.Command) == "":
+			titledUnknown = append(titledUnknown, p)
 		}
 	}
-	if len(running) == 1 {
-		return running[0], true
+	if len(nono) == 1 {
+		return nono[0], true
+	}
+	if len(nono) == 0 && len(titledUnknown) == 1 {
+		return titledUnknown[0], true
 	}
 	return Pane{}, false
 }

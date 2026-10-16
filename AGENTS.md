@@ -168,7 +168,7 @@ Layout/session writing hangs off a `zellij.Workspace` (`pkg/zellij/workspace.go`
 
 **`CloseTabsIn` restores focus.** Zellij moves an attached client off its tab when tabs are closed around it, so after closing it `go-to-tab-by-id`s back to the tab that was focused — unless that tab was itself one of those closed (supatree #14).
 
-**Typing into an agent (`SubmitToPane`).** `write-chars --pane-id` then `write --pane-id … 13` submits a turn to an idle interactive agent without focusing it — the only way to make an agent at its prompt read mail it would otherwise see on a turn it is not going to take. `AgentPane` picks the target: the pane titled after its tab, else the one pane running `nono`; never a sidebar or a user's shell. Pass fixed text only — whatever is written, the agent reads as its user's words.
+**Typing into an agent (`SubmitToPane`).** `write-chars --pane-id` then `write --pane-id … 13` submits a turn to an idle interactive agent without focusing it — the only way to make an agent at its prompt read mail it would otherwise see on a turn it is not going to take. `AgentPane` picks the target among the panes running `nono`: the one titled after its tab, else the only one; a title match alone never wins over a known non-nono command (a user's shell is often titled with a path ending in the tab name), so never a sidebar or a user's shell. Pass fixed text only — whatever is written, the agent reads as its user's words.
 
 ## nono sandbox
 

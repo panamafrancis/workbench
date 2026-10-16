@@ -15,6 +15,8 @@ const panesJSON = `[
  {"id":7,"is_plugin":false,"title":"app/kiev","exited":false,"is_held":false,"tab_id":4,"tab_name":"kiev","pane_command":"nono"},
  {"id":8,"is_plugin":false,"title":"sidebar","exited":false,"is_held":false,"tab_id":5,"tab_name":"lima","pane_command":"supatree ls"},
  {"id":9,"is_plugin":false,"title":"st-lima-main","exited":false,"is_held":false,"tab_id":5,"tab_name":"lima","pane_command":"/opt/homebrew/bin/nono run --profile p -- claude"},
+ {"id":10,"is_plugin":false,"title":"✳ Fixing bugs","exited":false,"is_held":false,"tab_id":6,"tab_name":"wb","pane_command":"/opt/homebrew/bin/nono run --profile p -- claude"},
+ {"id":11,"is_plugin":false,"title":"~/trees/repos/wb","exited":false,"is_held":false,"tab_id":6,"tab_name":"wb","pane_command":"/bin/zsh"},
  {"id":0,"is_plugin":true,"title":"tab-bar","exited":false,"is_held":false,"tab_id":1,"tab_name":"paris"}
 ]`
 
@@ -60,6 +62,11 @@ func TestAgentPane(t *testing.T) {
 	// in; a lone user shell (oslo) never is.
 	if p, ok := agentPane(panes, "lima"); !ok || p.ID != 9 {
 		t.Errorf("lima agent (retitled) = %+v, %v; want pane 9", p, ok)
+	}
+	// A user's shell titled with a path ending in the tab name is not the
+	// agent, even when the agent has retitled itself.
+	if p, ok := agentPane(panes, "wb"); !ok || p.ID != 10 {
+		t.Errorf("wb agent (retitled, beside a path-titled shell) = %+v, %v; want pane 10", p, ok)
 	}
 	for _, tab := range []string{"paris", "rome", "oslo", "madrid"} {
 		if p, ok := agentPane(panes, tab); ok {
