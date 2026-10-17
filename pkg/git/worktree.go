@@ -3,6 +3,7 @@ package git
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strconv"
@@ -69,6 +70,28 @@ func CreateWorktree(repoPath, worktreePath, branch string) (offline bool, err er
 	}
 
 	return offline, CreateWorktreeAt(repoPath, worktreePath, branch, base)
+}
+
+// CreateWorktreeThen is CreateWorktree followed by finish, the caller's
+// remaining setup (copying files, recording the worktree). If finish fails, the
+// worktree and its branch are removed again, so a retry under the same name
+// does not trip over a branch and a registered path nobody records. The branch
+// is always this call's own: `worktree add -b` refuses one that exists.
+func CreateWorktreeThen(repoPath, worktreePath, branch string, finish func() error) (offline bool, err error) {
+	offline, err = CreateWorktree(repoPath, worktreePath, branch)
+	if err != nil {
+		return offline, err
+	}
+	if err := finish(); err != nil {
+		if rmErr := RemoveWorktree(repoPath, worktreePath); rmErr != nil {
+			return offline, errors.Join(err, fmt.Errorf("roll back worktree %s: %w", worktreePath, rmErr))
+		}
+		if brErr := DeleteBranch(repoPath, branch); brErr != nil {
+			return offline, errors.Join(err, fmt.Errorf("roll back branch %s: %w", branch, brErr))
+		}
+		return offline, err
+	}
+	return offline, nil
 }
 
 // CreateWorktreeAt adds a worktree on a new branch starting at an arbitrary
