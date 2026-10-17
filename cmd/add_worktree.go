@@ -66,42 +66,40 @@ var addWorktreeCmd = &cobra.Command{
 			_ = os.RemoveAll(worktreePath)
 		}
 
-		offline, err := git.CreateWorktree(repo.LocalPath, worktreePath, branch)
+		// Everything up to the config save is rolled back if it fails, so a
+		// retry under the same name starts clean.
+		offline, err := git.CreateWorktreeThen(repo.LocalPath, worktreePath, branch, func() error {
+			missing, err := config.CopyFiles(repo.LocalPath, worktreePath, repo.CopyFiles)
+			if err != nil {
+				return err
+			}
+			for _, f := range missing {
+				fmt.Fprintf(os.Stderr, "warning: copy_files: %s not found in %s\n", f, repo.LocalPath)
+			}
+
+			repo.Worktrees = append(repo.Worktrees, config.Worktree{
+				Name:      name,
+				Branch:    branch,
+				Path:      worktreePath,
+				CreatedAt: time.Now(),
+				Model:     cfg.ResolveModel(addWorktreeModel),
+			})
+
+			// update the slice in cfg since FindRepo returns a pointer into the slice
+			for i := range cfg.Repos {
+				if cfg.Repos[i].Alias == addWorktreeRepo {
+					cfg.Repos[i] = *repo
+					break
+				}
+			}
+
+			return cfg.Save()
+		})
 		if err != nil {
 			return err
 		}
 		if offline {
 			fmt.Fprintln(os.Stderr, "warning: offline — branched from last-fetched origin")
-		}
-
-		missing, err := config.CopyFiles(repo.LocalPath, worktreePath, repo.CopyFiles)
-		if err != nil {
-			return err
-		}
-		for _, f := range missing {
-			fmt.Fprintf(os.Stderr, "warning: copy_files: %s not found in %s\n", f, repo.LocalPath)
-		}
-
-		modelKey := cfg.ResolveModel(addWorktreeModel)
-
-		repo.Worktrees = append(repo.Worktrees, config.Worktree{
-			Name:      name,
-			Branch:    branch,
-			Path:      worktreePath,
-			CreatedAt: time.Now(),
-			Model:     modelKey,
-		})
-
-		// update the slice in cfg since FindRepo returns a pointer into the slice
-		for i := range cfg.Repos {
-			if cfg.Repos[i].Alias == addWorktreeRepo {
-				cfg.Repos[i] = *repo
-				break
-			}
-		}
-
-		if err := cfg.Save(); err != nil {
-			return err
 		}
 
 		state, _ := config.LoadState()
