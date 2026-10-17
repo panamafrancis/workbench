@@ -427,7 +427,6 @@ const development = `# Development
   pkg/zellij/         Session and tab management, layout generation
   pkg/mcp/            MCP stdio server (tools + prompts)
   pkg/docs/           Documentation content (this text)
-  plugin/             DEPRECATED — replaced by MCP server
   scripts/            E2E test, standalone layout, CI shim
   plans/              Design documents
 

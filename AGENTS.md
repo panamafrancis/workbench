@@ -80,7 +80,6 @@ pkg/
     layout.go           # WriteTabLayout — per-worktree KDL with env injection
     session.go          # ListSessions, WriteSessionLayout (go:embed), CreateBackgroundSession
     session.kdl.tmpl    # Embedded session layout template
-plugin/                 # DEPRECATED — replaced by MCP server (cmd/mcp.go + pkg/mcp/)
 pkg/mcp/
   server.go             # MCP stdio server — rename_branch, create_pr, docs tools + conventions prompt
 pkg/docs/
