@@ -193,19 +193,14 @@ func codexSessionIn(dir string) bool {
 	return found
 }
 
-// discoverSlack absorbs the gap between a launcher's clock reading and the
-// start time the CLI records a moment later (and second-granular stamps).
-const discoverSlack = 5 * time.Second
-
 // discoverCodexSession finds the earliest codex session that started in dir
 // at or after since (and before until, when set) and is not in claimed.
 func discoverCodexSession(dir string, since, until time.Time, claimed map[string]bool) (string, bool) {
-	floor := since.Add(-discoverSlack)
 	var best codexMeta
 	walkCodexRollouts(func(path, id string, d fs.DirEntry) bool {
 		// A rollout is written as its session runs, so one modified before
 		// the launch cannot be the launch's.
-		if info, err := d.Info(); err != nil || info.ModTime().Before(floor) {
+		if info, err := d.Info(); err != nil || info.ModTime().Before(since) {
 			return true
 		}
 		m, ok := readCodexMeta(path)
@@ -215,7 +210,10 @@ func discoverCodexSession(dir string, since, until time.Time, claimed map[string
 			return true
 		}
 		m.ID = id
-		if claimed[m.ID] || m.Start.IsZero() || m.Start.Before(floor) || (!until.IsZero() && !m.Start.Before(until)) {
+		// The launch timestamp is taken before spawning Codex. Accepting an
+		// earlier session, even by a few seconds, can bind a later sibling to
+		// the first sibling's still-unclaimed conversation.
+		if claimed[m.ID] || m.Start.IsZero() || m.Start.Before(since) || (!until.IsZero() && !m.Start.Before(until)) {
 			return true
 		}
 		if best.ID == "" || m.Start.Before(best.Start) {

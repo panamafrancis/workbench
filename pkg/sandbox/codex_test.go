@@ -201,3 +201,18 @@ func TestDiscoverCodexSessionUntil(t *testing.T) {
 		t.Errorf("second launch found %q, want %q", id, idB)
 	}
 }
+
+func TestDiscoverCodexSessionDoesNotTakeEarlierSibling(t *testing.T) {
+	ch := isolateCodex(t)
+	tree := t.TempDir()
+	firstLaunch := time.Now().Add(-time.Minute)
+	secondLaunch := firstLaunch.Add(2 * time.Second)
+	writeRollout(t, ch, idA, tree, firstLaunch.Add(time.Second))
+	if id, ok := DiscoverSession(codexModel, tree, secondLaunch, time.Time{}, nil); ok {
+		t.Fatalf("later launch took earlier sibling's unclaimed session %q", id)
+	}
+	writeRollout(t, ch, idB, tree, secondLaunch.Add(time.Second))
+	if id, ok := DiscoverSession(codexModel, tree, secondLaunch, time.Time{}, nil); !ok || id != idB {
+		t.Errorf("later launch found %q, %v; want %q", id, ok, idB)
+	}
+}
