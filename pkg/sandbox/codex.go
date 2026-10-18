@@ -99,18 +99,23 @@ func walkCodexRollouts(fn func(path, id string, d fs.DirEntry) bool) {
 	})
 }
 
-// codexTranscript is the rollout of sessionID, or "" when there is none.
-func codexTranscript(sessionID string) string {
+// codexTranscript is the rollout of sessionID that ran in dir, or "" when
+// there is none. Every codex sandbox can write under $CODEX_HOME, so a rollout
+// is only trusted as this directory's when its own record says it ran here
+// and names the same session as its file name.
+func codexTranscript(dir, sessionID string) string {
 	if !looksLikeUUID(sessionID) {
 		return ""
 	}
 	var found string
 	walkCodexRollouts(func(path, id string, _ fs.DirEntry) bool {
-		if strings.EqualFold(id, sessionID) {
-			found = path
-			return false
+		if !strings.EqualFold(id, sessionID) {
+			return true
 		}
-		return true
+		if m, ok := readCodexMeta(path); ok && strings.EqualFold(m.ID, id) && sameDir(m.Cwd, dir) {
+			found = path
+		}
+		return false
 	})
 	return found
 }
@@ -201,12 +206,12 @@ func discoverCodexSession(dir string, since time.Time, claimed map[string]bool) 
 			return true
 		}
 		m, ok := readCodexMeta(path)
-		if !ok || !sameDir(m.Cwd, dir) {
+		// The id ends up on a command line (resume <id>): only a UUID that
+		// the file name and the record agree on is taken.
+		if !ok || !strings.EqualFold(m.ID, id) || !sameDir(m.Cwd, dir) {
 			return true
 		}
-		if m.ID == "" {
-			m.ID = id
-		}
+		m.ID = id
 		if claimed[m.ID] || m.Start.IsZero() || m.Start.Before(floor) {
 			return true
 		}

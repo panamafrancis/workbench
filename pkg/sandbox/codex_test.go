@@ -129,3 +129,30 @@ func TestCodexResumeArgs(t *testing.T) {
 		t.Errorf("resume by id: %v", args)
 	}
 }
+
+// Every codex sandbox can write rollouts, so one planted to look like another
+// directory's session, or whose record and file name disagree, is not trusted.
+func TestCodexRolloutsAreBoundToTheirDirectory(t *testing.T) {
+	ch := isolateCodex(t)
+	tree := t.TempDir()
+	launch := time.Now()
+
+	writeRollout(t, ch, idA, "/elsewhere", launch)
+	if SessionExistsFor(codexModel, tree, idA) {
+		t.Error("a session that ran elsewhere was resumed here")
+	}
+
+	// Record id disagrees with the file name (an argv-injection attempt).
+	path := writeRollout(t, ch, idB, tree, launch.Add(time.Second))
+	ts := launch.Add(time.Second).UTC().Format(time.RFC3339Nano)
+	forged := fmt.Sprintf(`{"timestamp":%q,"type":"session_meta","payload":{"id":"--dangerous-flag","timestamp":%q,"cwd":%q}}`+"\n", ts, ts, tree)
+	if err := os.WriteFile(path, []byte(forged), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if id, ok := DiscoverSession(codexModel, tree, launch, nil); ok {
+		t.Errorf("discovered %q from a rollout whose record and name disagree", id)
+	}
+	if SessionExistsFor(codexModel, tree, idB) {
+		t.Error("trusted a rollout whose record and name disagree")
+	}
+}

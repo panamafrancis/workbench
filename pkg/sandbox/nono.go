@@ -121,7 +121,7 @@ func SessionTranscript(worktreePath, sessionID string) string {
 // not exist yet is "".
 func SessionTranscriptFor(m config.Model, worktreePath, sessionID string) string {
 	if m.SessionStore == config.SessionStoreCodex {
-		return codexTranscript(sessionID)
+		return codexTranscript(worktreePath, sessionID)
 	}
 	return SessionTranscript(worktreePath, sessionID)
 }
@@ -129,7 +129,7 @@ func SessionTranscriptFor(m config.Model, worktreePath, sessionID string) string
 // SessionExistsFor is SessionExists read against m's session store.
 func SessionExistsFor(m config.Model, worktreePath, sessionID string) bool {
 	if m.SessionStore == config.SessionStoreCodex {
-		return codexTranscript(sessionID) != ""
+		return codexTranscript(worktreePath, sessionID) != ""
 	}
 	return SessionExists(worktreePath, sessionID)
 }
