@@ -76,7 +76,10 @@ func TestProfileDeniesHostDaemonSockets(t *testing.T) {
 	for _, d := range doc["filesystem"].(map[string]any)["deny"].([]any) {
 		deny[d] = true
 	}
-	for _, want := range []string{filepath.Join(home, ".codex", "app-server-daemon")} {
+	for _, want := range []string{
+		filepath.Join(home, ".codex", "app-server-daemon"),
+		filepath.Join(home, ".codex", "ipc"),
+	} {
 		if !deny[want] {
 			t.Errorf("deny lacks %s: %v", want, deny)
 		}

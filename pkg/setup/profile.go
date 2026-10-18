@@ -75,7 +75,7 @@ func (p Profile) JSON() string {
 // sockets are denied whichever CLI the profile is for. A path that does not
 // exist is fine to deny.
 //
-// The daemon lives in Codex's home, $CODEX_HOME when that is absolute and
+// Its sockets live in Codex's home, $CODEX_HOME when that is absolute and
 // ~/.codex otherwise; both are denied when they differ, since a profile
 // outlives the environment it was generated in. A path that cannot be made
 // absolute is left out rather than written relative.
@@ -90,7 +90,11 @@ func HostDaemonSockets() []string {
 	}
 	for i, h := range homes {
 		if i == 0 || h != homes[0] {
-			out = append(out, filepath.Join(h, "app-server-daemon"))
+			// app-server-control holds a link to the /private/tmp socket,
+			// already denied through it; ipc is the desktop app's own.
+			for _, d := range []string{"app-server-daemon", "app-server-control", "ipc"} {
+				out = append(out, filepath.Join(h, d))
+			}
 		}
 	}
 	return out

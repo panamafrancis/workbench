@@ -142,13 +142,16 @@ func PicksOwnSessionID(m config.Model) bool {
 }
 
 // DiscoverSession finds the session m's CLI started in worktreePath at or
-// after since, skipping the IDs in claimed (sessions other agents sharing the
-// directory already own). Of several candidates the earliest wins: agents
-// launched into one directory moments apart may still be told apart wrongly,
-// which is the cost of a CLI that will not take an ID.
-func DiscoverSession(m config.Model, worktreePath string, since time.Time, claimed map[string]bool) (string, bool) {
+// after since and, when until is not zero, before until, skipping the IDs in
+// claimed (sessions other agents sharing the directory already own). until is
+// the next launch into the directory that is still waiting for its own
+// session: a session started after it is more likely that launch's. Of several
+// candidates the earliest wins: agents launched into one directory moments
+// apart may still be told apart wrongly, which is the cost of a CLI that will
+// not take an ID.
+func DiscoverSession(m config.Model, worktreePath string, since, until time.Time, claimed map[string]bool) (string, bool) {
 	if m.SessionStore == config.SessionStoreCodex {
-		return discoverCodexSession(worktreePath, since, claimed)
+		return discoverCodexSession(worktreePath, since, until, claimed)
 	}
 	return "", false
 }
@@ -292,7 +295,7 @@ func BuildGrantedNonoArgs(m config.Model, g Grants, sessionDir, agentName string
 	args = append(args, g.Args()...)
 	args = append(args, "--", m.Binary)
 	args = append(args, m.Args...)
-	if resume && len(m.ResumeArgs) > 0 && HasPriorSession(sessionDir) {
+	if resume && len(m.ResumeArgs) > 0 && hasPriorSessionFor(m, sessionDir) {
 		args = append(args, m.ResumeArgs...)
 	}
 	if agentName != "" && len(m.AgentNameArgs) > 0 {

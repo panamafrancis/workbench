@@ -95,18 +95,18 @@ func TestDiscoverCodexSession(t *testing.T) {
 
 	// The hour-old rollout was touched by the test just now, so the mtime
 	// prefilter does not exclude it: the recorded start time must.
-	got, ok := DiscoverSession(codexModel, tree, launch, nil)
+	got, ok := DiscoverSession(codexModel, tree, launch, time.Time{}, nil)
 	if !ok || got != idC {
 		t.Fatalf("DiscoverSession = %q, %v; want %q", got, ok, idC)
 	}
-	if _, ok := DiscoverSession(codexModel, tree, launch, map[string]bool{idC: true}); ok {
+	if _, ok := DiscoverSession(codexModel, tree, launch, time.Time{}, map[string]bool{idC: true}); ok {
 		t.Error("a claimed session was discovered again")
 	}
 }
 
 func TestDiscoverSessionClaudeStoreFindsNothing(t *testing.T) {
 	testutil.IsolateHome(t)
-	if _, ok := DiscoverSession(config.Model{}, "/tree", time.Now(), nil); ok {
+	if _, ok := DiscoverSession(config.Model{}, "/tree", time.Now(), time.Time{}, nil); ok {
 		t.Error("claude picks no session ID of its own to discover")
 	}
 }
@@ -149,10 +149,55 @@ func TestCodexRolloutsAreBoundToTheirDirectory(t *testing.T) {
 	if err := os.WriteFile(path, []byte(forged), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if id, ok := DiscoverSession(codexModel, tree, launch, nil); ok {
+	if id, ok := DiscoverSession(codexModel, tree, launch, time.Time{}, nil); ok {
 		t.Errorf("discovered %q from a rollout whose record and name disagree", id)
 	}
 	if SessionExistsFor(codexModel, tree, idB) {
 		t.Error("trusted a rollout whose record and name disagree")
+	}
+}
+
+// A rollout that only borrows a session's file name, from another directory,
+// does not hide the real one.
+func TestCodexTranscriptSkipsImpostor(t *testing.T) {
+	ch := isolateCodex(t)
+	tree := t.TempDir()
+	writeRollout(t, ch, idA, "/elsewhere", time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC))
+	real := writeRollout(t, ch, idA, tree, time.Now())
+	if got := SessionTranscriptFor(codexModel, tree, idA); got != real {
+		t.Errorf("SessionTranscriptFor = %q, want %q", got, real)
+	}
+}
+
+// The granted builder (the PM's) reads a codex model's own store too.
+func TestBuildGrantedNonoArgsCodexResume(t *testing.T) {
+	ch := isolateCodex(t)
+	dir := t.TempDir()
+	g := Grants{Allow: []string{dir}}
+	args, err := BuildGrantedNonoArgs(codexModel, g, dir, "", true)
+	if err != nil || contains(args, "--last") {
+		t.Fatalf("resumed with no codex session: %v, %v", args, err)
+	}
+	writeRollout(t, ch, idA, dir, time.Now())
+	if args, _ := BuildGrantedNonoArgs(codexModel, g, dir, "", true); !contains(args, "--last") {
+		t.Errorf("did not resume the codex session: %v", args)
+	}
+}
+
+// A session started after the next launch into the directory belongs to that
+// launch, not to an earlier one still waiting for its own.
+func TestDiscoverCodexSessionUntil(t *testing.T) {
+	ch := isolateCodex(t)
+	tree := t.TempDir()
+	// In the past: a rollout is only considered when its file was modified
+	// after the launch, and the test writes it now.
+	second := time.Now().Add(-time.Minute)
+	first := second.Add(-time.Minute)
+	writeRollout(t, ch, idB, tree, second.Add(time.Second)) // the second launch's
+	if id, ok := DiscoverSession(codexModel, tree, first, second, nil); ok {
+		t.Errorf("first launch took %q, started after the second launch", id)
+	}
+	if id, _ := DiscoverSession(codexModel, tree, second, time.Time{}, nil); id != idB {
+		t.Errorf("second launch found %q, want %q", id, idB)
 	}
 }

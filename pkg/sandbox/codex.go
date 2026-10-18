@@ -114,8 +114,11 @@ func codexTranscript(dir, sessionID string) string {
 		}
 		if m, ok := readCodexMeta(path); ok && strings.EqualFold(m.ID, id) && sameDir(m.Cwd, dir) {
 			found = path
+			return false
 		}
-		return false
+		// A file that only borrows the name (another directory's, or a
+		// forged one) must not hide the real rollout further on.
+		return true
 	})
 	return found
 }
@@ -195,8 +198,8 @@ func codexSessionIn(dir string) bool {
 const discoverSlack = 5 * time.Second
 
 // discoverCodexSession finds the earliest codex session that started in dir
-// at or after since and is not in claimed.
-func discoverCodexSession(dir string, since time.Time, claimed map[string]bool) (string, bool) {
+// at or after since (and before until, when set) and is not in claimed.
+func discoverCodexSession(dir string, since, until time.Time, claimed map[string]bool) (string, bool) {
 	floor := since.Add(-discoverSlack)
 	var best codexMeta
 	walkCodexRollouts(func(path, id string, d fs.DirEntry) bool {
@@ -212,7 +215,7 @@ func discoverCodexSession(dir string, since time.Time, claimed map[string]bool) 
 			return true
 		}
 		m.ID = id
-		if claimed[m.ID] || m.Start.IsZero() || m.Start.Before(floor) {
+		if claimed[m.ID] || m.Start.IsZero() || m.Start.Before(floor) || (!until.IsZero() && !m.Start.Before(until)) {
 			return true
 		}
 		if best.ID == "" || m.Start.Before(best.Start) {
