@@ -53,7 +53,7 @@ func (p Profile) JSON() string {
 			AllowFile:         p.AllowFile,
 			UnixSocketSubtree: []string{"/private/tmp"},
 			BypassProtection:  p.Bypass,
-			Deny:              p.Deny,
+			Deny:              append(append([]string{}, p.Deny...), HostDaemonSockets()...),
 		},
 	}
 	data, err := json.MarshalIndent(doc, "", "  ")
@@ -61,6 +61,43 @@ func (p Profile) JSON() string {
 		return "{}"
 	}
 	return string(data) + "\n"
+}
+
+// HostDaemonSockets are the sockets of agent daemons that run outside every
+// sandbox, which every generated profile denies.
+//
+// On macOS nono does not mediate AF_UNIX connect(2) while the network is open:
+// a sandboxed process may connect to any socket it can name, and the only way
+// to keep one out is filesystem.deny on its path (nono then also denies the
+// network-outbound to it). A sandboxed agent that reaches Codex's app-server
+// daemon (started by the ChatGPT app or any codex run, never sandboxed) can
+// have it run commands with the user's full permissions, so the daemon's
+// sockets are denied whichever CLI the profile is for. A path that does not
+// exist is fine to deny.
+//
+// Its sockets live in Codex's home, $CODEX_HOME when that is absolute and
+// ~/.codex otherwise; both are denied when they differ, since a profile
+// outlives the environment it was generated in. A path that cannot be made
+// absolute is left out rather than written relative.
+func HostDaemonSockets() []string {
+	out := []string{fmt.Sprintf("/private/tmp/codex-daemon-%d", os.Getuid())}
+	var homes []string
+	if h := os.Getenv("CODEX_HOME"); filepath.IsAbs(h) {
+		homes = append(homes, filepath.Clean(h))
+	}
+	if home, err := os.UserHomeDir(); err == nil && filepath.IsAbs(home) {
+		homes = append(homes, filepath.Join(home, ".codex"))
+	}
+	for i, h := range homes {
+		if i == 0 || h != homes[0] {
+			// app-server-control holds a link to the /private/tmp socket,
+			// already denied through it; ipc is the desktop app's own.
+			for _, d := range []string{"app-server-daemon", "app-server-control", "ipc"} {
+				out = append(out, filepath.Join(h, d))
+			}
+		}
+	}
+	return out
 }
 
 // Write writes the profile to nono's profile dir and returns its path.

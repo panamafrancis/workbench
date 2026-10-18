@@ -60,7 +60,23 @@ type Model struct {
 	// "{prompt}" is substituted. Empty for models with no such argument, which
 	// then start idle and pick their instructions up on the first human turn.
 	PromptArgs []string `yaml:"prompt_args,omitempty"`
+	// SessionStore names where the CLI keeps its session transcripts, which is
+	// how a launcher tells whether a session can be resumed and whether its
+	// agent is working. Empty means SessionStoreClaude. A store whose CLI picks
+	// its own session IDs (SessionStoreCodex) has no NewSessionArgs: the ID is
+	// learned from the transcript after the first launch instead.
+	SessionStore string `yaml:"session_store,omitempty"`
+	// Icon is the glyph a sidebar shows beside an agent on this model: any
+	// string, so plain Unicode, a Nerd Font glyph or an emoji. The built-in
+	// defaults are plain Unicode, which every font has.
+	Icon string `yaml:"icon,omitempty"`
 }
+
+// The session stores a Model can name.
+const (
+	SessionStoreClaude = "claude" // ~/.claude/projects/<encoded dir>/<id>.jsonl
+	SessionStoreCodex  = "codex"  // $CODEX_HOME/sessions/YYYY/MM/DD/rollout-<time>-<id>.jsonl
+)
 
 type Repo struct {
 	Alias     string     `yaml:"alias"`
@@ -100,26 +116,23 @@ func DefaultModels() map[string]Model {
 			ResumeSessionArgs: []string{"--resume", "{session_id}"},
 			AgentNameArgs:     []string{"--name", "{agent_name}"},
 			PromptArgs:        []string{"{prompt}"},
+			Icon:              "✻",
 		},
 		"codex": {
 			NonoProfile: "default",
 			Binary:      "codex",
 			Args:        []string{},
-		},
-		"opencode": {
-			NonoProfile: "default",
-			Binary:      "opencode",
-			Args:        []string{},
-		},
-		"dirac": {
-			NonoProfile: "default",
-			Binary:      "dirac",
-			Args:        []string{},
+			// Codex cannot be given a session ID, only resume one it chose.
+			ResumeSessionArgs: []string{"resume", "{session_id}"},
+			PromptArgs:        []string{"{prompt}"},
+			SessionStore:      SessionStoreCodex,
+			Icon:              "◎",
 		},
 		"shell": {
 			NonoProfile: "default",
 			Binary:      "bash",
 			Args:        []string{},
+			Icon:        "$",
 		},
 	}
 }
@@ -185,6 +198,15 @@ func BackfillModels(models map[string]Model) {
 		}
 		if len(dm.AgentNameArgs) > 0 && len(m.AgentNameArgs) == 0 {
 			m.AgentNameArgs = dm.AgentNameArgs
+		}
+		// The session args backfilled above only mean something read against
+		// the right store: codex's resume args with claude's store would never
+		// find a session to resume.
+		if dm.SessionStore != "" && m.SessionStore == "" {
+			m.SessionStore = dm.SessionStore
+		}
+		if dm.Icon != "" && m.Icon == "" {
+			m.Icon = dm.Icon
 		}
 		models[key] = m
 	}

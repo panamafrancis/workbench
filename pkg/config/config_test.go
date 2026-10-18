@@ -33,7 +33,7 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.DefaultModel != modelClaude {
 		t.Errorf("DefaultModel = %q, want %q", cfg.DefaultModel, modelClaude)
 	}
-	for _, key := range []string{modelClaude, modelCodex, "opencode", "dirac", "shell"} {
+	for _, key := range []string{modelClaude, modelCodex, "shell"} {
 		if _, ok := cfg.Models[key]; !ok {
 			t.Errorf("missing default model %q", key)
 		}
@@ -310,8 +310,8 @@ func TestAllWorktreeNamesMultiRepo(t *testing.T) {
 
 func TestResolveModelExplicit(t *testing.T) {
 	cfg := &Config{DefaultModel: modelCodex}
-	if got := cfg.ResolveModel("dirac"); got != "dirac" {
-		t.Errorf("ResolveModel(dirac) = %q, want %q", got, "dirac")
+	if got := cfg.ResolveModel("mymodel"); got != "mymodel" {
+		t.Errorf("ResolveModel(mymodel) = %q, want %q", got, "mymodel")
 	}
 }
 

@@ -90,3 +90,36 @@ func TestBackfillAgentNameArgs(t *testing.T) {
 		t.Error("must not inject claude's name args into a differently-binaried model")
 	}
 }
+
+// A codex entry saved before codex sessions were tracked gets the resume args
+// and, with them, the store they are read against.
+func TestBackfillCodexSessionStore(t *testing.T) {
+	models := map[string]Model{"codex": {Binary: "codex", ResumeArgs: []string{"resume", "--last"}}}
+	BackfillModels(models)
+	m := models["codex"]
+	if m.SessionStore != SessionStoreCodex {
+		t.Errorf("SessionStore = %q, want %q", m.SessionStore, SessionStoreCodex)
+	}
+	if len(m.ResumeSessionArgs) == 0 || len(m.NewSessionArgs) != 0 {
+		t.Errorf("session args = new %v, resume %v", m.NewSessionArgs, m.ResumeSessionArgs)
+	}
+	if got := m.ResumeArgs; len(got) != 2 || got[1] != "--last" {
+		t.Errorf("ResumeArgs overwritten: %v", got)
+	}
+}
+
+// A shipped model saved before icons existed gets its default icon; one the
+// user chose is kept.
+func TestBackfillIcon(t *testing.T) {
+	models := map[string]Model{
+		modelClaude: {Binary: DefaultModels()[modelClaude].Binary},
+		modelCodex:  {Binary: DefaultModels()[modelCodex].Binary, Icon: "🤖"},
+	}
+	BackfillModels(models)
+	if got := models[modelClaude].Icon; got != DefaultModels()[modelClaude].Icon {
+		t.Errorf("claude icon = %q, want the default", got)
+	}
+	if got := models[modelCodex].Icon; got != "🤖" {
+		t.Errorf("codex icon = %q, want the user's", got)
+	}
+}

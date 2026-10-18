@@ -194,6 +194,9 @@ models:
     nono_profile: default
     binary: codex
     args: []
+    resume_args: ["resume", "--last"]
+    session_store: codex         # where its sessions live: claude (default) or codex
+    icon: "◎"                    # glyph shown beside its agents in supatree's sidebar
   shell:
     nono_profile: default
     binary: bash
@@ -223,6 +226,17 @@ models:
 ```
 
 Then use it with `workbench open --model=mymodel` or set it as `default_model`.
+
+`icon` is any string: plain Unicode (the defaults: claude `✻`, codex `◎`,
+shell `$`), a Nerd Font glyph if your terminal font has them, or an emoji.
+
+Only `claude` and `codex` are supported. Other CLIs can be added under
+`models:`, but resuming their sessions won't work.
+
+`session_store` says where the CLI keeps its session transcripts, which is how
+`resume_args` decides whether there is a session to resume. It is `claude`
+(`~/.claude/projects/`) unless set; `codex` reads `$CODEX_HOME/sessions/`
+(default `~/.codex/sessions/`), matching a session to the directory it ran in.
 
 ### Copying files to new worktrees
 
@@ -334,6 +348,8 @@ For one issue across several repos, see [supatree](https://github.com/panamafran
 ## nono sandbox
 
 workbench passes `--allow <worktree-path>` to nono so the sandboxed process can read and write only its own worktree. The profile name comes from the model config entry (`nono_profile`). The built-in `claude` model uses the `claude-code` profile; everything else defaults to `default`.
+
+**Sockets are not an allowlist on macOS.** While the network is open, nono lets a sandboxed process connect to any Unix socket it can name; only `filesystem.deny` on the socket's path keeps it out. Generated profiles deny the sockets of Codex's app-server daemon (`/private/tmp/codex-daemon-<uid>`, `~/.codex/app-server-daemon`), which the ChatGPT app and `codex` start outside any sandbox and which run whatever they are sent. A hand-written profile should deny them too, along with any other host daemon socket an agent must not reach.
 
 ### Profile setup
 
