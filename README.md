@@ -194,6 +194,8 @@ models:
     nono_profile: default
     binary: codex
     args: []
+    resume_args: ["resume", "--last"]
+    session_store: codex         # where its sessions live: claude (default) or codex
   shell:
     nono_profile: default
     binary: bash
@@ -223,6 +225,14 @@ models:
 ```
 
 Then use it with `workbench open --model=mymodel` or set it as `default_model`.
+
+Only `claude` and `codex` are supported. Other CLIs can be added under
+`models:`, but resuming their sessions won't work.
+
+`session_store` says where the CLI keeps its session transcripts, which is how
+`resume_args` decides whether there is a session to resume. It is `claude`
+(`~/.claude/projects/`) unless set; `codex` reads `$CODEX_HOME/sessions/`
+(default `~/.codex/sessions/`), matching a session to the directory it ran in.
 
 ### Copying files to new worktrees
 

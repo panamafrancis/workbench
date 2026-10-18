@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/panamafrancis/workbench/pkg/config"
 )
@@ -18,7 +19,7 @@ func BuildNonoArgs(worktreePath string, m config.Model) []string {
 	args = append(args, m.Args...)
 	// Only resume (e.g. claude --continue) when a prior session exists for this
 	// worktree; otherwise the binary would error on a fresh worktree.
-	if len(m.ResumeArgs) > 0 && HasPriorSession(worktreePath) {
+	if len(m.ResumeArgs) > 0 && hasPriorSessionFor(m, worktreePath) {
 		args = append(args, m.ResumeArgs...)
 	}
 	return args
@@ -62,7 +63,7 @@ func BuildGrantedAgentNonoArgs(m config.Model, g Grants, sessionDir, sessionID, 
 		args = append(args, substituteTokens(m.ResumeSessionArgs, tokens)...)
 	case sessionID != "" && !resume && len(m.NewSessionArgs) > 0:
 		args = append(args, substituteTokens(m.NewSessionArgs, tokens)...)
-	case resume && len(m.ResumeArgs) > 0 && HasPriorSession(sessionDir):
+	case resume && len(m.ResumeArgs) > 0 && hasPriorSessionFor(m, sessionDir):
 		// Fallback for models without session-ID args: directory-scoped resume
 		// (e.g. --continue). Only when actually resuming — a *new* agent must
 		// never inherit whatever ran last in a shared directory.
@@ -112,6 +113,52 @@ func SessionTranscript(worktreePath, sessionID string) string {
 		return ""
 	}
 	return filepath.Join(home, ".claude", "projects", encodeProjectPath(worktreePath), sessionID+".jsonl")
+}
+
+// SessionTranscriptFor is SessionTranscript read against m's session store.
+// For a store whose transcript path cannot be known before the session
+// exists (codex names its files after the start time), a session that does
+// not exist yet is "".
+func SessionTranscriptFor(m config.Model, worktreePath, sessionID string) string {
+	if m.SessionStore == config.SessionStoreCodex {
+		return codexTranscript(sessionID)
+	}
+	return SessionTranscript(worktreePath, sessionID)
+}
+
+// SessionExistsFor is SessionExists read against m's session store.
+func SessionExistsFor(m config.Model, worktreePath, sessionID string) bool {
+	if m.SessionStore == config.SessionStoreCodex {
+		return codexTranscript(sessionID) != ""
+	}
+	return SessionExists(worktreePath, sessionID)
+}
+
+// PicksOwnSessionID reports whether m's CLI chooses its session ID itself
+// rather than taking one at launch, so a launcher must learn it afterwards
+// with DiscoverSession to resume that session later.
+func PicksOwnSessionID(m config.Model) bool {
+	return m.SessionStore == config.SessionStoreCodex
+}
+
+// DiscoverSession finds the session m's CLI started in worktreePath at or
+// after since, skipping the IDs in claimed (sessions other agents sharing the
+// directory already own). Of several candidates the earliest wins: agents
+// launched into one directory moments apart may still be told apart wrongly,
+// which is the cost of a CLI that will not take an ID.
+func DiscoverSession(m config.Model, worktreePath string, since time.Time, claimed map[string]bool) (string, bool) {
+	if m.SessionStore == config.SessionStoreCodex {
+		return discoverCodexSession(worktreePath, since, claimed)
+	}
+	return "", false
+}
+
+// hasPriorSessionFor is HasPriorSession read against m's session store.
+func hasPriorSessionFor(m config.Model, worktreePath string) bool {
+	if m.SessionStore == config.SessionStoreCodex {
+		return codexSessionIn(worktreePath)
+	}
+	return HasPriorSession(worktreePath)
 }
 
 // SupportsSessions reports whether m defines explicit session-ID launch args,
