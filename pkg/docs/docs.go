@@ -397,6 +397,15 @@ is under /private/tmp (path changes per-boot). Allow via:
 
   "unix_socket_subtree": ["/private/tmp"]
 
+## Sockets are not an allowlist on macOS
+
+While the network is open, nono on macOS lets a sandboxed process connect to
+any AF_UNIX socket it can name; only filesystem.deny on a socket's path keeps
+it out. Generated profiles deny the sockets of Codex's app-server daemon
+(/private/tmp/codex-daemon-<uid>, ~/.codex/app-server-daemon), which runs
+unsandboxed and executes what it is sent. Deny any other host daemon socket
+an agent must not reach the same way.
+
 ## Environment passthrough
 
 Env vars pass through the zellij → nono → agent chain intact. The WORKBENCH_*
