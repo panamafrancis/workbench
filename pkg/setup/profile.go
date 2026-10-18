@@ -74,12 +74,26 @@ func (p Profile) JSON() string {
 // have it run commands with the user's full permissions, so the daemon's
 // sockets are denied whichever CLI the profile is for. A path that does not
 // exist is fine to deny.
+//
+// The daemon lives in Codex's home, $CODEX_HOME when that is absolute and
+// ~/.codex otherwise; both are denied when they differ, since a profile
+// outlives the environment it was generated in. A path that cannot be made
+// absolute is left out rather than written relative.
 func HostDaemonSockets() []string {
-	home, _ := os.UserHomeDir()
-	return []string{
-		fmt.Sprintf("/private/tmp/codex-daemon-%d", os.Getuid()),
-		filepath.Join(home, ".codex", "app-server-daemon"),
+	out := []string{fmt.Sprintf("/private/tmp/codex-daemon-%d", os.Getuid())}
+	var homes []string
+	if h := os.Getenv("CODEX_HOME"); filepath.IsAbs(h) {
+		homes = append(homes, filepath.Clean(h))
 	}
+	if home, err := os.UserHomeDir(); err == nil && filepath.IsAbs(home) {
+		homes = append(homes, filepath.Join(home, ".codex"))
+	}
+	for i, h := range homes {
+		if i == 0 || h != homes[0] {
+			out = append(out, filepath.Join(h, "app-server-daemon"))
+		}
+	}
+	return out
 }
 
 // Write writes the profile to nono's profile dir and returns its path.

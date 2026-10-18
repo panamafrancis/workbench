@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/panamafrancis/workbench/pkg/testutil"
@@ -82,5 +83,24 @@ func TestProfileDeniesHostDaemonSockets(t *testing.T) {
 	}
 	if len(deny) != len(HostDaemonSockets()) {
 		t.Errorf("deny = %v, want exactly the host daemon sockets", deny)
+	}
+}
+
+// A daemon under $CODEX_HOME is denied as well as one under ~/.codex, and
+// nothing relative is ever written.
+func TestHostDaemonSocketsFollowCodexHome(t *testing.T) {
+	home := testutil.IsolateHome(t)
+	t.Setenv("CODEX_HOME", "/elsewhere/codex")
+	got := HostDaemonSockets()
+	for _, want := range []string{"/elsewhere/codex/app-server-daemon", filepath.Join(home, ".codex", "app-server-daemon")} {
+		if !slices.Contains(got, want) {
+			t.Errorf("HostDaemonSockets() = %v, lacks %s", got, want)
+		}
+	}
+	t.Setenv("CODEX_HOME", "relative/codex")
+	for _, p := range HostDaemonSockets() {
+		if !filepath.IsAbs(p) {
+			t.Errorf("relative deny path %q", p)
+		}
 	}
 }
