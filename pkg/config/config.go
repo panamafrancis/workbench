@@ -66,6 +66,10 @@ type Model struct {
 	// its own session IDs (SessionStoreCodex) has no NewSessionArgs: the ID is
 	// learned from the transcript after the first launch instead.
 	SessionStore string `yaml:"session_store,omitempty"`
+	// Icon is the glyph a sidebar shows beside an agent on this model: any
+	// string, so plain Unicode, a Nerd Font glyph or an emoji. The built-in
+	// defaults are plain Unicode, which every font has.
+	Icon string `yaml:"icon,omitempty"`
 }
 
 // The session stores a Model can name.
@@ -112,6 +116,7 @@ func DefaultModels() map[string]Model {
 			ResumeSessionArgs: []string{"--resume", "{session_id}"},
 			AgentNameArgs:     []string{"--name", "{agent_name}"},
 			PromptArgs:        []string{"{prompt}"},
+			Icon:              "✻",
 		},
 		"codex": {
 			NonoProfile: "default",
@@ -121,11 +126,13 @@ func DefaultModels() map[string]Model {
 			ResumeSessionArgs: []string{"resume", "{session_id}"},
 			PromptArgs:        []string{"{prompt}"},
 			SessionStore:      SessionStoreCodex,
+			Icon:              "◎",
 		},
 		"shell": {
 			NonoProfile: "default",
 			Binary:      "bash",
 			Args:        []string{},
+			Icon:        "$",
 		},
 	}
 }
@@ -197,6 +204,9 @@ func BackfillModels(models map[string]Model) {
 		// find a session to resume.
 		if dm.SessionStore != "" && m.SessionStore == "" {
 			m.SessionStore = dm.SessionStore
+		}
+		if dm.Icon != "" && m.Icon == "" {
+			m.Icon = dm.Icon
 		}
 		models[key] = m
 	}

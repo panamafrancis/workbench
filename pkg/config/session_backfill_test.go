@@ -107,3 +107,19 @@ func TestBackfillCodexSessionStore(t *testing.T) {
 		t.Errorf("ResumeArgs overwritten: %v", got)
 	}
 }
+
+// A shipped model saved before icons existed gets its default icon; one the
+// user chose is kept.
+func TestBackfillIcon(t *testing.T) {
+	models := map[string]Model{
+		modelClaude: {Binary: DefaultModels()[modelClaude].Binary},
+		modelCodex:  {Binary: DefaultModels()[modelCodex].Binary, Icon: "🤖"},
+	}
+	BackfillModels(models)
+	if got := models[modelClaude].Icon; got != DefaultModels()[modelClaude].Icon {
+		t.Errorf("claude icon = %q, want the default", got)
+	}
+	if got := models[modelCodex].Icon; got != "🤖" {
+		t.Errorf("codex icon = %q, want the user's", got)
+	}
+}

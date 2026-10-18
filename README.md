@@ -196,6 +196,7 @@ models:
     args: []
     resume_args: ["resume", "--last"]
     session_store: codex         # where its sessions live: claude (default) or codex
+    icon: "◎"                    # glyph shown beside its agents in supatree's sidebar
   shell:
     nono_profile: default
     binary: bash
@@ -225,6 +226,9 @@ models:
 ```
 
 Then use it with `workbench open --model=mymodel` or set it as `default_model`.
+
+`icon` is any string: plain Unicode (the defaults: claude `✻`, codex `◎`,
+shell `$`), a Nerd Font glyph if your terminal font has them, or an emoji.
 
 Only `claude` and `codex` are supported. Other CLIs can be added under
 `models:`, but resuming their sessions won't work.
