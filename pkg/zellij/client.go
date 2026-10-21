@@ -452,6 +452,35 @@ func FocusedTab(session string) string {
 	return parseFocusedTab(stdout)
 }
 
+// CurrentTab returns the name of the active tab in a named session ("" for the
+// caller's own), from `current-tab-info` — which asks for exactly that, where
+// FocusedTab serializes the whole session's layout and looks for a marker in
+// it. A reply without a name is an error carrying what zellij said.
+func CurrentTab(session string) (string, error) {
+	stdout, stderr, err := runZellijIn(session, "current-tab-info")
+	if err != nil {
+		if s := strings.TrimSpace(stderr); s != "" {
+			return "", fmt.Errorf("zellij current-tab-info: %s", s)
+		}
+		return "", fmt.Errorf("zellij current-tab-info: %w", err)
+	}
+	if name := parseCurrentTab(stdout); name != "" {
+		return name, nil
+	}
+	return "", fmt.Errorf("zellij current-tab-info: no tab name in %q", strings.TrimSpace(stdout))
+}
+
+// parseCurrentTab reads the "name: <tab>" line of current-tab-info's default
+// output. A tab name may contain spaces, so the rest of the line is the name.
+func parseCurrentTab(out string) string {
+	for _, line := range strings.Split(out, "\n") {
+		if name, ok := strings.CutPrefix(line, "name: "); ok {
+			return strings.TrimSpace(name)
+		}
+	}
+	return ""
+}
+
 // parseFocusedTab pulls the focused tab's name out of a dumped KDL layout.
 // Split out from FocusedTab so the parsing is testable without a live server.
 func parseFocusedTab(layout string) string {
