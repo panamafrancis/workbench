@@ -42,3 +42,12 @@ func TestParseFocusedTabIgnoresPanes(t *testing.T) {
 		t.Errorf("parseFocusedTab = %q, want empty (no tab is focused)", got)
 	}
 }
+
+func TestParseCurrentTab(t *testing.T) {
+	if got := parseCurrentTab("name: supatree-pm:reviews\nid: 1\nposition: 1\n"); got != "supatree-pm:reviews" {
+		t.Errorf("parseCurrentTab = %q, want supatree-pm:reviews", got)
+	}
+	if got := parseCurrentTab("No active tab found for current client\n"); got != "" {
+		t.Errorf("parseCurrentTab of an error = %q, want empty", got)
+	}
+}
