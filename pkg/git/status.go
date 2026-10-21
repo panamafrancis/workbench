@@ -9,8 +9,14 @@ import (
 	"time"
 )
 
+// IsDirty reports whether the worktree has uncommitted changes.
+//
+// It takes no optional locks: a plain `git status` refreshes the index and
+// takes index.lock to write it back, and the pollers that call this run
+// alongside whatever else is using the worktree. One that reached a worktree
+// still being checked out made `git worktree add` fail on its index.lock.
 func IsDirty(worktreePath string) bool {
-	cmd := exec.CommandContext(context.Background(), "git", "-C", worktreePath, "status", "--porcelain")
+	cmd := exec.CommandContext(context.Background(), "git", "--no-optional-locks", "-C", worktreePath, "status", "--porcelain")
 	out, err := cmd.Output()
 	if err != nil {
 		return false
