@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // sidebarPaneName is the name WriteTabLayout gives a tab's sidebar pane. Every
@@ -180,18 +181,36 @@ func runsNono(command string) bool {
 	return len(fields) > 0 && filepath.Base(fields[0]) == "nono"
 }
 
+// submitEnterDelay is how long SubmitToPane waits between typing the text and
+// pressing enter. write-chars sends no bracketed-paste markers, so the text
+// reaches the agent as a burst of keystrokes, and a zellij action returns
+// before the server has written to the pty: back to back, the carriage return
+// can arrive in the same read as the text. Codex's TUI takes an enter that
+// comes within a few milliseconds of a keystroke burst for a newline inside a
+// paste, not a submit (codex-rs tui/src/bottom_pane/paste_burst.rs), which
+// leaves the text sitting unsent in its prompt. Any gap of 50ms submitted
+// reliably by hand; this leaves a wide margin. A var so tests can shorten it.
+var submitEnterDelay = 300 * time.Millisecond
+
+// zellijIn is runZellijIn, swapped out by tests that need to see the actions
+// sent rather than run them.
+var zellijIn = runZellijIn
+
 // SubmitToPane types text into a terminal pane and presses enter, without
 // focusing it — how a running, idle agent is handed input it would otherwise
 // only find on a turn it is not going to take. Callers must pass fixed text:
-// whatever this writes, the agent reads as its user's words.
+// whatever this writes, the agent reads as its user's words. It blocks for
+// submitEnterDelay.
 func SubmitToPane(session string, paneID int, text string) error {
 	id := "terminal_" + strconv.Itoa(paneID)
-	if _, stderr, err := runZellijIn(session, "write-chars", "--pane-id", id, text); err != nil {
+	if _, stderr, err := zellijIn(session, "write-chars", "--pane-id", id, text); err != nil {
 		return paneErr("write-chars", stderr, err)
 	}
-	// A carriage return, sent on its own: in the same write it would land in a
-	// paste and be taken as part of the text rather than as enter.
-	if _, stderr, err := runZellijIn(session, "write", "--pane-id", id, "13"); err != nil {
+	// A carriage return, sent on its own and only after submitEnterDelay: in
+	// the same write it would land in a paste and be taken as part of the text
+	// rather than as enter, and too soon after it Codex does the same.
+	time.Sleep(submitEnterDelay)
+	if _, stderr, err := zellijIn(session, "write", "--pane-id", id, "13"); err != nil {
 		return paneErr("write", stderr, err)
 	}
 	return nil

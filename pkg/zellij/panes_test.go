@@ -1,6 +1,11 @@
 package zellij
 
-import "testing"
+import (
+	"errors"
+	"strings"
+	"testing"
+	"time"
+)
 
 // Captured from zellij 0.44.3 `list-panes --all --json`, trimmed to the fields
 // Pane reads plus a few it ignores.
@@ -111,5 +116,60 @@ func TestParseTabIDs(t *testing.T) {
 	}
 	if _, ok := ids["NAME"]; ok {
 		t.Error("the header row was read as a tab")
+	}
+}
+
+func TestSubmitToPaneWaitsBeforeEnter(t *testing.T) {
+	const delay = 50 * time.Millisecond
+	oldDelay, oldIn := submitEnterDelay, zellijIn
+	t.Cleanup(func() { submitEnterDelay, zellijIn = oldDelay, oldIn })
+	submitEnterDelay = delay
+
+	type call struct {
+		args []string
+		at   time.Time
+	}
+	var calls []call
+	zellijIn = func(session string, args ...string) (string, string, error) {
+		if session != "st-x" {
+			t.Errorf("session = %q, want st-x", session)
+		}
+		calls = append(calls, call{args, time.Now()})
+		return "", "", nil
+	}
+
+	if err := SubmitToPane("st-x", 7, "hello"); err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != 2 {
+		t.Fatalf("got %d zellij calls, want 2: %v", len(calls), calls)
+	}
+	if got, want := strings.Join(calls[0].args, " "), "write-chars --pane-id terminal_7 hello"; got != want {
+		t.Errorf("first call = %q, want %q", got, want)
+	}
+	if got, want := strings.Join(calls[1].args, " "), "write --pane-id terminal_7 13"; got != want {
+		t.Errorf("second call = %q, want %q", got, want)
+	}
+	if gap := calls[1].at.Sub(calls[0].at); gap < delay {
+		t.Errorf("enter sent %v after the text, want at least %v", gap, delay)
+	}
+}
+
+func TestSubmitToPaneStopsOnWriteCharsError(t *testing.T) {
+	oldDelay, oldIn := submitEnterDelay, zellijIn
+	t.Cleanup(func() { submitEnterDelay, zellijIn = oldDelay, oldIn })
+	submitEnterDelay = 0
+
+	n := 0
+	zellijIn = func(string, ...string) (string, string, error) {
+		n++
+		return "", "no such pane", errors.New("exit status 1")
+	}
+	err := SubmitToPane("", 3, "hi")
+	if err == nil || !strings.Contains(err.Error(), "no such pane") {
+		t.Fatalf("err = %v, want the zellij stderr", err)
+	}
+	if n != 1 {
+		t.Errorf("got %d zellij calls, want 1: enter must not follow a failed write", n)
 	}
 }
