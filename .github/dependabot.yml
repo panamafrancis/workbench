@@ -1,16 +1,27 @@
+# Version updates come once a month, all of an ecosystem's in one PR.
+# Security updates are not scheduled: Dependabot opens them as soon as an
+# advisory lands, grouped the same way.
 version: 2
 updates:
   - package-ecosystem: gomod
     directory: /
     schedule:
-      interval: weekly
+      interval: monthly
     groups:
       go-modules:
-        update-types: [minor, patch]
+        applies-to: version-updates
+        patterns: ["*"]
+      go-security:
+        applies-to: security-updates
+        patterns: ["*"]
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: weekly
+      interval: monthly
     groups:
       actions:
-        update-types: [minor, patch]
+        applies-to: version-updates
+        patterns: ["*"]
+      actions-security:
+        applies-to: security-updates
+        patterns: ["*"]
