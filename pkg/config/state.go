@@ -193,15 +193,13 @@ func (s *State) CurrentStreak() int {
 	if len(s.ActivityDays) == 0 {
 		return 0
 	}
-	today := time.Now().Truncate(24 * time.Hour)
+	// Activity days are local dates, so compare local dates: truncating an
+	// instant to 24h works in UTC, and stepping it back a day across a DST
+	// change lands an hour off midnight.
+	now := time.Now()
 	streak := 0
 	for i := len(s.ActivityDays) - 1; i >= 0; i-- {
-		day, err := time.Parse("2006-01-02", s.ActivityDays[i])
-		if err != nil {
-			break
-		}
-		expected := today.AddDate(0, 0, -streak)
-		if day.Equal(expected) {
+		if s.ActivityDays[i] == now.AddDate(0, 0, -streak).Format("2006-01-02") {
 			streak++
 		} else {
 			break
