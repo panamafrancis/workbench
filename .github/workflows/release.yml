@@ -5,24 +5,34 @@ on:
     tags:
       - 'v*'
 
+permissions:
+  contents: read
+
 jobs:
   build:
     name: Build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
-          cache: true
+          # A release builds from a clean cache, so nothing a PR run cached can reach it.
+          cache: false
 
       - run: make build VERSION="$TAG"
         env:
           TAG: ${{ github.ref_name }}
 
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum workbench-* > SHA256SUMS
+
       - name: Upload binaries
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: workbench-binaries
           path: dist/
@@ -33,25 +43,29 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     steps:
       - name: Download binaries
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: workbench-binaries
           path: dist/
 
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/workbench-*
+
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
         run: |
-          if gh release view "${{ github.ref_name }}" --repo "${{ github.repository }}" > /dev/null 2>&1; then
-            echo "Release ${{ github.ref_name }} already exists, uploading assets"
-            gh release upload "${{ github.ref_name }}" dist/* \
-              --repo "${{ github.repository }}" \
-              --clobber
+          if gh release view "$TAG" --repo "$REPO" > /dev/null 2>&1; then
+            echo "Release $TAG already exists, uploading assets"
+            gh release upload "$TAG" dist/* --repo "$REPO" --clobber
           else
-            gh release create "${{ github.ref_name }}" dist/* \
-              --repo "${{ github.repository }}" \
-              --title "${{ github.ref_name }}" \
-              --generate-notes
+            gh release create "$TAG" dist/* --repo "$REPO" --title "$TAG" --generate-notes
           fi
