@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/panamafrancis/workbench/pkg/git"
 )
@@ -384,6 +385,16 @@ type restPR struct {
 		Ref string `json:"ref"`
 		SHA string `json:"sha"`
 	} `json:"head"`
+	Base struct {
+		Ref string `json:"ref"`
+	} `json:"base"`
+	User               restUser   `json:"user"`
+	RequestedReviewers []restUser `json:"requested_reviewers"`
+	Body               *string    `json:"body"`
+}
+
+type restUser struct {
+	Login string `json:"login"`
 }
 
 // errNoResponse marks the case where gh produced nothing we could read as an
@@ -440,13 +451,18 @@ func parsePollResponse(raw []byte, prevETag string) (RepoPoll, error) {
 		poll.PRs = append(poll.PRs, PollPR{
 			HeadRef: pr.Head.Ref,
 			Info: &PRInfo{
-				Number:    pr.Number,
-				Status:    restStatus(pr),
-				Title:     pr.Title,
-				URL:       pr.HTMLURL,
-				HeadOID:   pr.Head.SHA,
-				UpdatedAt: pr.UpdatedAt,
-				FetchedAt: now,
+				Number:             pr.Number,
+				Status:             restStatus(pr),
+				Title:              pr.Title,
+				URL:                pr.HTMLURL,
+				HeadOID:            pr.Head.SHA,
+				UpdatedAt:          pr.UpdatedAt,
+				FetchedAt:          now,
+				Author:             pr.User.Login,
+				RequestedReviewers: logins(pr.RequestedReviewers),
+				HeadRef:            pr.Head.Ref,
+				BaseRef:            pr.Base.Ref,
+				Body:               capBody(pr.Body),
 			},
 		})
 	}
@@ -454,6 +470,35 @@ func parsePollResponse(raw []byte, prevETag string) (RepoPoll, error) {
 		poll.Oldest = prs[len(prs)-1].UpdatedAt
 	}
 	return poll, nil
+}
+
+func logins(users []restUser) []string {
+	if len(users) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(users))
+	for _, u := range users {
+		if u.Login != "" {
+			out = append(out, u.Login)
+		}
+	}
+	return out
+}
+
+// capBody cuts a description at MaxBodyBytes without splitting a rune.
+func capBody(body *string) string {
+	if body == nil {
+		return ""
+	}
+	s := *body
+	if len(s) <= MaxBodyBytes {
+		return s
+	}
+	cut := MaxBodyBytes
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut]
 }
 
 // restStatus maps the REST representation to a PRStatus. The list endpoint

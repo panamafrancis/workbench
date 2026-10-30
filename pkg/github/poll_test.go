@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 const testPollETag = `W/"x"`
@@ -289,5 +290,49 @@ func TestRepoRefFromRemoteResolvesSSHAliases(t *testing.T) {
 		if !ok || ref.String() != tc.want {
 			t.Errorf("RepoRefFromRemote(%q) = %v/%v, want %q", tc.raw, ref, ok, tc.want)
 		}
+	}
+}
+
+// A watched PR is judged on who wrote it, who is asked to review it and what it
+// says, so the poll must decode all of that from the page it already fetches.
+func TestParsePollResponseReviewFields(t *testing.T) {
+	long := strings.Repeat("é", MaxBodyBytes) // two bytes a rune: the cut lands mid-rune
+	body := `[{"number": 5, "state": "open", "draft": false, "title": "t",
+	  "html_url": "https://github.com/o/n/pull/5", "updated_at": "2026-09-09T16:24:48Z",
+	  "merged_at": null, "head": {"ref": "st/x/api", "sha": "abc"}, "base": {"ref": "main"},
+	  "user": {"login": "alice"}, "requested_reviewers": [{"login": "Review-Bot"}, {"login": "bob"}],
+	  "body": "` + long + `"},
+	 {"number": 6, "state": "open", "title": "no body", "html_url": "https://github.com/o/n/pull/6",
+	  "updated_at": "2026-09-09T16:00:00Z", "head": {"ref": "b"}, "body": null}]`
+	poll, err := parsePollResponse(rawResponse("200 OK", nil, body), "")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	info := poll.PRs[0].Info
+	if info.Author != "alice" || info.HeadRef != "st/x/api" || info.BaseRef != "main" || info.HeadOID != "abc" {
+		t.Errorf("decoded %+v", info)
+	}
+	if !info.Requests("review-bot") || info.Requests("carol") {
+		t.Errorf("requested reviewers = %v", info.RequestedReviewers)
+	}
+	if len(info.Body) > MaxBodyBytes || !utf8.ValidString(info.Body) {
+		t.Errorf("body not capped on a rune boundary: %d bytes, valid=%v", len(info.Body), utf8.ValidString(info.Body))
+	}
+	if got := poll.PRs[1].Info; got.Body != "" || got.RequestedReviewers != nil {
+		t.Errorf("null body and no reviewers should decode empty, got %+v", got)
+	}
+}
+
+func TestParseReviewsAcrossPages(t *testing.T) {
+	raw := `[{"id":1,"user":{"login":"bot"},"state":"CHANGES_REQUESTED","commit_id":"a","html_url":"u1","submitted_at":"2026-09-09T10:00:00Z"},
+	  {"id":2,"user":{"login":"alice"},"state":"COMMENTED","commit_id":"a"}]
+	 [{"id":3,"user":{"login":"Bot"},"state":"APPROVED","commit_id":"b","html_url":"u3","submitted_at":"2026-09-10T10:00:00Z"},
+	  {"id":4,"user":{"login":"bot"},"state":"PENDING","commit_id":"b"}]`
+	got, err := parseReviews([]byte(raw), "bot")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(got) != 2 || got[0].ID != 1 || got[1].ID != 3 || got[1].CommitID != "b" || got[1].State != "APPROVED" {
+		t.Errorf("got %+v, want bot's two submitted reviews in order", got)
 	}
 }

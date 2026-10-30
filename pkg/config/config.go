@@ -60,6 +60,13 @@ type Model struct {
 	// "{prompt}" is substituted. Empty for models with no such argument, which
 	// then start idle and pick their instructions up on the first human turn.
 	PromptArgs []string `yaml:"prompt_args,omitempty"`
+	// ExecArgs switch the CLI to a headless run: take the prompt PromptArgs
+	// hand it, work until done, and exit, with no terminal attached. They are
+	// added to Args, the session args and PromptArgs, not in place of them, so
+	// a headless run still starts or resumes a known session. Empty for models
+	// that cannot run without a terminal; a launcher must refuse those rather
+	// than start one that waits forever on input nobody will type.
+	ExecArgs []string `yaml:"exec_args,omitempty"`
 	// SessionStore names where the CLI keeps its session transcripts, which is
 	// how a launcher tells whether a session can be resumed and whether its
 	// agent is working. Empty means SessionStoreClaude. A store whose CLI picks
@@ -116,7 +123,10 @@ func DefaultModels() map[string]Model {
 			ResumeSessionArgs: []string{"--resume", "{session_id}"},
 			AgentNameArgs:     []string{"--name", "{agent_name}"},
 			PromptArgs:        []string{"{prompt}"},
-			Icon:              "✻",
+			// stream-json needs --verbose under -p; it is what makes a run's
+			// log a transcript rather than only its last message.
+			ExecArgs: []string{"-p", "--output-format", "stream-json", "--verbose"},
+			Icon:     "✻",
 		},
 		"codex": {
 			NonoProfile: "default",
@@ -198,6 +208,9 @@ func BackfillModels(models map[string]Model) {
 		}
 		if len(dm.AgentNameArgs) > 0 && len(m.AgentNameArgs) == 0 {
 			m.AgentNameArgs = dm.AgentNameArgs
+		}
+		if len(dm.ExecArgs) > 0 && len(m.ExecArgs) == 0 {
+			m.ExecArgs = dm.ExecArgs
 		}
 		// The session args backfilled above only mean something read against
 		// the right store: codex's resume args with claude's store would never

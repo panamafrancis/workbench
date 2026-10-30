@@ -123,3 +123,24 @@ func TestBackfillIcon(t *testing.T) {
 		t.Errorf("codex icon = %q, want the user's", got)
 	}
 }
+
+// A config written before exec_args existed gains them, or no headless run is
+// possible without hand-editing it; one that set its own keeps them.
+func TestBackfillExecArgs(t *testing.T) {
+	models := map[string]Model{
+		modelClaude: {Binary: modelClaude, PromptArgs: []string{"{prompt}"}},
+		"shell":     {Binary: "bash"},
+	}
+	BackfillModels(models)
+	if got := models[modelClaude].ExecArgs; len(got) == 0 || got[0] != "-p" {
+		t.Errorf("claude should gain exec args, got %v", got)
+	}
+	if got := models["shell"].ExecArgs; len(got) != 0 {
+		t.Errorf("a model with no shipped exec args must not gain any, got %v", got)
+	}
+	mine := map[string]Model{modelClaude: {Binary: modelClaude, ExecArgs: []string{"--print"}}}
+	BackfillModels(mine)
+	if got := mine[modelClaude].ExecArgs; len(got) != 1 || got[0] != "--print" {
+		t.Errorf("must not overwrite user exec args, got %v", got)
+	}
+}

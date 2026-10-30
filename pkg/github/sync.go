@@ -2,6 +2,9 @@ package github
 
 import (
 	"errors"
+	"slices"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/panamafrancis/workbench/pkg/git"
@@ -28,7 +31,28 @@ type Target struct {
 	// only: its branch is tree-local and provably has no PR of its own, so a
 	// head lookup would be a guaranteed-empty round trip.
 	Ref PRRef
+	// Watch makes this a repo-level target rather than a branch: every open PR
+	// in the repo that requests a review from this login is kept under
+	// WatchKey, from the listing the round fetches anyway. Branch, Key and Ref
+	// are ignored. It costs nothing a branch target does not already spend.
+	Watch string
 }
+
+// WatchPrefix starts every cache key a watch target writes. Watched entries
+// live apart from the branch and review keys because they carry fields only a
+// repo poll fills in (RequestedReviewers, Body): a review member keyed on the
+// same PR is refreshed by GraphQL, which would blank them.
+const WatchPrefix = "watch:"
+
+// WatchKey is the cache key of a watched PR: watch:<login>:<owner>/<name>#<n>.
+func WatchKey(login string, repo RepoRef, number int) string {
+	return WatchPrefix + strings.ToLower(login) + ":" + repo.String() + "#" + strconv.Itoa(number)
+}
+
+// watchRetention is how long a watched PR that has merged or closed stays in
+// the cache, so a consumer that runs less often than the poll still sees how
+// it ended.
+const watchRetention = 7 * 24 * time.Hour
 
 func (t Target) key() string {
 	if t.Key != "" {
@@ -231,6 +255,9 @@ func refreshDetails(w *Writable, groups []repoGroup, opts SyncOptions, now time.
 // round must stop.
 func refreshGroupDetails(w *Writable, group repoGroup, opts SyncOptions, now time.Time, report *SyncReport, seen map[string]bool) bool {
 	for _, t := range group.targets {
+		if t.Watch != "" {
+			continue
+		}
 		key := t.key()
 		if seen[key] {
 			continue
@@ -358,6 +385,13 @@ func syncRepo(w *Writable, group repoGroup, opts SyncOptions, now time.Time, rep
 	if opts.Force {
 		etag = "" // an unconditional poll, so a forced refresh really re-reads
 	}
+	watches := group.watches()
+	if len(watches) > 0 && !sameLogins(state.Watched, watches) {
+		// A 304 answers "nothing changed since the last listing", and that
+		// listing was read without these logins in mind: the PRs already waiting
+		// on them were dropped. Read the page once more in full.
+		etag = ""
+	}
 
 	poll, err := pollRepo(group.path, group.ref, etag)
 	w.SetBudget(poll.Budget)
@@ -395,11 +429,22 @@ func syncRepo(w *Writable, group repoGroup, opts SyncOptions, now time.Time, rep
 		byNumber[pr.Info.Number] = pr.Info
 	}
 
+	for _, login := range watches {
+		report.Updated += applyWatch(w, group.ref, login, poll.PRs, now)
+	}
+
 	var unresolved []unresolvedTarget
 	for _, t := range group.targets {
+		if t.Watch != "" {
+			continue
+		}
 		key := t.key()
 		if info := matchPolled(t, w.Ref(key), byHead, byNumber); info != nil {
-			w.Set(key, mergePolled(w.Get(key), info))
+			// A description is kept for watched PRs only; every tracked branch
+			// carrying one would multiply the cache for nothing.
+			bare := *info
+			bare.Body = ""
+			w.Set(key, mergePolled(w.Get(key), &bare))
 			report.Updated++
 			continue
 		}
@@ -435,8 +480,65 @@ func syncRepo(w *Writable, group repoGroup, opts SyncOptions, now time.Time, rep
 
 	// poll.ETag carries the previous one forward on a 304, so this is correct in
 	// both cases.
-	w.SetRepoState(group.key, RepoState{ETag: poll.ETag, PolledAt: now, Truncated: truncated})
+	w.SetRepoState(group.key, RepoState{ETag: poll.ETag, PolledAt: now, Truncated: truncated, Watched: watches})
 	return unresolved, nil
+}
+
+// applyWatch records the page's PRs that matter to login: every one that
+// requests its review, and every one already watched, whatever it now says —
+// a request withdrawn or answered, a merge, a close, is exactly what the
+// consumer is waiting to see. Terminal entries past watchRetention are dropped.
+// It reports the entries written.
+func applyWatch(w *Writable, repo RepoRef, login string, prs []PollPR, now time.Time) int {
+	written := 0
+	for _, pr := range prs {
+		key := WatchKey(login, repo, pr.Info.Number)
+		prev := w.Get(key)
+		if prev == nil && (isTerminal(pr.Info.Status) || !pr.Info.Requests(login)) {
+			continue
+		}
+		info := *pr.Info
+		w.Set(key, mergePolled(prev, &info))
+		written++
+	}
+	prefix := WatchPrefix + strings.ToLower(login) + ":" + repo.String() + "#"
+	for _, key := range w.Keys() {
+		if !strings.HasPrefix(key, prefix) {
+			continue
+		}
+		if info := w.Get(key); info != nil && isTerminal(info.Status) && now.Sub(info.UpdatedAt) > watchRetention {
+			w.Delete(key)
+		}
+	}
+	return written
+}
+
+// watches lists the logins the group's watch targets name, sorted and
+// deduplicated.
+func (g repoGroup) watches() []string {
+	var out []string
+	for _, t := range g.targets {
+		if t.Watch == "" {
+			continue
+		}
+		login := strings.ToLower(t.Watch)
+		if !slices.Contains(out, login) {
+			out = append(out, login)
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+func sameLogins(a, b []string) bool {
+	// Watched only grows coverage: a login dropped from the targets needs no
+	// re-read, one added does.
+	for _, login := range b {
+		if !slices.Contains(a, login) {
+			return false
+		}
+	}
+	return true
 }
 
 // matchPolled finds target's PR on a polled page. A pinned target is matched by
