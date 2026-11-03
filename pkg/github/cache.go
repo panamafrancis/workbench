@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -45,6 +46,10 @@ type RepoState struct {
 	// history, so this has to be remembered across rounds — without it a
 	// not-modified poll would read as proof that a branch has no PR.
 	Truncated bool `json:"truncated,omitempty"`
+	// Watched lists the logins the last listing was applied for (see
+	// Target.Watch). A login missing from it has not had its waiting PRs picked
+	// out of the page yet, so the next poll must not settle for a 304.
+	Watched []string `json:"watched,omitempty"`
 }
 
 // Cache is a process-local snapshot of the on-disk PR status cache, used by the
@@ -267,6 +272,30 @@ func (w *Writable) Get(branch string) *PRInfo { return w.entries[branch] }
 func (w *Writable) Set(branch string, info *PRInfo) { w.entries[branch] = info }
 
 func (w *Writable) Delete(branch string) { delete(w.entries, branch) }
+
+// Keys lists every entry key, in no particular order.
+func (w *Writable) Keys() []string {
+	keys := make([]string, 0, len(w.entries))
+	for k := range w.entries {
+		keys = append(keys, k)
+	}
+	return keys
+}
+
+// Watched returns the PRs a watch target for login has recorded, keyed by
+// WatchKey. It reads the snapshot, so it costs nothing and may be a round old.
+func (c *Cache) Watched(login string) map[string]*PRInfo {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	prefix := WatchPrefix + strings.ToLower(login) + ":"
+	out := make(map[string]*PRInfo)
+	for k, v := range c.entries {
+		if strings.HasPrefix(k, prefix) && v != nil {
+			out[k] = v
+		}
+	}
+	return out
+}
 
 // Rename moves a cached entry to a new branch key after a local branch rename.
 // The PR itself does not necessarily move: GitHub keys a PR on its head ref,

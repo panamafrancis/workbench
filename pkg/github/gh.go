@@ -58,6 +58,33 @@ type PRInfo struct {
 	// everything else, so the two age separately: FetchedAt says the PR's
 	// existence and state are current, DetailedAt says its verdicts are.
 	DetailedAt time.Time `json:"detailed_at,omitzero"`
+
+	// The fields below come from a repo poll only, and are kept for watched PRs
+	// (see Target.Watch): they are what an automated reviewer needs to decide
+	// whether a PR is waiting on it and which other PRs belong to the same
+	// change. A GraphQL lookup leaves them empty.
+	Author             string   `json:"author,omitempty"`
+	RequestedReviewers []string `json:"requested_reviewers,omitempty"`
+	HeadRef            string   `json:"head_ref,omitempty"`
+	BaseRef            string   `json:"base_ref,omitempty"`
+	// Body is the PR description, cut at MaxBodyBytes.
+	Body string `json:"body,omitempty"`
+}
+
+// MaxBodyBytes caps the PR description a watched entry keeps. The cache is one
+// file every poller rewrites, and a description longer than this carries
+// nothing a grouping decision needs.
+const MaxBodyBytes = 4096
+
+// Requests reports whether login is among the PR's requested reviewers.
+// GitHub logins are case-insensitive.
+func (p *PRInfo) Requests(login string) bool {
+	for _, r := range p.RequestedReviewers {
+		if strings.EqualFold(r, login) {
+			return true
+		}
+	}
+	return false
 }
 
 // PRRef is what a previous round recorded about a branch's PR: the number that
